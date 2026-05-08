@@ -462,12 +462,28 @@ def load_grade_centre(file_bytes):
         student_gc = {}
         for label, col_idx, num in zip(gc_labels, gc_col_indices, gc_nums):
             val = row[col_idx].strip().strip('"') if col_idx < len(row) else ''
-            # Check resubmit column — if it has a value, use it instead
+            # Check resubmit column — if it has a value, label it as resubmission
             resub_idx = resub_map.get(num)
             if resub_idx is not None and resub_idx < len(row):
                 resub_val = row[resub_idx].strip().strip('"')
                 if resub_val:
-                    val = resub_val
+                    rv = resub_val.lower()
+                    if 'needs grading' in rv or 'needs marking' in rv:
+                        val = f'Resubmitted (Needs Grading)'
+                    elif 'unsatisf' in rv:
+                        val = f'Resub Fail (Unsatisfactory)'
+                    elif 'satisf' in rv:
+                        val = f'Resubmitted (Satisfactory)'
+                    else:
+                        # Try numeric
+                        try:
+                            score = float(resub_val)
+                            if score >= 50:
+                                val = f'Resubmitted ({resub_val})'
+                            else:
+                                val = f'Resub Fail ({resub_val})'
+                        except ValueError:
+                            val = f'Resubmitted ({resub_val})'
             if val == '':
                 student_gc[label] = 'No Submission'
             else:
@@ -694,17 +710,17 @@ def build_workbook(subject_code, students, login, hits, seg, current_week, prev_
 
     curr_start, curr_end = week_date_range(current_week)
     if is_partial:
-        curr_label = f'W{current_week} ({curr_start.strftime("%b %#d")}-{latest_date.strftime("%#d")}, {curr_days}d partial)'
+        curr_label = f'W{current_week} ({curr_start.strftime("%b %-d")}-{latest_date.strftime("%-d")}, {curr_days}d partial)'
     else:
-        curr_label = f'W{current_week} ({curr_start.strftime("%b %#d")}-{curr_end.strftime("%#d")}, 7d)'
+        curr_label = f'W{current_week} ({curr_start.strftime("%b %-d")}-{curr_end.strftime("%-d")}, 7d)'
     if prev_key:
         prev_start, prev_end = week_date_range(current_week - 1)
-        prev_label = f'W{current_week - 1} ({prev_start.strftime("%b %#d")}-{prev_end.strftime("%#d")}, 7d)'
+        prev_label = f'W{current_week - 1} ({prev_start.strftime("%b %-d")}-{prev_end.strftime("%-d")}, 7d)'
     else:
         prev_label = '(none)'
 
     week_descriptions = ', '.join(
-        f'W{i}={week_date_range(i)[0].strftime("%b %#d")}-{week_date_range(i)[1].strftime("%#d")}'
+        f'W{i}={week_date_range(i)[0].strftime("%b %-d")}-{week_date_range(i)[1].strftime("%-d")}'
         for i in range(1, current_week + 1)
     )
 
@@ -712,7 +728,7 @@ def build_workbook(subject_code, students, login, hits, seg, current_week, prev_
     ws = wb.create_sheet('Summary')
     write_tab_header(ws,
         f'{subject_code} Engagement Report — {curr_label}',
-        f'Login window {login_window}  •  Enrolled {enrolled}  •  Latest data: {latest_date.strftime("%b %#d %Y")}',
+        f'Login window {login_window}  •  Enrolled {enrolled}  •  Latest data: {latest_date.strftime("%b %-d %Y")}',
         ('Partial-week run. S4 inflated, S7 understated by timing artefact.' if is_partial
          else 'Full-week run. Standard segmentation.'),
         6)
@@ -1082,7 +1098,7 @@ def build_program_workbook(subject_code, students, login, hits, seg, current_wee
     partial_note = ' (PARTIAL)' if is_partial else ''
     write_tab_header(ws,
         f'{subject_code} Program Report — W{current_week}{partial_note}',
-        f'Enrolled {len(students)}  •  {len(programs)} programs  •  Latest data: {latest_date.strftime("%b %#d %Y")}',
+        f'Enrolled {len(students)}  •  {len(programs)} programs  •  Latest data: {latest_date.strftime("%b %-d %Y")}',
         'Segment counts per program (course code). One sheet per program follows.',
         len(seg_codes) + 3)
 
@@ -1179,12 +1195,16 @@ def build_program_workbook(subject_code, students, login, hits, seg, current_wee
                 return 'No Submission'
             if 'needs grading' in v or 'needs marking' in v:
                 return 'Needs Marking'
+            if v.startswith('resub fail'):
+                return 'Resub Fail'
+            if v.startswith('resubmitted'):
+                return 'Resubmitted'
             if 'unsatisf' in v:
                 return 'Unsatisfactory'
             # Anything else (Satisfactory, numeric scores, etc.) = Satisfactory
             return 'Satisfactory'
 
-        status_cols = ['Satisfactory', 'Unsatisfactory', 'Needs Marking', 'No Submission']
+        status_cols = ['Satisfactory', 'Unsatisfactory', 'Resubmitted', 'Resub Fail', 'Needs Marking', 'No Submission']
 
         for ai, label in enumerate(gc_labels):
             # Section header
@@ -1325,11 +1345,15 @@ def build_program_workbook(subject_code, students, login, hits, seg, current_wee
                 ws_p.cell(6 + ri, 1).fill = PatternFill('solid', start_color=fill_colour)
                 ws_p.cell(6 + ri, 1).font = Font(name='Arial', size=10, bold=True, color=WHITE)
 
-        # Colour "No Submission" cells red in assessment columns
+        # Colour assessment status cells
         if gc_active:
             no_sub_fill = PatternFill('solid', start_color='FADBD8')
             no_sub_font = Font(name='Arial', size=10, color=RED, bold=True)
             needs_grading_fill = PatternFill('solid', start_color='FEF9E7')
+            resub_fill = PatternFill('solid', start_color='D5F5E3')
+            resub_font = Font(name='Arial', size=10, color='1A7A3A', bold=True)
+            resub_fail_fill = PatternFill('solid', start_color='FDEBD0')
+            resub_fail_font = Font(name='Arial', size=10, color=ORANGE, bold=True)
             gc_start_col = len(base_headers) - len(gc_labels) + 1  # 1-indexed
             for ri in range(len(sorted_sids)):
                 for ci_offset in range(len(gc_labels)):
@@ -1337,6 +1361,12 @@ def build_program_workbook(subject_code, students, login, hits, seg, current_wee
                     if cell.value == 'No Submission':
                         cell.fill = no_sub_fill
                         cell.font = no_sub_font
+                    elif isinstance(cell.value, str) and cell.value.startswith('Resub Fail'):
+                        cell.fill = resub_fail_fill
+                        cell.font = resub_fail_font
+                    elif isinstance(cell.value, str) and cell.value.startswith('Resubmitted'):
+                        cell.fill = resub_fill
+                        cell.font = resub_font
                     elif isinstance(cell.value, str) and 'needs grading' in cell.value.lower():
                         cell.fill = needs_grading_fill
 
@@ -1389,7 +1419,7 @@ if run_btn:
         with st.spinner('Loading login report...'):
             login, win_start, win_end = load_login_report(login_file.getvalue())
         if win_start and win_end:
-            login_window_str = f'{win_start.strftime("%b %#d")} - {win_end.strftime("%b %#d %Y")}'
+            login_window_str = f'{win_start.strftime("%b %-d")} - {win_end.strftime("%b %-d %Y")}'
             st.info(f'Login window detected: **{login_window_str}**')
         else:
             login_window_str = 'unknown (could not parse)'
@@ -1413,7 +1443,7 @@ if run_btn:
             prev_days = curr_days  # no comparison possible
 
         partial_msg = f' (PARTIAL — {curr_days} days)' if is_partial else ' (full)'
-        st.success(f'Detected current week: **W{current_week}**{partial_msg}  •  Latest data: **{latest.strftime("%b %#d %Y")}**')
+        st.success(f'Detected current week: **W{current_week}**{partial_msg}  •  Latest data: **{latest.strftime("%b %-d %Y")}**')
         if current_week == 1:
             st.warning('W1 is the only week with data. S5/S6/S7 will be empty (no comparison week available).')
 
