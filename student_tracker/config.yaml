@@ -1,0 +1,33 @@
+# Student Tracker — configuration
+#
+# Edit thresholds here without touching the Python code. Changes take effect
+# on next app run.
+
+# Recency weighting half-life in days. A hit on the reference date carries
+# weight 1.0; a hit `half_life_days` ago carries weight 0.5; one twice that
+# many days ago carries 0.25; and so on.
+recency_half_life_days: 7
+
+# Threshold for S6 (Fading) vs S7 (Sustainer). A student is fading when
+# this_week_hits < fade_threshold * last_week_hits.
+fade_threshold: 0.5
+
+# Pattern (regex, case-insensitive) for column names in the Grade Centre
+# export that should be treated as summative assessments. Default matches
+# anything starting with 'Assessment '.
+assessment_pattern: '^assessment\s'
+
+# Pattern for assessment-like columns to EXCLUDE (e.g. resubmission links).
+exclude_pattern: 'resubmission'
+
+# Text values in non-numeric (Satisfactory-standard) assessments that count
+# as 'submitted' for submission-rate purposes. Lowercased.
+text_submitted_values:
+  - satisfactory
+  - unsatisfactory
+  - complete
+  - incomplete
+
+# Class list filtering — disabled. The class list from the university system
+# is treated as the authoritative enrolment source; anyone on it is a real
+# student. No prefix or surname exclusions are applied.
