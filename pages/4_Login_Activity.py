@@ -215,15 +215,6 @@ uploaded_files = st.sidebar.file_uploader(
     key="la_overall",
 )
 
-st.sidebar.divider()
-
-report_end_date = st.sidebar.date_input(
-    "Report end date",
-    value=date.today(),
-    help="Used to calculate 'days since last login'. Set to the date the report was pulled.",
-    key="la_end_date",
-)
-
 # Date range filter
 st.sidebar.divider()
 st.sidebar.markdown("**Date range filter** (optional)")
@@ -318,6 +309,14 @@ with st.spinner("Parsing Overall Usage Reports…"):
                         (date_hits["date"] <= pd.Timestamp(filter_end))
                     ]
 
+            # Auto-detect report end date from the latest date in the data
+            if not date_hits.empty:
+                report_end_date = date_hits["date"].max()
+                if isinstance(report_end_date, pd.Timestamp):
+                    report_end_date = report_end_date.date()
+            else:
+                report_end_date = date.today()
+
             summary = _build_summary(date_hits, classlist, report_end_date)
 
             # Count classlist students found in Overall
@@ -331,6 +330,7 @@ with st.spinner("Parsing Overall Usage Reports…"):
                 "summary": summary,
                 "matched": matched,
                 "total_in_file": len(hits_ids),
+                "report_end_date": report_end_date,
             })
         except Exception as e:
             st.error(f"Failed to parse **{uf.name}**: {e}")
