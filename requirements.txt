@@ -2,3 +2,4 @@ streamlit
 xlrd
 openpyxl
 pyyaml
+plotly
