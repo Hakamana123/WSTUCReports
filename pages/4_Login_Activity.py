@@ -120,9 +120,12 @@ def _build_summary(
     cl["student_code"] = cl["student_code"].astype(str).str.strip()
     valid_codes = set(cl["student_code"])
 
-    # Filter hits to classlist only
+    # Filter hits to classlist only, then to actual activity (hits > 0)
     if not date_hits.empty:
-        real = date_hits[date_hits["student_code"].isin(valid_codes)].copy()
+        real = date_hits[
+            (date_hits["student_code"].isin(valid_codes)) &
+            (date_hits["hits"] > 0)
+        ].copy()
     else:
         real = pd.DataFrame(columns=["student_code", "date", "hits"])
 
@@ -349,9 +352,15 @@ def render_single_report(rpt: dict, show_title: bool = True):
     summary = rpt["summary"]
     name = rpt["name"]
 
-    # Date range label
+    # Date range label — only consider actual activity
     class_ids = set(classlist["student_code"])
-    real = date_hits[date_hits["student_code"].isin(class_ids)] if not date_hits.empty else date_hits
+    if not date_hits.empty:
+        real = date_hits[
+            (date_hits["student_code"].isin(class_ids)) &
+            (date_hits["hits"] > 0)
+        ]
+    else:
+        real = date_hits
     if not real.empty:
         d_min = real["date"].min()
         d_max = real["date"].max()
