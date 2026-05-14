@@ -195,6 +195,125 @@ def _days_since_band(days_since) -> str:
     return "22+ days ago"
 
 
+def _build_login_report_xlsx(
+    summary: pd.DataFrame,
+    window_start: date,
+    window_end: date,
+) -> bytes:
+    """
+    Build an .xlsx file that matches the vUWS Subject Login Report format.
+
+    Two sections:
+      1. Students who have NOT logged in (logged_in == False)
+         SURNAME at col 8, FIRST NAME at col 17, STUDENT ID at col 23,
+         EMAIL at col 28, DAYS SINCE at col 40, LAST LOGIN at col 45,
+         TOTAL LOGINS at col 49
+      2. Students who HAVE logged in (logged_in == True)
+         SURNAME at col 6, FIRST NAME at col 16, STUDENT ID at col 22,
+         EMAIL at col 27, DAYS SINCE at col 39, LAST LOGIN at col 44,
+         TOTAL LOGINS at col 48
+    """
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Subject Login Report Drill"
+
+    # Row 1: Title
+    ws.cell(1, 1, "Subject Login Report")
+
+    # Row 3: Window date range
+    ws_str = window_start.strftime("%-d/%m/%Y") if hasattr(window_start, "strftime") else str(window_start)
+    we_str = window_end.strftime("%-d/%m/%Y") if hasattr(window_end, "strftime") else str(window_end)
+    # Handle Windows date formatting (no %-d)
+    try:
+        ws_str = window_start.strftime("%-d/%m/%Y")
+        we_str = window_end.strftime("%-d/%m/%Y")
+    except ValueError:
+        ws_str = window_start.strftime("%d/%m/%Y").lstrip("0")
+        we_str = window_end.strftime("%d/%m/%Y").lstrip("0")
+    ws.cell(3, 9, f"Students who have logged in between {ws_str} to {we_str}")
+
+    # Split students
+    not_logged_in = summary[~summary["logged_in"]].copy()
+    logged_in_df = summary[summary["logged_in"]].copy()
+
+    # ── NLI section ───────────────────────────────────────────────
+    nli_hdr_row = 5
+    # NLI column positions (1-based, matching vUWS format)
+    NLI = {"SURNAME": 8, "FIRST NAME": 17, "STUDENT ID": 23,
+           "EMAIL": 28, "DAYS SINCE LAST LOGIN": 40,
+           "LAST LOGIN DATE": 45, "TOTAL LOGINS": 49}
+
+    ws.cell(nli_hdr_row - 1, 8, f"Students who have NOT logged in between {ws_str} to {we_str}")
+
+    for col_name, col_idx in NLI.items():
+        ws.cell(nli_hdr_row, col_idx, col_name)
+
+    row = nli_hdr_row + 1
+    for _, s in not_logged_in.iterrows():
+        last_name = s.get("last_name", "")
+        first_name = s.get("first_name", "")
+        sid = s.get("student_code", "")
+        email = s.get("email_address", "")
+        days = s.get("days_since_last")
+        last_active = s.get("last_active")
+        total = int(s.get("total_hits", 0))
+
+        ws.cell(row, NLI["SURNAME"], last_name if pd.notna(last_name) else "")
+        ws.cell(row, NLI["FIRST NAME"], first_name if pd.notna(first_name) else "")
+        ws.cell(row, NLI["STUDENT ID"], sid)
+        ws.cell(row, NLI["EMAIL"], email if pd.notna(email) else "")
+        ws.cell(row, NLI["DAYS SINCE LAST LOGIN"],
+                "NEVER" if pd.isna(days) else int(days))
+        if pd.notna(last_active):
+            la = last_active
+            if isinstance(la, pd.Timestamp):
+                la = la.to_pydatetime()
+            ws.cell(row, NLI["LAST LOGIN DATE"], la)
+        ws.cell(row, NLI["TOTAL LOGINS"], total)
+        row += 1
+
+    # ── LI section ────────────────────────────────────────────────
+    li_hdr_row = row + 2
+    LI = {"SURNAME": 6, "FIRST NAME": 16, "STUDENT ID": 22,
+          "EMAIL": 27, "DAYS SINCE LAST LOGIN": 39,
+          "LAST LOGIN DATE": 44, "TOTAL LOGINS": 48}
+
+    ws.cell(li_hdr_row - 1, 6, f"Students who have logged in between {ws_str} to {we_str}")
+
+    for col_name, col_idx in LI.items():
+        ws.cell(li_hdr_row, col_idx, col_name)
+
+    row = li_hdr_row + 1
+    for _, s in logged_in_df.iterrows():
+        last_name = s.get("last_name", "")
+        first_name = s.get("first_name", "")
+        sid = s.get("student_code", "")
+        email = s.get("email_address", "")
+        days = s.get("days_since_last")
+        last_active = s.get("last_active")
+        total = int(s.get("total_hits", 0))
+
+        ws.cell(row, LI["SURNAME"], last_name if pd.notna(last_name) else "")
+        ws.cell(row, LI["FIRST NAME"], first_name if pd.notna(first_name) else "")
+        ws.cell(row, LI["STUDENT ID"], sid)
+        ws.cell(row, LI["EMAIL"], email if pd.notna(email) else "")
+        ws.cell(row, LI["DAYS SINCE LAST LOGIN"], int(days) if pd.notna(days) else 0)
+        if pd.notna(last_active):
+            la = last_active
+            if isinstance(la, pd.Timestamp):
+                la = la.to_pydatetime()
+            ws.cell(row, LI["LAST LOGIN DATE"], la)
+        ws.cell(row, LI["TOTAL LOGINS"], total)
+        row += 1
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
+
+
 # ------------------------------------------------------------------
 # Sidebar
 # ------------------------------------------------------------------
@@ -370,6 +489,8 @@ def render_single_report(rpt: dict, show_title: bool = True):
             d_max = d_max.date()
         date_label = f"{d_min.strftime('%d %b')} – {d_max.strftime('%d %b %Y')}"
     else:
+        d_min = date.today()
+        d_max = date.today()
         date_label = "No activity data"
 
     if show_title:
@@ -592,49 +713,70 @@ def render_single_report(rpt: dict, show_title: bool = True):
 
     # ── Tab 5: Export ─────────────────────────────────────────────
     with tab_export:
-        st.subheader("Export to Excel")
+        st.subheader("Export")
 
-        export = summary.copy()
-        export["freq_band"] = export["active_days"].apply(_freq_band)
-        export["days_since_band"] = export["days_since_last"].apply(_days_since_band)
+        col_exp1, col_exp2 = st.columns(2)
 
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            meta = pd.DataFrame({
-                "Metric": [
-                    "Report", "Date Range", "Enrolled", "Logged In",
-                    "Not Logged In", "Login Rate",
-                    "Avg Total Hits (active)", "Avg Active Days (active)",
-                ],
-                "Value": [
-                    name, date_label, total, logged_in,
-                    not_logged_in, f"{login_rate:.1f}%",
-                    f"{avg_hits:.1f}", f"{avg_days:.1f}",
-                ],
-            })
-            meta.to_excel(writer, sheet_name="Summary", index=False)
+        # ── Standard summary export ──────────────────────────────
+        with col_exp1:
+            st.markdown("**Summary Report**")
+            st.caption("Dashboard metrics and per-student data.")
 
-            export_cols = [
-                "student_name", "student_code", "total_hits", "active_days",
-                "first_active", "last_active", "days_since_last",
-                "logged_in", "freq_band", "days_since_band",
-            ]
-            for extra in ["course_code", "discipline_class", "discipline_teacher", "teacher"]:
-                if extra in export.columns:
-                    export_cols.insert(2, extra)
-            export_cols = [c for c in export_cols if c in export.columns]
-            export[export_cols].to_excel(writer, sheet_name="Per Student", index=False)
+            export = summary.copy()
+            export["freq_band"] = export["active_days"].apply(_freq_band)
+            export["days_since_band"] = export["days_since_last"].apply(_days_since_band)
 
-            band_df.to_excel(writer, sheet_name="Login Freq Breakdown", index=False)
-            ds_df.to_excel(writer, sheet_name="Days Since Breakdown", index=False)
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                meta = pd.DataFrame({
+                    "Metric": [
+                        "Report", "Date Range", "Enrolled", "Logged In",
+                        "Not Logged In", "Login Rate",
+                        "Avg Total Hits (active)", "Avg Active Days (active)",
+                    ],
+                    "Value": [
+                        name, date_label, total, logged_in,
+                        not_logged_in, f"{login_rate:.1f}%",
+                        f"{avg_hits:.1f}", f"{avg_days:.1f}",
+                    ],
+                })
+                meta.to_excel(writer, sheet_name="Summary", index=False)
 
-        st.download_button(
-            "📥 Download Excel Report",
-            data=buffer.getvalue(),
-            file_name=f"CAG_Login_{name.replace('.xls', '')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary",
-        )
+                export_cols = [
+                    "student_name", "student_code", "total_hits", "active_days",
+                    "first_active", "last_active", "days_since_last",
+                    "logged_in", "freq_band", "days_since_band",
+                ]
+                for extra in ["course_code", "discipline_class", "discipline_teacher", "teacher"]:
+                    if extra in export.columns:
+                        export_cols.insert(2, extra)
+                export_cols = [c for c in export_cols if c in export.columns]
+                export[export_cols].to_excel(writer, sheet_name="Per Student", index=False)
+
+                band_df.to_excel(writer, sheet_name="Login Freq Breakdown", index=False)
+                ds_df.to_excel(writer, sheet_name="Days Since Breakdown", index=False)
+
+            st.download_button(
+                "📥 Download Summary Report",
+                data=buffer.getvalue(),
+                file_name=f"CAG_Login_{name.replace('.xls', '')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+
+        # ── Subject Login Report format export ────────────────────
+        with col_exp2:
+            st.markdown("**Subject Login Report**")
+            st.caption("Compatible with the Engagement Report page.")
+
+            login_buf = _build_login_report_xlsx(summary, d_min, d_max)
+
+            st.download_button(
+                "📥 Download as Login Report",
+                data=login_buf,
+                file_name=f"Login_Report_{name.replace('.xls', '')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+            )
 
 
 # ------------------------------------------------------------------
