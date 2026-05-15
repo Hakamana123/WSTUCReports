@@ -196,25 +196,97 @@ def _days_since_band(days_since) -> str:
 
 
 def _build_login_report_xlsx(
-    summary: pd.DataFrame,
+    classlist: pd.DataFrame,
+    full_date_hits: pd.DataFrame,
     window_start: date,
     window_end: date,
 ) -> bytes:
     """
     Build an .xlsx file that matches the vUWS Subject Login Report format.
 
+    NLI/LI split is based on whether the student was active during
+    [window_start, window_end].  Metrics (days_since, last_login,
+    total_logins) are computed from the FULL historical data so that
+    pre-window activity is preserved — students who logged in before
+    the window are NOT marked as NEVER.
+
     Two sections:
-      1. Students who have NOT logged in (logged_in == False)
+      1. Students who have NOT logged in during the window
          SURNAME at col 8, FIRST NAME at col 17, STUDENT ID at col 23,
          EMAIL at col 28, DAYS SINCE at col 40, LAST LOGIN at col 45,
          TOTAL LOGINS at col 49
-      2. Students who HAVE logged in (logged_in == True)
+      2. Students who HAVE logged in during the window
          SURNAME at col 6, FIRST NAME at col 16, STUDENT ID at col 22,
          EMAIL at col 27, DAYS SINCE at col 39, LAST LOGIN at col 44,
          TOTAL LOGINS at col 48
     """
     from openpyxl import Workbook
 
+    # ── Build full-history summary for metrics ────────────────────
+    valid_codes = set(classlist["student_code"].astype(str).str.strip())
+
+    if not full_date_hits.empty:
+        real = full_date_hits[
+            (full_date_hits["student_code"].isin(valid_codes)) &
+            (full_date_hits["hits"] > 0)
+        ].copy()
+    else:
+        real = pd.DataFrame(columns=["student_code", "date", "hits"])
+
+    if not real.empty:
+        agg = (
+            real.groupby("student_code")
+            .agg(
+                total_hits=("hits", "sum"),
+                active_days=("date", "nunique"),
+                last_active=("date", "max"),
+            )
+            .reset_index()
+        )
+    else:
+        agg = pd.DataFrame(columns=[
+            "student_code", "total_hits", "active_days", "last_active",
+        ])
+
+    cl = classlist.copy()
+    cl["student_code"] = cl["student_code"].astype(str).str.strip()
+    full_summary = cl.merge(agg, on="student_code", how="left")
+    full_summary["total_hits"] = full_summary["total_hits"].fillna(0).astype(int)
+    full_summary["active_days"] = full_summary["active_days"].fillna(0).astype(int)
+
+    # Days since last activity relative to window end
+    def _days_since(row):
+        if pd.isna(row.get("last_active")):
+            return None
+        last = row["last_active"]
+        if isinstance(last, pd.Timestamp):
+            last = last.date()
+        return (window_end - last).days
+
+    full_summary["days_since_last"] = full_summary.apply(_days_since, axis=1)
+
+    # ── Determine who was active IN THE WINDOW ────────────────────
+    if not full_date_hits.empty:
+        window_mask = (
+            (full_date_hits["date"] >= pd.Timestamp(window_start)) &
+            (full_date_hits["date"] <= pd.Timestamp(window_end)) &
+            (full_date_hits["hits"] > 0) &
+            (full_date_hits["student_code"].isin(valid_codes))
+        )
+        active_in_window = set(
+            full_date_hits.loc[window_mask, "student_code"].unique()
+        )
+    else:
+        active_in_window = set()
+
+    not_logged_in = full_summary[
+        ~full_summary["student_code"].isin(active_in_window)
+    ].copy()
+    logged_in_df = full_summary[
+        full_summary["student_code"].isin(active_in_window)
+    ].copy()
+
+    # ── Build workbook ────────────────────────────────────────────
     wb = Workbook()
     ws = wb.active
     ws.title = "Subject Login Report Drill"
@@ -223,9 +295,6 @@ def _build_login_report_xlsx(
     ws.cell(1, 1, "Subject Login Report")
 
     # Row 3: Window date range
-    ws_str = window_start.strftime("%-d/%m/%Y") if hasattr(window_start, "strftime") else str(window_start)
-    we_str = window_end.strftime("%-d/%m/%Y") if hasattr(window_end, "strftime") else str(window_end)
-    # Handle Windows date formatting (no %-d)
     try:
         ws_str = window_start.strftime("%-d/%m/%Y")
         we_str = window_end.strftime("%-d/%m/%Y")
@@ -234,18 +303,14 @@ def _build_login_report_xlsx(
         we_str = window_end.strftime("%d/%m/%Y").lstrip("0")
     ws.cell(3, 9, f"Students who have logged in between {ws_str} to {we_str}")
 
-    # Split students
-    not_logged_in = summary[~summary["logged_in"]].copy()
-    logged_in_df = summary[summary["logged_in"]].copy()
-
     # ── NLI section ───────────────────────────────────────────────
     nli_hdr_row = 5
-    # NLI column positions (1-based, matching vUWS format)
     NLI = {"SURNAME": 8, "FIRST NAME": 17, "STUDENT ID": 23,
            "EMAIL": 28, "DAYS SINCE LAST LOGIN": 40,
            "LAST LOGIN DATE": 45, "TOTAL LOGINS": 49}
 
-    ws.cell(nli_hdr_row - 1, 8, f"Students who have NOT logged in between {ws_str} to {we_str}")
+    ws.cell(nli_hdr_row - 1, 8,
+            f"Students who have NOT logged in between {ws_str} to {we_str}")
 
     for col_name, col_idx in NLI.items():
         ws.cell(nli_hdr_row, col_idx, col_name)
@@ -258,7 +323,7 @@ def _build_login_report_xlsx(
         email = s.get("email_address", "")
         days = s.get("days_since_last")
         last_active = s.get("last_active")
-        total = int(s.get("total_hits", 0))
+        total = int(s.get("active_days", 0))
 
         ws.cell(row, NLI["SURNAME"], last_name if pd.notna(last_name) else "")
         ws.cell(row, NLI["FIRST NAME"], first_name if pd.notna(first_name) else "")
@@ -280,7 +345,8 @@ def _build_login_report_xlsx(
           "EMAIL": 27, "DAYS SINCE LAST LOGIN": 39,
           "LAST LOGIN DATE": 44, "TOTAL LOGINS": 48}
 
-    ws.cell(li_hdr_row - 1, 6, f"Students who have logged in between {ws_str} to {we_str}")
+    ws.cell(li_hdr_row - 1, 6,
+            f"Students who have logged in between {ws_str} to {we_str}")
 
     for col_name, col_idx in LI.items():
         ws.cell(li_hdr_row, col_idx, col_name)
@@ -293,13 +359,14 @@ def _build_login_report_xlsx(
         email = s.get("email_address", "")
         days = s.get("days_since_last")
         last_active = s.get("last_active")
-        total = int(s.get("total_hits", 0))
+        total = int(s.get("active_days", 0))
 
         ws.cell(row, LI["SURNAME"], last_name if pd.notna(last_name) else "")
         ws.cell(row, LI["FIRST NAME"], first_name if pd.notna(first_name) else "")
         ws.cell(row, LI["STUDENT ID"], sid)
         ws.cell(row, LI["EMAIL"], email if pd.notna(email) else "")
-        ws.cell(row, LI["DAYS SINCE LAST LOGIN"], int(days) if pd.notna(days) else 0)
+        ws.cell(row, LI["DAYS SINCE LAST LOGIN"],
+                int(days) if pd.notna(days) else 0)
         if pd.notna(last_active):
             la = last_active
             if isinstance(la, pd.Timestamp):
@@ -421,14 +488,16 @@ with st.spinner("Parsing Overall Usage Reports…"):
     for uf in uploaded_files:
         try:
             path = _save_upload(uf)
-            date_hits = p_overall.parse_date_section(path)
+            full_date_hits = p_overall.parse_date_section(path)
+            date_hits = full_date_hits  # default: unfiltered
 
-            # Apply date filter if set
+            # Apply date filter if set (for dashboard views only;
+            # full_date_hits is preserved for the login report export)
             if use_date_filter and filter_start and filter_end:
                 if not date_hits.empty:
-                    date_hits = date_hits[
-                        (date_hits["date"] >= pd.Timestamp(filter_start)) &
-                        (date_hits["date"] <= pd.Timestamp(filter_end))
+                    date_hits = full_date_hits[
+                        (full_date_hits["date"] >= pd.Timestamp(filter_start)) &
+                        (full_date_hits["date"] <= pd.Timestamp(filter_end))
                     ]
 
             # Auto-detect report end date from the latest date in the data
@@ -449,6 +518,7 @@ with st.spinner("Parsing Overall Usage Reports…"):
             reports.append({
                 "name": uf.name,
                 "date_hits": date_hits,
+                "full_date_hits": full_date_hits,
                 "summary": summary,
                 "matched": matched,
                 "total_in_file": len(hits_ids),
@@ -766,9 +836,15 @@ def render_single_report(rpt: dict, show_title: bool = True):
         # ── Subject Login Report format export ────────────────────
         with col_exp2:
             st.markdown("**Subject Login Report**")
-            st.caption("Compatible with the Engagement Report page.")
+            st.caption(
+                "Compatible with the Engagement Report page. "
+                "NLI/LI split based on activity within the dashboard "
+                "date range; historical metrics preserved."
+            )
 
-            login_buf = _build_login_report_xlsx(summary, d_min, d_max)
+            login_buf = _build_login_report_xlsx(
+                classlist, rpt["full_date_hits"], d_min, d_max,
+            )
 
             st.download_button(
                 "📥 Download as Login Report",
