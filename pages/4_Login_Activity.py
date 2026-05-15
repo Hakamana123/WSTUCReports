@@ -838,12 +838,33 @@ def render_single_report(rpt: dict, show_title: bool = True):
             st.markdown("**Subject Login Report**")
             st.caption(
                 "Compatible with the Engagement Report page. "
-                "NLI/LI split based on activity within the dashboard "
-                "date range; historical metrics preserved."
+                "NLI/LI split based on activity within the login "
+                "window below; historical metrics preserved for "
+                "students outside the window."
             )
 
+            # Login report window — determines which students go
+            # into NLI vs LI.  Defaults to the last 7 days of data
+            # (approximating one teaching week).
+            default_lr_end = d_max
+            default_lr_start = d_max - timedelta(days=6)
+
+            lr_col1, lr_col2 = st.columns(2)
+            with lr_col1:
+                lr_start = st.date_input(
+                    "Window start",
+                    value=default_lr_start,
+                    key=f"lr_start_{name}",
+                )
+            with lr_col2:
+                lr_end = st.date_input(
+                    "Window end",
+                    value=default_lr_end,
+                    key=f"lr_end_{name}",
+                )
+
             login_buf = _build_login_report_xlsx(
-                classlist, rpt["full_date_hits"], d_min, d_max,
+                classlist, rpt["full_date_hits"], lr_start, lr_end,
             )
 
             st.download_button(
