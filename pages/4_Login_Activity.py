@@ -400,7 +400,7 @@ uploaded_files = st.sidebar.file_uploader(
     "Overall Usage Report(s)",
     type=["xls"],
     accept_multiple_files=True,
-    help="SpreadsheetML XML format from vUWS. Upload multiple for comparison.",
+    help="SpreadsheetML XML format from vUWS. Upload multiple to combine or compare.",
     key="la_overall",
 )
 
@@ -431,7 +431,9 @@ if not class_file or not uploaded_files:
         "preview users, staff, and other non-student accounts are "
         "excluded automatically.\n\n"
         "This report replicates the Subject Login Report metrics using "
-        "the Overall Summary of Usage data."
+        "the Overall Summary of Usage data.\n\n"
+        "**Tip:** Upload multiple reports covering different date ranges "
+        "and use **Combined** mode to merge them into a single view."
     )
     st.stop()
 
@@ -877,6 +879,84 @@ def render_single_report(rpt: dict, show_title: bool = True):
 
 
 # ------------------------------------------------------------------
+# Multi-report: merge into a single combined dataset
+# ------------------------------------------------------------------
+
+def _merge_reports(
+    reports_list: list[dict],
+    classlist_df: pd.DataFrame,
+) -> dict:
+    """
+    Combine date_hits from multiple reports into a single unified
+    dataset, then build one summary.
+
+    If the same student appears on the same date in more than one
+    report, hits are summed (handles any accidental overlap).
+    """
+    all_date_hits = []
+    all_full_date_hits = []
+
+    for rpt in reports_list:
+        if not rpt["date_hits"].empty:
+            all_date_hits.append(rpt["date_hits"])
+        if not rpt["full_date_hits"].empty:
+            all_full_date_hits.append(rpt["full_date_hits"])
+
+    # ── Merge filtered date_hits ──────────────────────────────────
+    if all_date_hits:
+        combined_hits = pd.concat(all_date_hits, ignore_index=True)
+        combined_hits = (
+            combined_hits
+            .groupby(["student_code", "date"])
+            .agg(hits=("hits", "sum"))
+            .reset_index()
+        )
+    else:
+        combined_hits = pd.DataFrame(columns=["student_code", "date", "hits"])
+
+    # ── Merge full (unfiltered) date_hits ─────────────────────────
+    if all_full_date_hits:
+        combined_full = pd.concat(all_full_date_hits, ignore_index=True)
+        combined_full = (
+            combined_full
+            .groupby(["student_code", "date"])
+            .agg(hits=("hits", "sum"))
+            .reset_index()
+        )
+    else:
+        combined_full = pd.DataFrame(columns=["student_code", "date", "hits"])
+
+    # ── Determine report end date ─────────────────────────────────
+    if not combined_hits.empty:
+        report_end_date = combined_hits["date"].max()
+        if isinstance(report_end_date, pd.Timestamp):
+            report_end_date = report_end_date.date()
+    else:
+        report_end_date = date.today()
+
+    summary = _build_summary(combined_hits, classlist_df, report_end_date)
+
+    hits_ids = (
+        set(combined_hits["student_code"].unique())
+        if not combined_hits.empty else set()
+    )
+    class_ids = set(classlist_df["student_code"])
+    matched = len(class_ids & hits_ids)
+
+    report_names = [r["name"] for r in reports_list]
+
+    return {
+        "name": "Combined (" + ", ".join(report_names) + ")",
+        "date_hits": combined_hits,
+        "full_date_hits": combined_full,
+        "summary": summary,
+        "matched": matched,
+        "total_in_file": len(hits_ids),
+        "report_end_date": report_end_date,
+    }
+
+
+# ------------------------------------------------------------------
 # Multi-report comparison
 # ------------------------------------------------------------------
 
@@ -992,8 +1072,15 @@ def render_comparison(reports_list: list[dict]):
 if len(reports) == 1:
     render_single_report(reports[0])
 else:
-    view_mode = st.sidebar.radio("View", ["Comparison", "Individual Reports"], key="la_view")
-    if view_mode == "Comparison":
+    view_mode = st.sidebar.radio(
+        "View",
+        ["Combined", "Comparison", "Individual Reports"],
+        key="la_view",
+    )
+    if view_mode == "Combined":
+        combined = _merge_reports(reports, classlist)
+        render_single_report(combined)
+    elif view_mode == "Comparison":
         render_comparison(reports)
     else:
         selected = st.sidebar.selectbox(
