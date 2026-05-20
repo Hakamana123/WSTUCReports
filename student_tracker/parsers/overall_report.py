@@ -8,6 +8,12 @@ The report has multiple sections; we extract:
     one sub-table per calendar month)
   - Per-student per-LMS-area hit counts (the second 'Access / Application'
     sub-table) — used for the 'most active area' context per student.
+
+Supports two date-section layouts:
+  1. Native Blackboard: month sub-tables with YYYY-MM header in col 2,
+     day numbers in cols 3+, student names in col 2.
+  2. Flat ISO (legacy builder): single table with YYYY-MM-DD column
+     headers in cols 2+, student names in col 1.
 """
 
 import re
@@ -21,6 +27,7 @@ SS = "{urn:schemas-microsoft-com:office:spreadsheet}"
 
 STUDENT_RE = re.compile(r"^(.*?)\s*\((\w+)\)\s*$")
 MONTH_RE = re.compile(r"^(\d{4})-(\d{2})$")
+ISO_DATE_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 
 
 def _cells_by_idx(row) -> dict[int, str]:
@@ -55,9 +62,11 @@ def _extract_student_code(cell_value: str) -> str | None:
 def parse_date_section(path: str) -> pd.DataFrame:
     """Return long-format DataFrame: student_code, date, hits.
 
-    Walks the 'Access / Date' section which contains one sub-table per
-    calendar month. Each month sub-table has a header row with the month
-    label in col 2 and day numbers in subsequent sparse columns.
+    Handles two layouts:
+      1. Month sub-tables (native Blackboard): YYYY-MM header in col 2,
+         day numbers in cols 3+, student names in col 2.
+      2. Flat ISO (legacy builder output): YYYY-MM-DD headers in a single
+         row, student names in col 1.
     """
     rows = _all_rows(path)
     records: list[dict] = []
@@ -66,6 +75,10 @@ def parse_date_section(path: str) -> pd.DataFrame:
     current_year = None
     current_month = None
     current_day_cols: dict[int, int] = {}  # col_idx -> day_number
+
+    # Flat ISO fallback state
+    flat_mode = False
+    flat_date_cols: dict[int, date] = {}   # col_idx -> date
 
     for row in rows:
         cells = _cells_by_idx(row)
@@ -82,13 +95,14 @@ def parse_date_section(path: str) -> pd.DataFrame:
         if col1.startswith("Access /") and col1 != "Access / Date":
             break
 
-        # Detect a month header row: col 2 matches YYYY-MM
         col2 = cells.get(2, "").strip()
+
+        # ── Try month sub-table header (native format) ────────────
         m = MONTH_RE.match(col2)
         if m:
+            flat_mode = False
             current_year = int(m.group(1))
             current_month = int(m.group(2))
-            # Map column indices to day numbers
             current_day_cols = {}
             for col_idx, val in cells.items():
                 if col_idx <= 2:
@@ -98,11 +112,53 @@ def parse_date_section(path: str) -> pd.DataFrame:
                     current_day_cols[col_idx] = int(v)
             continue
 
+        # ── Try flat ISO header row (legacy builder format) ───────
+        # Detected by: col 1 = "Student" and multiple cols have
+        # YYYY-MM-DD values.
+        if col1 == "Student" and not flat_mode and current_year is None:
+            candidate_dates = {}
+            for col_idx, val in cells.items():
+                if col_idx <= 1:
+                    continue
+                v = val.strip() if val else ""
+                dm = ISO_DATE_RE.match(v)
+                if dm:
+                    try:
+                        candidate_dates[col_idx] = date(
+                            int(dm.group(1)), int(dm.group(2)), int(dm.group(3))
+                        )
+                    except ValueError:
+                        pass
+            if candidate_dates:
+                flat_mode = True
+                flat_date_cols = candidate_dates
+                continue
+
+        # ── Flat mode: student data rows ──────────────────────────
+        if flat_mode:
+            student_code = _extract_student_code(col1)
+            if not student_code:
+                continue
+            for col_idx, d in flat_date_cols.items():
+                raw = cells.get(col_idx, "")
+                if raw is None or raw == "":
+                    continue
+                try:
+                    hits = int(raw)
+                except (ValueError, TypeError):
+                    continue
+                records.append({
+                    "student_code": student_code,
+                    "date": d,
+                    "hits": hits,
+                })
+            continue
+
+        # ── Month sub-table mode: student data rows ───────────────
         # Skip Total rows and Guest rows
         if col2 in ("Total", "Guest", "") or current_year is None:
             continue
 
-        # Student data row
         student_code = _extract_student_code(col2)
         if not student_code:
             continue
@@ -118,7 +174,6 @@ def parse_date_section(path: str) -> pd.DataFrame:
             try:
                 d = date(current_year, current_month, day)
             except ValueError:
-                # Day-out-of-range for the month (e.g., Feb 30); skip
                 continue
             records.append({
                 "student_code": student_code,
@@ -129,7 +184,6 @@ def parse_date_section(path: str) -> pd.DataFrame:
     df = pd.DataFrame(records)
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"])
-        # Aggregate any duplicates (defensive — shouldn't occur)
         df = df.groupby(["student_code", "date"], as_index=False)["hits"].sum()
     return df
 
@@ -139,6 +193,8 @@ def parse_area_section(path: str) -> pd.DataFrame:
 
     Long-format: student_code, area, hits. Used for showing each student's
     most-active LMS area as supplementary context.
+
+    Handles student names in either col 1 or col 2.
     """
     rows = _all_rows(path)
     records: list[dict] = []
@@ -146,6 +202,7 @@ def parse_area_section(path: str) -> pd.DataFrame:
     in_section = False
     in_per_student_table = False
     area_cols: dict[int, str] = {}
+    student_col: int = 2  # default: col 2 (native format)
 
     for row in rows:
         cells = _cells_by_idx(row)
@@ -157,30 +214,46 @@ def parse_area_section(path: str) -> pd.DataFrame:
             in_section = True
             continue
 
-        # Stop when we hit the next major section (Access / Date, Hour, etc.)
+        # Stop when we hit the next major section
         if in_section and col1.startswith("Access /") and col1 != "Access / Application":
             break
 
         if not in_section:
             continue
 
-        # Per-student sub-table header: col 2 empty, area names in later columns
-        # Heuristic: a row where col 2 is empty AND multiple later columns have
-        # text values that look like LMS area names (lowercase with hyphens).
-        if not col2 and len(cells) > 5:
-            candidate_areas = {
-                idx: val.strip() for idx, val in cells.items()
-                if idx > 2 and val and not val.strip().isdigit()
-            }
-            if len(candidate_areas) > 5:
-                area_cols = candidate_areas
-                in_per_student_table = True
-                continue
+        # Per-student sub-table header detection.
+        # Native format: col 2 empty, area names in cols > 2.
+        # Legacy builder: col 1 = "Student", area names in cols > 1.
+        if not in_per_student_table:
+            # Try native format: col 2 empty, many text values in cols > 2
+            if not col2 and len(cells) > 5:
+                candidate_areas = {
+                    idx: val.strip() for idx, val in cells.items()
+                    if idx > 2 and val and not val.strip().isdigit()
+                }
+                if len(candidate_areas) > 5:
+                    area_cols = candidate_areas
+                    student_col = 2
+                    in_per_student_table = True
+                    continue
+
+            # Try legacy builder format: col 1 = "Student"
+            if col1 == "Student" and len(cells) > 5:
+                candidate_areas = {
+                    idx: val.strip() for idx, val in cells.items()
+                    if idx > 1 and val and not val.strip().isdigit()
+                }
+                if len(candidate_areas) > 5:
+                    area_cols = candidate_areas
+                    student_col = 1
+                    in_per_student_table = True
+                    continue
 
         if not in_per_student_table or not area_cols:
             continue
 
-        student_code = _extract_student_code(col2)
+        student_val = cells.get(student_col, "").strip()
+        student_code = _extract_student_code(student_val)
         if not student_code:
             continue
 
