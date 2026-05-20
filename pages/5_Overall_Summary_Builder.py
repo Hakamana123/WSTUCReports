@@ -889,13 +889,53 @@ if joined.empty:
     st.stop()
 
 
+# -- Date range filter ---------------------------------------------
+
+full_joined = joined.copy()  # preserve unfiltered for export option
+
+data_min = joined["ts"].min().date()
+data_max = joined["ts"].max().date()
+
+with st.sidebar:
+    st.divider()
+    st.markdown("**Date range filter**")
+    use_date_filter = st.checkbox(
+        "Filter to specific date range", value=False, key="osb_date_filter",
+    )
+    if use_date_filter:
+        filter_start = st.date_input(
+            "From", value=data_min, min_value=data_min, max_value=data_max,
+            key="osb_from",
+        )
+        filter_end = st.date_input(
+            "To", value=data_max, min_value=data_min, max_value=data_max,
+            key="osb_to",
+        )
+        joined = joined[
+            (joined["ts"].dt.date >= filter_start) &
+            (joined["ts"].dt.date <= filter_end)
+        ]
+        if joined.empty:
+            st.warning("No events in the selected date range.")
+            st.stop()
+        st.caption(
+            f"Showing {filter_start.strftime('%d %b')} – "
+            f"{filter_end.strftime('%d %b %Y')} "
+            f"({len(joined):,} events)"
+        )
+
+
 # -- Headline metrics ----------------------------------------------
 
-mc1, mc2, mc3, mc4 = st.columns(4)
+mc1, mc2, mc3, mc4, mc5 = st.columns(5)
 mc1.metric("Files uploaded", len(activity_files))
 mc2.metric("Raw events", f"{len(activity):,}")
-mc3.metric("Matched events", f"{len(joined):,}")
+mc3.metric("Matched events", f"{len(full_joined):,}")
 mc4.metric("Students matched", joined["display"].nunique())
+if use_date_filter:
+    mc5.metric("Filtered events", f"{len(joined):,}")
+else:
+    mc5.metric("Date range", f"{data_min.strftime('%d %b')} – {data_max.strftime('%d %b %Y')}")
 
 
 # -- Event → Area ID mapping (collapsible) -------------------------
@@ -1316,6 +1356,20 @@ with tab_export:
             "dashboard and other CAG tools."
         )
 
+        # If date-filtered, offer choice of export scope
+        export_scope = "filtered"
+        if use_date_filter:
+            export_scope = st.radio(
+                "Export scope",
+                ["filtered", "full"],
+                format_func=lambda x: (
+                    f"Filtered ({filter_start.strftime('%d %b')} – "
+                    f"{filter_end.strftime('%d %b %Y')})"
+                    if x == "filtered" else "Full date range (all data)"
+                ),
+                key="osb_export_scope",
+            )
+
         title = st.text_input(
             "Report title", value="Overall Summary of User Activity",
             key="osb_title",
@@ -1325,21 +1379,25 @@ with tab_export:
             key="osb_filename",
         )
 
-        # Ensure section data is built
-        if "app_agg" not in dir():
-            students = sorted(mapped["display"].unique())
-            extra = sorted({v for v in mapping.values() if v and v not in STANDARD_AREA_IDS})
-            area_ids = STANDARD_AREA_IDS + extra
-            app_agg, app_total = build_application_aggregate(mapped, area_ids)
-            app_xtab = build_application_crosstab(mapped, students, area_ids)
-            date_xtab, all_days = build_date_crosstab(mapped, students)
-            hour_agg = build_hour_aggregate(mapped)
-            dow_agg = build_dayofweek_aggregate(mapped)
+        # Build export data from the right source
+        if export_scope == "full" and use_date_filter:
+            export_mapped = apply_event_mapping(full_joined, mapping)
+        else:
+            export_mapped = mapped
+
+        exp_students = sorted(export_mapped["display"].unique())
+        exp_extra = sorted({v for v in mapping.values() if v and v not in STANDARD_AREA_IDS})
+        exp_area_ids = STANDARD_AREA_IDS + exp_extra
+        exp_app_agg, exp_app_total = build_application_aggregate(export_mapped, exp_area_ids)
+        exp_app_xtab = build_application_crosstab(export_mapped, exp_students, exp_area_ids)
+        exp_date_xtab, exp_all_days = build_date_crosstab(export_mapped, exp_students)
+        exp_hour_agg = build_hour_aggregate(export_mapped)
+        exp_dow_agg = build_dayofweek_aggregate(export_mapped)
 
         xml_bytes = write_spreadsheetml(
-            app_agg, app_total, app_xtab,
-            date_xtab, all_days,
-            hour_agg, dow_agg,
+            exp_app_agg, exp_app_total, exp_app_xtab,
+            exp_date_xtab, exp_all_days,
+            exp_hour_agg, exp_dow_agg,
             title=title,
         )
         st.download_button(
