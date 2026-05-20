@@ -524,8 +524,11 @@ NS = "urn:schemas-microsoft-com:office:spreadsheet"
 SS = f"{{{NS}}}"
 
 
-def _cell(row, value, cell_type: Optional[str] = None):
-    c = ET.SubElement(row, f"{SS}Cell")
+def _cell(row, value, cell_type: Optional[str] = None, index: Optional[int] = None):
+    attrs = {}
+    if index is not None:
+        attrs[f"{SS}Index"] = str(index)
+    c = ET.SubElement(row, f"{SS}Cell", attrs)
     if value is None or (isinstance(value, str) and value == ""):
         return c
     if cell_type is None:
@@ -557,6 +560,18 @@ def write_spreadsheetml(
     dow_agg: pd.DataFrame,
     title: str = "Overall Summary of User Activity",
 ) -> bytes:
+    """Write SpreadsheetML matching the native Blackboard Overall format.
+
+    Key layout rules (to match overall_report.py parser):
+      - Application per-student table: student names in col 2,
+        area IDs in cols 3+.  NO separate sub-section header.
+      - Date section: one sub-table per calendar month.
+        Month header has YYYY-MM in col 2, day numbers in cols 3+.
+        Student data rows have display name in col 2.
+    """
+    from collections import defaultdict
+    import calendar
+
     ET.register_namespace("", NS)
     ET.register_namespace("o", "urn:schemas-microsoft-com:office:office")
     ET.register_namespace("x", "urn:schemas-microsoft-com:office:excel")
@@ -578,7 +593,7 @@ def write_spreadsheetml(
 
     _cell(_row(table), title)
 
-    # Section 1a: Access / Application (aggregate)
+    # ── Section 1a: Access / Application (aggregate) ──────────────
     _cell(_row(table), "Access / Application")
     r = _row(table)
     _cell(r, "Area ID"); _cell(r, "Hits"); _cell(r, "Per cent")
@@ -593,40 +608,70 @@ def write_spreadsheetml(
 
     _blank_row(table)
 
-    # Section 1b: Access / Application (per student)
-    _cell(_row(table), "Access / Application (per student)")
+    # ── Section 1b: Access / Application (per student) ────────────
+    # No sub-section header — parser exits on "Access / ..." lines.
+    # Header row: col 1 empty, col 2 empty, area IDs from col 3.
+    area_cols_list = [c for c in app_xtab.columns if c != "Total"]
     r = _row(table)
-    _cell(r, "Student")
-    for a in app_xtab.columns:
-        _cell(r, a)
+    _cell(r, None)                      # col 1 empty
+    _cell(r, None)                      # col 2 empty
+    for a in area_cols_list:
+        _cell(r, a)                     # cols 3+
+    _cell(r, "Total")
+
     for student in app_xtab.index:
         r = _row(table)
-        _cell(r, student)
-        for v in app_xtab.loc[student].tolist():
-            _cell(r, int(v))
+        _cell(r, None)                  # col 1 empty
+        _cell(r, student)               # col 2 = display name
+        for a in area_cols_list:
+            _cell(r, int(app_xtab.loc[student, a]))
+        _cell(r, int(app_xtab.loc[student, "Total"]))
 
     _blank_row(table)
 
-    # Section 2: Access / Date
+    # ── Section 2: Access / Date (month sub-tables) ───────────────
     _cell(_row(table), "Access / Date")
-    r = _row(table)
-    _cell(r, "Student")
-    for d in all_days:
-        _cell(r, d.strftime("%Y-%m-%d"))
+
     if all_days:
-        _cell(r, "Total")
-    for student in date_xtab.index:
-        r = _row(table)
-        _cell(r, student)
-        if all_days:
-            for d in all_days:
-                key = d.date() if hasattr(d, "date") else d
-                _cell(r, int(date_xtab.loc[student, key]))
-            _cell(r, int(date_xtab.loc[student, "Total"]))
+        # Group days by YYYY-MM
+        months: dict[str, list] = defaultdict(list)
+        for d in all_days:
+            dt = d.date() if hasattr(d, "date") else d
+            key = f"{dt.year}-{dt.month:02d}"
+            months[key].append(dt)
+
+        for month_key in sorted(months.keys()):
+            days_in_month = sorted(months[month_key])
+
+            # Month header: col 2 = YYYY-MM, cols 3+ = day numbers
+            r = _row(table)
+            _cell(r, None)                      # col 1 empty
+            _cell(r, month_key)                 # col 2 = YYYY-MM
+            for dt in days_in_month:
+                _cell(r, dt.day)                # day numbers
+
+            # Student rows: col 2 = display name, cols 3+ = hits
+            for student in date_xtab.index:
+                r = _row(table)
+                _cell(r, None)                  # col 1 empty
+                _cell(r, student)               # col 2 = display name
+                for dt in days_in_month:
+                    key_dt = dt
+                    val = int(date_xtab.loc[student, key_dt]) if key_dt in date_xtab.columns else 0
+                    _cell(r, val)
+
+            # Total row for this month
+            r = _row(table)
+            _cell(r, None)
+            _cell(r, "Total")
+            for dt in days_in_month:
+                key_dt = dt
+                col_total = int(date_xtab[key_dt].sum()) if key_dt in date_xtab.columns else 0
+                _cell(r, col_total)
 
     _blank_row(table)
 
-    # Section 3: Access / Hour of Day
+    # ── Section 3: Access / Hour of Day ───────────────────────────
     _cell(_row(table), "Access / Hour of Day")
     r = _row(table)
     _cell(r, "Hour of Day"); _cell(r, "Hits"); _cell(r, "Per cent")
@@ -638,7 +683,7 @@ def write_spreadsheetml(
 
     _blank_row(table)
 
-    # Section 4: Access / Day of Week
+    # ── Section 4: Access / Day of Week ───────────────────────────
     _cell(_row(table), "Access / Day of Week")
     r = _row(table)
     _cell(r, "Day of Week"); _cell(r, "Hits"); _cell(r, "Per cent")
