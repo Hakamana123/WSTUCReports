@@ -284,6 +284,162 @@ def _parse_date(s):
 
 
 # ===========================================================================
+# GRADE CENTRE PARSING  (mirrors engagement_report_app.py)
+# ===========================================================================
+def load_grade_centre(file_bytes):
+    import csv as _csv
+    text = file_bytes.decode('utf-16-le')
+    if text and text[0] == '\ufeff':
+        text = text[1:]
+    reader = _csv.reader(text.splitlines(), delimiter='\t')
+    headers_raw = next(reader)
+    rows = list(reader)
+    headers = [h.strip().strip('"') for h in headers_raw]
+    sid_col = None
+    for i, h in enumerate(headers):
+        if h.lower() in ('username', 'student id'):
+            sid_col = i
+            break
+    if sid_col is None:
+        raise ValueError("Grade Centre: cannot find Username or Student ID column.")
+    avail_col = None
+    for i, h in enumerate(headers):
+        if h.lower() == 'availability':
+            avail_col = i
+            break
+
+    def short_name(h):
+        return h.split('[')[0].strip() if '[' in h else h.strip()
+
+    primary_cols = []
+    resubmit_cols = []
+    for i, h in enumerate(headers):
+        sn = short_name(h).lower()
+        if not sn.startswith('assessment'):
+            continue
+        if 'resubmit' in sn or 'resubmission' in sn:
+            resubmit_cols.append((i, short_name(h)))
+        else:
+            primary_cols.append((i, short_name(h)))
+    collated_nums = set()
+    for _, name in primary_cols:
+        if 'collated' in name.lower() or 'total' in name.lower().split('assessment')[-1]:
+            m = re.search(r'Assessment\s+(\d+)', name, re.IGNORECASE)
+            if m:
+                collated_nums.add(m.group(1))
+    selected = []
+    seen_nums = set()
+    for i, name in primary_cols:
+        m = re.search(r'Assessment\s+(\d+)', name, re.IGNORECASE)
+        if not m:
+            continue
+        num = m.group(1)
+        is_collated = ('collated' in name.lower()
+                       or 'total' in name.lower().split('assessment')[-1].split(':')[0])
+        if num in collated_nums:
+            if is_collated and num not in seen_nums:
+                selected.append((i, name, num))
+                seen_nums.add(num)
+        else:
+            if num not in seen_nums:
+                selected.append((i, name, num))
+                seen_nums.add(num)
+    selected.sort(key=lambda x: int(x[2]))
+    resub_map = {}
+    for i, name in resubmit_cols:
+        m = re.search(r'Assessment\s+(\d+)', name, re.IGNORECASE)
+        if m:
+            num = m.group(1)
+            if num in seen_nums:
+                resub_map[num] = i
+    gc_labels = [f'AS{num}' for _, _, num in selected]
+    gc_col_indices = [i for i, _, _ in selected]
+    gc_nums = [num for _, _, num in selected]
+    gc_data = {}
+    for row in rows:
+        if len(row) <= sid_col:
+            continue
+        sid = row[sid_col].strip().strip('"')
+        if not sid or not sid.isdigit():
+            continue
+        if sid.startswith('30') or sid.startswith('96'):
+            continue
+        if avail_col is not None and row[avail_col].strip().strip('"').lower() != 'yes':
+            continue
+        if 'PreviewUser' in (row[0] if row else ''):
+            continue
+        student_gc = {}
+        for label, col_idx, num in zip(gc_labels, gc_col_indices, gc_nums):
+            val = row[col_idx].strip().strip('"') if col_idx < len(row) else ''
+            resub_idx = resub_map.get(num)
+            if resub_idx is not None and resub_idx < len(row):
+                resub_val = row[resub_idx].strip().strip('"')
+                if resub_val:
+                    rv = resub_val.lower()
+                    if 'needs grading' in rv or 'needs marking' in rv:
+                        val = 'Resubmitted (Needs Grading)'
+                    elif 'unsatisf' in rv:
+                        val = 'Resub Fail (Unsatisfactory)'
+                    elif 'satisf' in rv:
+                        val = 'Resubmitted (Satisfactory)'
+                    else:
+                        try:
+                            score = float(resub_val)
+                            val = f'Resubmitted ({resub_val})' if score >= 50 else f'Resub Fail ({resub_val})'
+                        except ValueError:
+                            val = f'Resubmitted ({resub_val})'
+            student_gc[label] = 'No Submission' if val == '' else val
+        gc_data[sid] = student_gc
+    return gc_data, gc_labels
+
+
+def categorise_grade(val):
+    """Categorise a grade centre value into a status bucket."""
+    if val == 'No Submission':
+        return 'No Submission'
+    v = val.strip().lower()
+    if v in ('', 'no submission'):
+        return 'No Submission'
+    if 'needs grading' in v or 'needs marking' in v:
+        return 'Needs Marking'
+    if v.startswith('resub fail'):
+        return 'Resub Fail'
+    if v.startswith('resubmitted'):
+        return 'Resubmitted'
+    if 'unsatisf' in v:
+        return 'Unsatisfactory'
+    return 'Satisfactory'
+
+
+# Grade centre cell styling
+GC_NO_SUB_FILL = PatternFill('solid', start_color='FADBD8')
+GC_NO_SUB_FONT = Font(name='Arial', size=10, color=RED, bold=True)
+GC_RESUB_FILL = PatternFill('solid', start_color='D5F5E3')
+GC_RESUB_FONT = Font(name='Arial', size=10, color='1A7A3A', bold=True)
+GC_RESUB_FAIL_FILL = PatternFill('solid', start_color='FDEBD0')
+GC_RESUB_FAIL_FONT = Font(name='Arial', size=10, color=ORANGE, bold=True)
+GC_NEEDS_GRADING_FILL = PatternFill('solid', start_color='FEF9E7')
+
+
+def apply_gc_styling(ws, start_row, num_rows, gc_start_col, num_gc_cols):
+    """Apply conditional colour coding to grade centre cells."""
+    for ri in range(num_rows):
+        for ci in range(num_gc_cols):
+            cell = ws.cell(start_row + ri, gc_start_col + ci)
+            if cell.value == 'No Submission':
+                cell.fill = GC_NO_SUB_FILL
+                cell.font = GC_NO_SUB_FONT
+            elif isinstance(cell.value, str) and cell.value.startswith('Resub Fail'):
+                cell.fill = GC_RESUB_FAIL_FILL
+                cell.font = GC_RESUB_FAIL_FONT
+            elif isinstance(cell.value, str) and cell.value.startswith('Resubmitted'):
+                cell.fill = GC_RESUB_FILL
+                cell.font = GC_RESUB_FONT
+            elif isinstance(cell.value, str) and 'needs grading' in cell.value.lower():
+                cell.fill = GC_NEEDS_GRADING_FILL
+
+
+# ===========================================================================
 # SEGMENTATION
 # ===========================================================================
 def week_of(dt, block_start):
@@ -477,7 +633,8 @@ def fmt_week(wk):
 # WORKBOOK BUILDER
 # ===========================================================================
 def build_workbook(subject_code, results, current_week, days_into_week, is_partial,
-                   block_start, dashboard_date, counts, enrolled):
+                   block_start, dashboard_date, counts, enrolled,
+                   gc_data=None, gc_labels=None):
     wb = Workbook()
     wb.remove(wb.active)
 
@@ -573,12 +730,17 @@ def build_workbook(subject_code, results, current_week, days_into_week, is_parti
     ws.freeze_panes = 'A6'
 
     # ── Segment detail sheets ──
+    gc_active = gc_data is not None and gc_labels is not None and len(gc_labels) > 0
     col_headers = [
         'Surname', 'First Name', 'Student ID', 'Course',
         'Disc. Subject', 'Disc. Class', 'Disc. Teacher', 'Email',
         'Last Access', 'Days Since', 'Last Active Wk', 'Segment',
     ]
     col_widths = [22, 18, 14, 12, 24, 12, 20, 38, 14, 12, 14, 18]
+    if gc_active:
+        col_headers = col_headers[:-1] + gc_labels + [col_headers[-1]]
+        col_widths = col_widths[:-1] + [18] * len(gc_labels) + [col_widths[-1]]
+    seg_col_idx = len(col_headers)  # 1-based position of Segment column
 
     def _make_sheet(sheet_name, title, subtitle, desc, segment_filter, colour,
                     sub_filter=None, sort_key=None):
@@ -601,8 +763,13 @@ def build_workbook(subject_code, results, current_week, days_into_week, is_parti
                 r['last'], r['first'], r['sid'], r['course'],
                 r['discipline_subject'], r['discipline_class'], r['discipline_teacher'], r['email'],
                 fmt_date(r['last_access']), r['days_since'] if r['days_since'] is not None else '—',
-                fmt_week(r['last_week']), seg_label,
+                fmt_week(r['last_week']),
             ]
+            if gc_active:
+                sg = gc_data.get(r['sid'], {})
+                for label in gc_labels:
+                    row_data.append(sg.get(label, 'No Submission'))
+            row_data.append(seg_label)
             fill = PatternFill('solid', start_color=ALT_ROW) if ri % 2 == 0 else None
             for ci, val in enumerate(row_data, 1):
                 c = ws_s.cell(excel_row, ci, val)
@@ -615,6 +782,10 @@ def build_workbook(subject_code, results, current_week, days_into_week, is_parti
                 )
                 c.border = thin_border()
             write_seg_badge(ws_s, excel_row, len(col_headers), r['segment'], r['sub_group'])
+
+        if gc_active:
+            gc_start = 12  # column 12 is first GC col (after Last Active Wk)
+            apply_gc_styling(ws_s, 6, len(filtered), gc_start, len(gc_labels))
 
         autosize(ws_s, col_widths)
         ws_s.freeze_panes = 'A6'
@@ -669,8 +840,13 @@ def build_workbook(subject_code, results, current_week, days_into_week, is_parti
                 r['last'], r['first'], r['sid'], r['course'],
                 r['discipline_subject'], r['discipline_class'], r['discipline_teacher'], r['email'],
                 fmt_date(r['last_access']), r['days_since'] if r['days_since'] is not None else '—',
-                fmt_week(r['last_week']), seg_label,
+                fmt_week(r['last_week']),
             ]
+            if gc_active:
+                sg = gc_data.get(r['sid'], {})
+                for label in gc_labels:
+                    row_data.append(sg.get(label, 'No Submission'))
+            row_data.append(seg_label)
             fill = PatternFill('solid', start_color=ALT_ROW) if ri % 2 == 0 else None
             for ci, val in enumerate(row_data, 1):
                 c = ws_s4.cell(start_row, ci, val)
@@ -690,6 +866,22 @@ def build_workbook(subject_code, results, current_week, days_into_week, is_parti
         f'JUST DROPPED — Last access in W{current_week - 1}', RED, current_row)
     current_row = _write_subgroup(ws_s4, ls_list,
         f'LONG SILENT — Last access W2–W{max(current_week - 2, 2)}', PURPLE, current_row)
+    if gc_active:
+        # Apply styling to all data rows (skip banner rows)
+        for ri in range(6, current_row):
+            cell_val = ws_s4.cell(ri, 1).value
+            if isinstance(cell_val, str) and cell_val.startswith('▼'):
+                continue  # skip banner rows
+            for ci in range(len(gc_labels)):
+                cell = ws_s4.cell(ri, 12 + ci)
+                if cell.value == 'No Submission':
+                    cell.fill = GC_NO_SUB_FILL; cell.font = GC_NO_SUB_FONT
+                elif isinstance(cell.value, str) and cell.value.startswith('Resub Fail'):
+                    cell.fill = GC_RESUB_FAIL_FILL; cell.font = GC_RESUB_FAIL_FONT
+                elif isinstance(cell.value, str) and cell.value.startswith('Resubmitted'):
+                    cell.fill = GC_RESUB_FILL; cell.font = GC_RESUB_FONT
+                elif isinstance(cell.value, str) and 'needs grading' in cell.value.lower():
+                    cell.fill = GC_NEEDS_GRADING_FILL
     autosize(ws_s4, col_widths)
     ws_s4.freeze_panes = 'A6'
 
@@ -717,8 +909,13 @@ def build_workbook(subject_code, results, current_week, days_into_week, is_parti
             r['last'], r['first'], r['sid'], r['course'],
             r['discipline_subject'], r['discipline_class'], r['discipline_teacher'], r['email'],
             fmt_date(r['last_access']), r['days_since'] if r['days_since'] is not None else '—',
-            fmt_week(r['last_week']), seg_label,
+            fmt_week(r['last_week']),
         ]
+        if gc_active:
+            sg = gc_data.get(r['sid'], {})
+            for label in gc_labels:
+                row_data.append(sg.get(label, 'No Submission'))
+        row_data.append(seg_label)
         fill = PatternFill('solid', start_color=ALT_ROW) if ri % 2 == 0 else None
         for ci, val in enumerate(row_data, 1):
             c = ws_all.cell(excel_row, ci, val)
@@ -732,6 +929,9 @@ def build_workbook(subject_code, results, current_week, days_into_week, is_parti
             c.border = thin_border()
         write_seg_badge(ws_all, excel_row, len(col_headers), r['segment'], r['sub_group'])
 
+    if gc_active:
+        apply_gc_styling(ws_all, 6, len(all_sorted), 12, len(gc_labels))
+
     autosize(ws_all, col_widths)
     ws_all.freeze_panes = 'A6'
 
@@ -742,13 +942,15 @@ def build_workbook(subject_code, results, current_week, days_into_week, is_parti
 # CLASS REPORT BUILDER
 # ===========================================================================
 def build_class_report(subject_code, results, current_week, days_into_week, is_partial,
-                       block_start, dashboard_date, enrolled):
+                       block_start, dashboard_date, enrolled,
+                       gc_data=None, gc_labels=None):
     """Build a workbook grouped by Discipline Subject + Class."""
     wb = Workbook()
     wb.remove(wb.active)
 
     partial_tag = f' ({days_into_week}d partial)' if is_partial else ''
     seg_codes = ['S1', 'S2', 'S3', 'S4', 'Active']
+    gc_active = gc_data is not None and gc_labels is not None and len(gc_labels) > 0
 
     # Group students
     classes = {}
@@ -844,6 +1046,67 @@ def build_class_report(subject_code, results, current_week, days_into_week, is_p
         c_label.border = thin_border()
         ws.cell(row_i, 3).border = thin_border()
 
+    next_row = legend_start + 1 + len(seg_legend) + 1
+
+    # ── Assessment breakdown (if grade centre provided) ──
+    if gc_active:
+        status_cols = ['Satisfactory', 'Unsatisfactory', 'Resubmitted', 'Resub Fail', 'Needs Marking', 'No Submission']
+        for ai, label in enumerate(gc_labels):
+            ws.merge_cells(start_row=next_row, start_column=1, end_row=next_row, end_column=len(status_cols) + 2)
+            c = ws.cell(next_row, 1, label.replace('AS', 'Assessment '))
+            c.font = Font(name='Arial', size=11, bold=True, color=WHITE)
+            c.fill = PatternFill('solid', start_color=NAVY)
+            c.alignment = Alignment(horizontal='left', vertical='center', indent=1)
+            ws.row_dimensions[next_row].height = 22
+            next_row += 1
+
+            as_headers = ['Class'] + status_cols + ['TOTAL']
+            for ci, h in enumerate(as_headers, 1):
+                c = ws.cell(next_row, ci, h)
+                c.font = Font(name='Arial', size=10, bold=True, color=WHITE)
+                c.fill = PatternFill('solid', start_color=ACCENT)
+                c.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+                c.border = thin_border()
+            ws.row_dimensions[next_row].height = 30
+            next_row += 1
+
+            grand_totals = {s: 0 for s in status_cols}
+            grand_total_all = 0
+            for ri_idx, gk in enumerate(group_order):
+                student_list = classes[gk]['sids']
+                bucket = {s: 0 for s in status_cols}
+                for r in student_list:
+                    sg = gc_data.get(r['sid'], {})
+                    val = sg.get(label, 'No Submission')
+                    bucket[categorise_grade(val)] += 1
+                row_total = sum(bucket.values())
+                row_data = [gk] + [bucket[s] for s in status_cols] + [row_total]
+                fill = PatternFill('solid', start_color=ALT_ROW) if ri_idx % 2 == 0 else None
+                for ci, val in enumerate(row_data, 1):
+                    c = ws.cell(next_row, ci, val)
+                    c.font = Font(name='Arial', size=10)
+                    if fill:
+                        c.fill = fill
+                    c.alignment = Alignment(
+                        horizontal='center' if ci > 1 else 'left', vertical='center',
+                    )
+                    c.border = thin_border()
+                next_row += 1
+                for s in status_cols:
+                    grand_totals[s] += bucket[s]
+                grand_total_all += row_total
+
+            total_row_data = ['TOTAL'] + [grand_totals[s] for s in status_cols] + [grand_total_all]
+            for ci, val in enumerate(total_row_data, 1):
+                c = ws.cell(next_row, ci, val)
+                c.font = Font(name='Arial', size=10, bold=True)
+                c.fill = PatternFill('solid', start_color=LIGHT)
+                c.border = thin_border()
+                c.alignment = Alignment(
+                    horizontal='center' if ci > 1 else 'left', vertical='center',
+                )
+            next_row += 2
+
     autosize(ws, [32, 22, 10] + [10] * len(seg_codes) + [14])
     ws.freeze_panes = 'A6'
 
@@ -855,6 +1118,9 @@ def build_class_report(subject_code, results, current_week, days_into_week, is_p
         'Last Access', 'Days Since', 'Last Active Wk',
     ]
     detail_widths = [10, 22, 18, 14, 12, 24, 12, 20, 38, 14, 12, 14]
+    if gc_active:
+        detail_headers += gc_labels
+        detail_widths += [18] * len(gc_labels)
 
     for gk in group_order:
         info = classes[gk]
@@ -899,6 +1165,10 @@ def build_class_report(subject_code, results, current_week, days_into_week, is_p
                 fmt_date(r['last_access']), r['days_since'] if r['days_since'] is not None else '—',
                 fmt_week(r['last_week']),
             ]
+            if gc_active:
+                sg = gc_data.get(r['sid'], {})
+                for label in gc_labels:
+                    row_data.append(sg.get(label, 'No Submission'))
             fill = PatternFill('solid', start_color=ALT_ROW) if ri % 2 == 0 else None
             for ci, val in enumerate(row_data, 1):
                 c = ws_g.cell(excel_row, ci, val)
@@ -912,6 +1182,10 @@ def build_class_report(subject_code, results, current_week, days_into_week, is_p
                 c.border = thin_border()
             # Colour the segment cell
             write_seg_badge(ws_g, excel_row, 1, r['segment'], r.get('sub_group', ''))
+
+        if gc_active:
+            gc_start_col = 13  # GC columns start after Last Active Wk (col 12)
+            apply_gc_styling(ws_g, 6, len(sorted_students), gc_start_col, len(gc_labels))
 
         autosize(ws_g, detail_widths)
         ws_g.freeze_panes = 'A6'
@@ -934,6 +1208,7 @@ with st.expander('How it works', expanded=False):
 **Inputs:**
 - **Class list** (.xls from Blackboard or enriched .xlsx) — source of truth for enrolled students.
 - **Performance Dashboard PDF** — exported from Blackboard with **Show All** enabled.
+- **Grade Centre** (.xls, optional) — adds assessment submission status columns (AS1, AS2, …) to all detail sheets with colour coding.
 
 **Segments** (based on last-access date relative to block start):
 
@@ -977,6 +1252,13 @@ with col2:
         key='pd',
         help='Export from Blackboard with "Show All" enabled, saved as PDF.',
     )
+
+gc_file = st.file_uploader(
+    'Grade Centre (.xls) — optional',
+    type=['xls'],
+    key='gc',
+    help='Blackboard Grade Centre export. Adds assessment submission status columns (AS1, AS2, …) to the report.',
+)
 
 run_btn = st.button(
     'Generate pulse check',
@@ -1092,11 +1374,24 @@ if run_btn:
                 f'If the dashboard was not exported with "Show All", some may be missing.'
             )
 
+        # ── Parse grade centre if uploaded ──
+        gc_data = None
+        gc_labels = None
+        if gc_file is not None:
+            with st.spinner('Parsing grade centre…'):
+                gc_data, gc_labels = load_grade_centre(gc_file.getvalue())
+            matched = sum(1 for r in results if r['sid'] in gc_data)
+            st.info(
+                f'Grade Centre: detected **{len(gc_labels)}** assessments '
+                f'({", ".join(gc_labels)}) • matched **{matched}/{enrolled}** students'
+            )
+
         # ── Build workbook ──
         with st.spinner('Building report…'):
             wb = build_workbook(
                 subject_code, results, current_week, days_into_week,
                 is_partial, block_start, dashboard_date, counts, enrolled,
+                gc_data=gc_data, gc_labels=gc_labels,
             )
             buf = io.BytesIO()
             wb.save(buf)
@@ -1124,6 +1419,7 @@ if run_btn:
                 wb_class = build_class_report(
                     subject_code, results, current_week, days_into_week,
                     is_partial, block_start, dashboard_date, enrolled,
+                    gc_data=gc_data, gc_labels=gc_labels,
                 )
                 buf_class = io.BytesIO()
                 wb_class.save(buf_class)
