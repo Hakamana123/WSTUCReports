@@ -190,6 +190,10 @@ def _load_classlist_xlsx(file_bytes):
 def parse_dashboard_pdf(file_bytes):
     """Extract student access data from a Blackboard Performance Dashboard PDF.
 
+    Uses a chunk-based approach: finds every ``Username: XXXXXXXX`` in the
+    extracted text, then examines the text between consecutive usernames to
+    determine role and last-access date.
+
     Returns:
         dashboard_date: date the dashboard was exported (or None)
         access_data: dict {username: {'last_access': date|None, 'days_since': int|None, 'never': bool}}
@@ -203,78 +207,65 @@ def parse_dashboard_pdf(file_bytes):
             text = page.extract_text() or ''
             full_text += text + '\n'
 
-    # Try to extract dashboard export date from header
+    # Dashboard export date from page header (e.g. "21/05/2026, 09:03")
     date_match = re.search(r'(\d{2}/\d{2}/\d{4}),?\s*\d{2}:\d{2}', full_text)
     if date_match:
         dashboard_date = _parse_date(date_match.group(1))
 
-    # Find all Role: positions
-    role_pattern = re.compile(
-        r'Role:\s*(Student|Instructor|Teaching\s*Assistant|Support|Auditor)',
-        re.IGNORECASE,
-    )
-    positions = []
-    for m in role_pattern.finditer(full_text):
-        positions.append({'index': m.start(), 'role': re.sub(r'\s+', ' ', m.group(1)).strip()})
+    # Locate every Username entry
+    username_pattern = re.compile(r'Username:\s*(\d{5,10})')
+    matches = list(username_pattern.finditer(full_text))
 
-    for i, pos in enumerate(positions):
-        role = pos['role']
-        if role.lower() != 'student':
+    for i, m in enumerate(matches):
+        uid = m.group(1)
+
+        # Skip preview-user accounts
+        context_before = full_text[max(0, m.start() - 50):m.end() + 30]
+        if ('PreviewUser' in context_before
+                or '_previewuser' in context_before
+                or 'previewuser' in uid.lower()):
             continue
 
-        # Chunk: from previous role to next role
-        start = positions[i - 1]['index'] if i > 0 else 0
-        end = positions[i + 1]['index'] if i < len(positions) - 1 else len(full_text)
-        chunk = full_text[start:end]
+        # Text from end of this Username to start of the next one
+        chunk_start = m.end()
+        chunk_end = matches[i + 1].start() if i < len(matches) - 1 else len(full_text)
+        chunk = full_text[chunk_start:chunk_end]
 
-        # Skip preview users
-        if 'previewuser' in chunk.lower() or 'PreviewUser' in chunk:
+        # ── Role detection (first 150 chars after username) ──
+        role_window = chunk[:150]
+        if re.search(r'Teaching', role_window):
+            continue  # Teaching Assistant
+        if re.search(r'Instructor', role_window):
+            continue
+        if re.search(r'\bSupport\b', role_window):
+            continue
+        if re.search(r'Auditor', role_window):
+            continue
+        if not re.search(r'\bStudent\b', role_window):
+            continue  # Unknown / not a student
+
+        # Already recorded (shouldn't happen, but guard)
+        if uid in access_data:
             continue
 
-        # Extract username
-        user_match = re.search(r'Username:\s*(\d{5,10})', chunk)
-        if not user_match:
-            continue
-        username = user_match.group(1)
-
-        # Already seen?
-        if username in access_data:
-            continue
-
-        # Extract access date
-        after_role = chunk[chunk.lower().find('role:'):]
-        access_match = re.search(
-            r'(?:Last\s*Subject\s*Access:|Access:)\s*(\d{2}/\d{2}/\d{4})\s+\d{1,2}:\d{2}:\d{2}\s*[AP]M',
-            after_role, re.IGNORECASE,
-        )
-        never_match = re.search(
-            r'(?:Last\s*Subject\s*Access:|Access:)\s*Never',
-            after_role, re.IGNORECASE,
-        )
+        # ── Access date ──
+        # Search the full chunk. Page-header dates appear as "DD/MM/YYYY,"
+        # (with a trailing comma), so use negative look-ahead to skip them.
+        access_date_match = re.search(r'(\d{2}/\d{2}/\d{4})(?!,)', chunk)
+        never_match = bool(re.search(r'Never', chunk[:300]))
 
         last_access = None
         days_since = None
         never = False
 
-        if access_match:
-            last_access = _parse_date(access_match.group(1))
+        if access_date_match:
+            last_access = _parse_date(access_date_match.group(1))
             if last_access and dashboard_date:
                 days_since = (dashboard_date - last_access).days
         elif never_match:
             never = True
 
-        # Try explicit days-since value
-        days_match = re.search(
-            r'Days\s*Since\s*Last\s*Subject\s*Access\s*[:\s]*(\d+|Never)',
-            after_role, re.IGNORECASE,
-        )
-        if days_match:
-            if days_match.group(1).lower() == 'never':
-                never = True
-            else:
-                days_since = int(days_match.group(1))
-
-        access_data[username] = {
+        access_data[uid] = {
             'last_access': last_access,
             'days_since': days_since,
             'never': never,
