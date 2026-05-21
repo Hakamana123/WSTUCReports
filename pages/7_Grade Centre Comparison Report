@@ -16,8 +16,6 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
-st.set_page_config(page_title="GC Comparison Report", page_icon="📊", layout="wide")
-
 # ── Styles ──────────────────────────────────────────────────────────────────
 FONT_BODY = Font(name='Arial', size=10)
 FONT_HEADER = Font(name='Arial', size=10, bold=True, color='FFFFFF')
