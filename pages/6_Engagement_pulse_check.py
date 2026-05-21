@@ -575,10 +575,10 @@ def build_workbook(subject_code, results, current_week, days_into_week, is_parti
     # ── Segment detail sheets ──
     col_headers = [
         'Surname', 'First Name', 'Student ID', 'Course',
-        'Disc. Class', 'Disc. Teacher', 'Email',
+        'Disc. Subject', 'Disc. Class', 'Disc. Teacher', 'Email',
         'Last Access', 'Days Since', 'Last Active Wk', 'Segment',
     ]
-    col_widths = [22, 18, 14, 12, 12, 20, 38, 14, 12, 14, 18]
+    col_widths = [22, 18, 14, 12, 24, 12, 20, 38, 14, 12, 14, 18]
 
     def _make_sheet(sheet_name, title, subtitle, desc, segment_filter, colour,
                     sub_filter=None, sort_key=None):
@@ -599,7 +599,7 @@ def build_workbook(subject_code, results, current_week, days_into_week, is_parti
             seg_label = r['sub_group'] if r['sub_group'] else SEG_LABELS.get(r['segment'], r['segment'])
             row_data = [
                 r['last'], r['first'], r['sid'], r['course'],
-                r['discipline_class'], r['discipline_teacher'], r['email'],
+                r['discipline_subject'], r['discipline_class'], r['discipline_teacher'], r['email'],
                 fmt_date(r['last_access']), r['days_since'] if r['days_since'] is not None else '—',
                 fmt_week(r['last_week']), seg_label,
             ]
@@ -610,7 +610,7 @@ def build_workbook(subject_code, results, current_week, days_into_week, is_parti
                 if fill:
                     c.fill = fill
                 c.alignment = Alignment(
-                    horizontal='left' if ci <= 7 else 'center',
+                    horizontal='left' if ci <= 8 else 'center',
                     vertical='center',
                 )
                 c.border = thin_border()
@@ -667,7 +667,7 @@ def build_workbook(subject_code, results, current_week, days_into_week, is_parti
             seg_label = r['sub_group']
             row_data = [
                 r['last'], r['first'], r['sid'], r['course'],
-                r['discipline_class'], r['discipline_teacher'], r['email'],
+                r['discipline_subject'], r['discipline_class'], r['discipline_teacher'], r['email'],
                 fmt_date(r['last_access']), r['days_since'] if r['days_since'] is not None else '—',
                 fmt_week(r['last_week']), seg_label,
             ]
@@ -678,7 +678,7 @@ def build_workbook(subject_code, results, current_week, days_into_week, is_parti
                 if fill:
                     c.fill = fill
                 c.alignment = Alignment(
-                    horizontal='left' if ci <= 7 else 'center',
+                    horizontal='left' if ci <= 8 else 'center',
                     vertical='center',
                 )
                 c.border = thin_border()
@@ -715,7 +715,7 @@ def build_workbook(subject_code, results, current_week, days_into_week, is_parti
         seg_label = r['sub_group'] if r['sub_group'] else SEG_LABELS.get(r['segment'], r['segment'])
         row_data = [
             r['last'], r['first'], r['sid'], r['course'],
-            r['discipline_class'], r['discipline_teacher'], r['email'],
+            r['discipline_subject'], r['discipline_class'], r['discipline_teacher'], r['email'],
             fmt_date(r['last_access']), r['days_since'] if r['days_since'] is not None else '—',
             fmt_week(r['last_week']), seg_label,
         ]
@@ -726,7 +726,7 @@ def build_workbook(subject_code, results, current_week, days_into_week, is_parti
             if fill:
                 c.fill = fill
             c.alignment = Alignment(
-                horizontal='left' if ci <= 7 else 'center',
+                horizontal='left' if ci <= 8 else 'center',
                 vertical='center',
             )
             c.border = thin_border()
@@ -734,6 +734,187 @@ def build_workbook(subject_code, results, current_week, days_into_week, is_parti
 
     autosize(ws_all, col_widths)
     ws_all.freeze_panes = 'A6'
+
+    return wb
+
+
+# ===========================================================================
+# CLASS REPORT BUILDER
+# ===========================================================================
+def build_class_report(subject_code, results, current_week, days_into_week, is_partial,
+                       block_start, dashboard_date, enrolled):
+    """Build a workbook grouped by Discipline Subject + Class."""
+    wb = Workbook()
+    wb.remove(wb.active)
+
+    partial_tag = f' ({days_into_week}d partial)' if is_partial else ''
+    seg_codes = ['S1', 'S2', 'S3', 'S4', 'Active']
+
+    # Group students
+    classes = {}
+    for r in results:
+        ds = r.get('discipline_subject', '') or ''
+        dc = r.get('discipline_class', '') or ''
+        dt = r.get('discipline_teacher', '') or ''
+        key = f'{ds} — {dc}'.strip(' —') if ds else (dc if dc else 'Unassigned')
+        if key not in classes:
+            classes[key] = {'sids': [], 'teacher': dt, 'subject': ds}
+        classes[key]['sids'].append(r)
+        if dt and not classes[key]['teacher']:
+            classes[key]['teacher'] = dt
+
+    group_order = sorted(classes.keys(), key=lambda k: (-len(classes[k]['sids']), str(k)))
+
+    # ── Summary cross-tab ──
+    ws = wb.create_sheet('Summary')
+    write_tab_header(
+        ws,
+        f'{subject_code} — Class Report — W{current_week}{partial_tag}',
+        f'Enrolled {enrolled}  •  {len(classes)} classes  •  Dashboard: {dashboard_date.strftime("%b %-d %Y")}',
+        'Segment counts per class. One sheet per class follows.',
+        len(seg_codes) + 4,
+    )
+    headers = ['Class', 'Teacher', 'Enrolled'] + seg_codes + ['Active Rate %']
+    write_col_headers(ws, headers, row=5)
+
+    # Colour segment headers
+    for ci, sc in enumerate(seg_codes):
+        col = 4 + ci
+        fill_colour = SEG_COLOURS.get(sc)
+        if fill_colour:
+            ws.cell(5, col).fill = PatternFill('solid', start_color=fill_colour)
+            ws.cell(5, col).font = Font(name='Arial', size=10, bold=True, color=WHITE)
+
+    summary_rows = []
+    for gk in group_order:
+        info = classes[gk]
+        student_list = info['sids']
+        enr = len(student_list)
+        row = [gk, info['teacher'], enr]
+        active = 0
+        for sc in seg_codes:
+            if sc == 'S4':
+                n = sum(1 for r in student_list if r['segment'] == 'S4')
+            else:
+                n = sum(1 for r in student_list if r['segment'] == sc)
+            row.append(n)
+            if sc == 'Active':
+                active = n
+        row.append(round(100 * active / max(enr, 1), 1))
+        summary_rows.append(row)
+
+    # Totals
+    totals = ['TOTAL', '', enrolled]
+    for i, sc in enumerate(seg_codes):
+        totals.append(sum(r[3 + i] for r in summary_rows))
+    total_active = sum(r[-1] * r[2] / 100 for r in summary_rows)
+    totals.append(round(100 * total_active / max(enrolled, 1), 1))
+    summary_rows.append(totals)
+
+    write_data_rows(ws, summary_rows, start_row=6)
+    totals_row = 6 + len(summary_rows) - 1
+    for ci in range(1, len(headers) + 1):
+        ws.cell(totals_row, ci).font = Font(name='Arial', size=10, bold=True)
+        ws.cell(totals_row, ci).fill = PatternFill('solid', start_color=LIGHT)
+        ws.cell(totals_row, ci).border = thin_border()
+
+    # Segment legend
+    legend_start = totals_row + 2
+    ws.merge_cells(start_row=legend_start, start_column=1, end_row=legend_start, end_column=3)
+    c = ws.cell(legend_start, 1, 'Segment Legend')
+    c.font = Font(name='Arial', size=11, bold=True, color=WHITE)
+    c.fill = PatternFill('solid', start_color=NAVY)
+    c.alignment = Alignment(horizontal='left', vertical='center', indent=1)
+    ws.row_dimensions[legend_start].height = 22
+    seg_legend = [
+        ('S1', 'Never Engaged'), ('S2', 'Pre-Block Ghosts'), ('S3', 'W1 Drop-Offs'),
+        ('S4', 'Active Then Absent'), ('Active', 'Currently Active'),
+    ]
+    for li, (code, label) in enumerate(seg_legend):
+        row_i = legend_start + 1 + li
+        c_code = ws.cell(row_i, 1, code)
+        c_code.font = Font(name='Arial', size=10, bold=True, color=WHITE)
+        c_code.fill = PatternFill('solid', start_color=SEG_COLOURS.get(code, ACCENT))
+        c_code.alignment = Alignment(horizontal='center', vertical='center')
+        c_code.border = thin_border()
+        ws.merge_cells(start_row=row_i, start_column=2, end_row=row_i, end_column=3)
+        c_label = ws.cell(row_i, 2, label)
+        c_label.font = Font(name='Arial', size=10)
+        c_label.alignment = Alignment(horizontal='left', vertical='center', indent=1)
+        c_label.border = thin_border()
+        ws.cell(row_i, 3).border = thin_border()
+
+    autosize(ws, [32, 22, 10] + [10] * len(seg_codes) + [14])
+    ws.freeze_panes = 'A6'
+
+    # ── Per-class sheets ──
+    seg_order = {'S1': 0, 'S2': 1, 'S3': 2, 'S4': 3, 'Active': 4}
+    detail_headers = [
+        'Segment', 'Surname', 'First Name', 'Student ID', 'Course',
+        'Disc. Subject', 'Disc. Class', 'Disc. Teacher', 'Email',
+        'Last Access', 'Days Since', 'Last Active Wk',
+    ]
+    detail_widths = [10, 22, 18, 14, 12, 24, 12, 20, 38, 14, 12, 14]
+
+    for gk in group_order:
+        info = classes[gk]
+        student_list = info['sids']
+        sheet_name = str(gk)[:31] or 'Unknown'
+        # Avoid duplicate sheet names
+        existing = [s.title for s in wb.worksheets]
+        if sheet_name in existing:
+            sheet_name = (sheet_name[:28] + '_2')[:31]
+
+        ws_g = wb.create_sheet(sheet_name)
+        seg_counts = ', '.join(
+            f'{sc}: {sum(1 for r in student_list if r["segment"] == sc)}'
+            for sc in seg_codes
+        )
+        subtitle = seg_counts
+        if info['teacher']:
+            subtitle += f'  •  Teacher: {info["teacher"]}'
+
+        write_tab_header(
+            ws_g, f'{gk} — {len(student_list)} students', subtitle,
+            f'All students sorted by segment then surname. W{current_week}{partial_tag}.',
+            len(detail_headers),
+        )
+        write_col_headers(ws_g, detail_headers, row=5)
+
+        sorted_students = sorted(
+            student_list,
+            key=lambda r: (
+                seg_order.get(r['segment'], 9),
+                (r['last'] or '').lower(),
+                (r['first'] or '').lower(),
+            ),
+        )
+
+        for ri, r in enumerate(sorted_students):
+            excel_row = 6 + ri
+            seg_label = r['sub_group'] if r['sub_group'] else SEG_LABELS.get(r['segment'], r['segment'])
+            row_data = [
+                seg_label, r['last'], r['first'], r['sid'], r['course'],
+                r['discipline_subject'], r['discipline_class'], r['discipline_teacher'], r['email'],
+                fmt_date(r['last_access']), r['days_since'] if r['days_since'] is not None else '—',
+                fmt_week(r['last_week']),
+            ]
+            fill = PatternFill('solid', start_color=ALT_ROW) if ri % 2 == 0 else None
+            for ci, val in enumerate(row_data, 1):
+                c = ws_g.cell(excel_row, ci, val)
+                c.font = Font(name='Arial', size=10)
+                if fill:
+                    c.fill = fill
+                c.alignment = Alignment(
+                    horizontal='left' if ci <= 9 else 'center',
+                    vertical='center',
+                )
+                c.border = thin_border()
+            # Colour the segment cell
+            write_seg_badge(ws_g, excel_row, 1, r['segment'], r.get('sub_group', ''))
+
+        autosize(ws_g, detail_widths)
+        ws_g.freeze_panes = 'A6'
 
     return wb
 
@@ -889,6 +1070,7 @@ if run_btn:
                         'Name': f'{r["last"]}, {r["first"]}',
                         'SID': r['sid'],
                         'Course': r['course'],
+                        'Disc. Subject': r['discipline_subject'],
                         'Class': r['discipline_class'],
                         'Last Access': fmt_date(r['last_access']),
                         'Days Since': r['days_since'] if r['days_since'] is not None else '—',
@@ -931,6 +1113,30 @@ if run_btn:
             mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             type='primary',
         )
+
+        # ── Class report (if discipline data available) ──
+        has_classes = any(
+            r.get('discipline_class') or r.get('discipline_subject')
+            for r in results
+        )
+        if has_classes:
+            with st.spinner('Building class report…'):
+                wb_class = build_class_report(
+                    subject_code, results, current_week, days_into_week,
+                    is_partial, block_start, dashboard_date, enrolled,
+                )
+                buf_class = io.BytesIO()
+                wb_class.save(buf_class)
+                buf_class.seek(0)
+
+            class_filename = f'{subject_code}_Class_Report_W{current_week}_{date_str}{suffix}.xlsx'
+            st.download_button(
+                '⬇ Download class report',
+                data=buf_class,
+                file_name=class_filename,
+                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                key='class_dl',
+            )
 
     except Exception as e:
         st.error(f'Error: {e}')
