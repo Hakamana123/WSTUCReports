@@ -19,7 +19,7 @@ except Exception as e:
     st.stop()
 
 
-# ── Styles (deferred to avoid module-level openpyxl issues) ─────────────────
+# -- Styles (deferred to avoid module-level openpyxl issues) -----------------
 
 def get_styles():
     return {
@@ -44,7 +44,7 @@ def get_styles():
 PCT_FMT = '0.0%'
 
 
-# ── Parsing helpers ─────────────────────────────────────────────────────────
+# -- Parsing helpers ---------------------------------------------------------
 
 def parse_gc(uploaded_file):
     content = uploaded_file.read()
@@ -96,7 +96,7 @@ def categorize(val):
         return s
 
 
-# ── Core logic ──────────────────────────────────────────────────────────────
+# -- Core logic --------------------------------------------------------------
 
 def build_comparison(gc_early, gc_later, classlist):
     cl = classlist.copy()
@@ -159,8 +159,8 @@ def aggregate_by_class(m_early, m_later, assessment_cols):
     common_uids = set(m_early['Username']) & set(m_later['Username'])
     e = m_early[m_early['Username'].isin(common_uids)].copy()
     l = m_later[m_later['Username'].isin(common_uids)].copy()
-    e['Group'] = e['Discipline Subject'] + ' — ' + e['Discipline Class'] + ' | ' + e['Discipline Teacher']
-    l['Group'] = l['Discipline Subject'] + ' — ' + l['Discipline Class'] + ' | ' + l['Discipline Teacher']
+    e['Group'] = e['Discipline Subject'] + ' -- ' + e['Discipline Class'] + ' | ' + e['Discipline Teacher']
+    l['Group'] = l['Discipline Subject'] + ' -- ' + l['Discipline Class'] + ' | ' + l['Discipline Teacher']
     e = e.set_index('Username')
     l = l.set_index('Username')
 
@@ -195,7 +195,7 @@ def aggregate_by_class(m_early, m_later, assessment_cols):
     return results
 
 
-# ── Excel writer ────────────────────────────────────────────────────────────
+# -- Excel writer ------------------------------------------------------------
 
 def write_header_row(ws, row, headers, S, col_start=1):
     for i, h in enumerate(headers):
@@ -225,7 +225,7 @@ def write_delta_cell(ws, row, col, val, S):
         cell.font = S['FONT_DELTA_NEG']
     else:
         cell.font = S['FONT_DELTA_ZERO']
-        cell.value = '—'
+        cell.value = '--'
     cell.alignment = Alignment(horizontal='center')
 
 
@@ -241,9 +241,9 @@ def write_overall(wb, subject, date_early, date_later, total_avail, by_teacher):
     ws = wb.create_sheet('Overall')
     ws.sheet_properties.tabColor = '2C3E50'
     r = 1
-    ws.cell(row=r, column=1, value=f'{subject} — Grade Centre Comparison Report').font = S['FONT_TITLE']
+    ws.cell(row=r, column=1, value=f'{subject} -- Grade Centre Comparison Report').font = S['FONT_TITLE']
     r += 1
-    ws.cell(row=r, column=1, value=f'{date_early} → {date_later}  ·  {total_avail} available students').font = S['FONT_METRIC_LABEL']
+    ws.cell(row=r, column=1, value=f'{date_early} -> {date_later}  -  {total_avail} available students').font = S['FONT_METRIC_LABEL']
     r += 2
     for aname, tdata in by_teacher.items():
         ws.cell(row=r, column=1, value=aname).font = S['FONT_SUBTITLE']
@@ -260,7 +260,7 @@ def write_overall(wb, subject, date_early, date_later, total_avail, by_teacher):
         sub_rec = sum(t['Sub_recovered'] for t in tdata)
         grd_rec = sum(t['Grade_recovered'] for t in tdata)
 
-        write_header_row(ws, r, ['Status', 'Early', 'Later', 'Δ'], S)
+        write_header_row(ws, r, ['Status', 'Early', 'Later', 'Chg'], S)
         r += 1
         for i, (lbl, ev, lv) in enumerate([
             ('Satisfactory', sat_e, sat_l), ('Unsatisfactory', unsat_e, unsat_l),
@@ -295,10 +295,10 @@ def write_by_assessment(wb, by_teacher, date_early, date_later):
     for aname, tdata in by_teacher.items():
         ws.cell(row=r, column=1, value=aname).font = S['FONT_SUBTITLE']
         r += 1
-        headers = ['Teacher', 'N', f'Sat ({date_early})', f'Sat ({date_later})', 'Sat Δ',
-                    f'Unsat ({date_early})', f'Unsat ({date_later})', 'Unsat Δ',
+        headers = ['Teacher', 'N', f'Sat ({date_early})', f'Sat ({date_later})', 'Sat Chg',
+                    f'Unsat ({date_early})', f'Unsat ({date_later})', 'Unsat Chg',
                     f'NdGrd ({date_early})', f'NdGrd ({date_later})',
-                    f'NoSub ({date_early})', f'NoSub ({date_later})', 'NoSub Δ',
+                    f'NoSub ({date_early})', f'NoSub ({date_later})', 'NoSub Chg',
                     'Sub Rec', 'Grd Rec']
         write_header_row(ws, r, headers, S)
         r += 1
@@ -338,8 +338,8 @@ def write_by_class(wb, by_class, date_early, date_later):
     for aname, rows in by_class.items():
         ws.cell(row=r, column=1, value=aname).font = S['FONT_SUBTITLE']
         r += 1
-        headers = ['Subject — Class', 'Teacher', 'N', 'Sat', 'Sat→', 'Sat Δ',
-                    'Unsat', 'Unsat→', 'Unsat Δ', 'NoSub', 'NoSub→', 'NoSub Δ', 'Sub Rec', 'Grd Rec']
+        headers = ['Subject -- Class', 'Teacher', 'N', 'Sat', 'Sat->', 'Sat Chg',
+                    'Unsat', 'Unsat->', 'Unsat Chg', 'NoSub', 'NoSub->', 'NoSub Chg', 'Sub Rec', 'Grd Rec']
         write_header_row(ws, r, headers, S)
         r += 1
         for i, row in enumerate(sorted(rows, key=lambda x: x['Students'], reverse=True)):
@@ -410,7 +410,7 @@ def write_leaderboard(wb, by_teacher, board_type='submission'):
         for an in assessment_names:
             d = t['details'].get(an, {})
             rec, pool = d.get('recovered', 0), d.get('pool', 0)
-            vals.append(f'{rec}/{pool}' if pool > 0 else '—')
+            vals.append(f'{rec}/{pool}' if pool > 0 else '--')
         write_data_row(ws, r, vals, S, stripe=(i % 2 == 0))
         ws.cell(row=r, column=6).number_format = PCT_FMT
         if t['Recovered'] > 0:
@@ -445,7 +445,7 @@ def generate_excel(subject, date_early, date_later, total_avail, by_teacher, by_
     return buf
 
 
-# ── Streamlit display ──────────────────────────────────────────────────────
+# -- Streamlit display ------------------------------------------------------
 
 def show_overall(by_teacher, total_avail):
     for aname, tdata in by_teacher.items():
@@ -477,10 +477,10 @@ def show_by_assessment(by_teacher, date_early, date_later):
             rows.append({
                 'Teacher': t['Teacher'], 'N': t['Students'],
                 f'Sat ({date_early})': t['Sat_early'], f'Sat ({date_later})': t['Sat_later'],
-                'Sat Δ': t['Sat_later'] - t['Sat_early'],
+                'Sat Chg': t['Sat_later'] - t['Sat_early'],
                 f'Unsat ({date_early})': t['Unsat_early'], f'Unsat ({date_later})': t['Unsat_later'],
                 f'NoSub ({date_early})': t['NS_early'], f'NoSub ({date_later})': t['NS_later'],
-                'NoSub Δ': t['NS_later'] - t['NS_early'],
+                'NoSub Chg': t['NS_later'] - t['NS_early'],
                 'Sub Rec': t['Sub_recovered'], 'Grd Rec': t['Grade_recovered'],
             })
         if rows:
@@ -495,12 +495,12 @@ def show_by_class(by_class):
             if row['Teacher'] == '(no match)':
                 continue
             display.append({
-                'Subject — Class': row['Subject_Class'], 'Teacher': row['Teacher'],
+                'Subject -- Class': row['Subject_Class'], 'Teacher': row['Teacher'],
                 'N': row['Students'],
-                'Sat →': f"{row['Sat_early']} → {row['Sat_later']}",
-                'Sat Δ': row['Sat_later'] - row['Sat_early'],
-                'NoSub →': f"{row['NS_early']} → {row['NS_later']}",
-                'NoSub Δ': row['NS_later'] - row['NS_early'],
+                'Sat ->': f"{row['Sat_early']} -> {row['Sat_later']}",
+                'Sat Chg': row['Sat_later'] - row['Sat_early'],
+                'NoSub ->': f"{row['NS_early']} -> {row['NS_later']}",
+                'NoSub Chg': row['NS_later'] - row['NS_early'],
                 'Sub Rec': row['Sub_recovered'], 'Grd Rec': row['Grade_recovered'],
             })
         if display:
@@ -538,7 +538,7 @@ def show_leaderboard(by_teacher, board_type='submission'):
     ))
 
     for i, r in enumerate(ranked):
-        medal = {0: '🥇', 1: '🥈', 2: '🥉'}.get(i, '')
+        medal = {0: '[1st]', 1: '[2nd]', 2: '[3rd]'}.get(i, '')
         r['Rank'] = f"{medal} {i+1}" if r[metric_label] > 0 and medal else i + 1
 
     if ranked:
@@ -548,9 +548,9 @@ def show_leaderboard(by_teacher, board_type='submission'):
         st.info("No teachers had items to recover.")
 
 
-# ── Page UI ─────────────────────────────────────────────────────────────────
+# -- Page UI -----------------------------------------------------------------
 
-st.title("📊 GC Comparison Report")
+st.title("[GC] GC Comparison Report")
 st.caption("Upload two Blackboard Grade Centre snapshots and a collated classlist to compare.")
 
 gc_files = st.sidebar.file_uploader(
@@ -560,7 +560,7 @@ gc_files = st.sidebar.file_uploader(
 )
 cl_file = st.sidebar.file_uploader(
     "Collated classlist (.xlsx)", type=['xlsx'],
-    help="The classlist mapping Student ID → Teacher"
+    help="The classlist mapping Student ID -> Teacher"
 )
 
 if gc_files and cl_file and len(gc_files) == 2:
@@ -587,12 +587,12 @@ if gc_files and cl_file and len(gc_files) == 2:
         by_teacher = aggregate_by_teacher(m_early, m_later, assessment_cols)
         by_class = aggregate_by_class(m_early, m_later, assessment_cols)
 
-    st.markdown(f"### {subject} — {date_early} → {date_later}")
-    st.caption(f"{total_avail} available students · {matched} matched to teachers · {len(assessment_cols)} assessments detected")
+    st.markdown(f"### {subject} -- {date_early} -> {date_later}")
+    st.caption(f"{total_avail} available students - {matched} matched to teachers - {len(assessment_cols)} assessments detected")
 
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "📋 Overall", "📝 By Assessment", "🏫 By Subject + Class",
-        "🔄 Submission Recovery", "✅ Grade Recovery"
+        "[1] Overall", "[2] By Assessment", "[3] By Subject + Class",
+        "[4] Submission Recovery", "[5] Grade Recovery"
     ])
 
     with tab1:
@@ -603,11 +603,11 @@ if gc_files and cl_file and len(gc_files) == 2:
         show_by_class(by_class)
     with tab4:
         st.subheader("Submission Recovery Leaderboard")
-        st.caption("Ranked by recovery rate — who got the most missing students to submit")
+        st.caption("Ranked by recovery rate -- who got the most missing students to submit")
         show_leaderboard(by_teacher, 'submission')
     with tab5:
         st.subheader("Grade Recovery Leaderboard")
-        st.caption("Ranked by recovery rate — who converted the most Unsatisfactory → Satisfactory")
+        st.caption("Ranked by recovery rate -- who converted the most Unsatisfactory -> Satisfactory")
         show_leaderboard(by_teacher, 'grade')
 
     st.divider()
@@ -615,7 +615,7 @@ if gc_files and cl_file and len(gc_files) == 2:
         excel_buf = generate_excel(subject, date_early, date_later, total_avail, by_teacher, by_class)
 
     st.download_button(
-        label="📥 Download Excel Report",
+        label="[DL] Download Excel Report",
         data=excel_buf,
         file_name=f"{subject}_GC_Comparison_{date_early.replace(' ', '')}_{date_later.replace(' ', '')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
