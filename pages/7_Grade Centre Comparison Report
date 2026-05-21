@@ -1,11 +1,11 @@
 """
-GEDU Grade Centre Comparison Report — Streamlit App
+GEDU Grade Centre Comparison Report
 =====================================================
 Upload two Blackboard Grade Centre snapshots + a collated classlist
 to generate a multi-tab comparison report with leaderboards.
 
-Deploy: streamlit run app.py
-Requirements: streamlit, pandas, openpyxl
+Place in pages/ folder of your Streamlit multi-page app.
+Requirements: pandas, openpyxl (add to requirements.txt if not already there)
 """
 
 import streamlit as st
