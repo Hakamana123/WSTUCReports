@@ -3,3 +3,4 @@ xlrd
 openpyxl
 pyyaml
 plotly
+pdfplumber
