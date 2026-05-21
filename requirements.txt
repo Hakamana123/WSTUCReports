@@ -4,3 +4,4 @@ openpyxl
 pyyaml
 plotly
 pdfplumber
+pandas
