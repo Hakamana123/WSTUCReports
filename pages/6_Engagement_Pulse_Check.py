@@ -1139,7 +1139,21 @@ def build_class_report(subject_code, results, current_week, days_into_week, is_p
         # Track for index
         n_active = sum(1 for r in student_list if r['segment'] == 'Active')
         n_at_risk = len(student_list) - n_active
-        sheet_registry.append((gk, sheet_name, len(student_list), info['teacher'], n_active, n_at_risk))
+
+        # Compute submission counts per assessment
+        submission_counts = {}
+        if gc_active:
+            for label in gc_labels:
+                submitted = 0
+                for r in student_list:
+                    sg = gc_data.get(r['sid'], {})
+                    val = sg.get(label, 'No Submission')
+                    if val != 'No Submission' and val.strip() != '':
+                        submitted += 1
+                submission_counts[label] = submitted
+
+        sheet_registry.append((gk, sheet_name, len(student_list), info['teacher'],
+                               n_active, n_at_risk, submission_counts))
 
         seg_counts = ', '.join(
             f'{sc}: {sum(1 for r in student_list if r["segment"] == sc)}'
@@ -1208,20 +1222,31 @@ def build_class_report(subject_code, results, current_week, days_into_week, is_p
 
     # ── Index sheet (clickable navigation) ──
     ws_idx = wb.create_sheet('Index', 1)  # insert after Summary (position 1)
-    n_cols_idx = 6
+    idx_headers = ['#', 'Class', 'Teacher', 'Enrolled', 'Active', 'At Risk']
+    idx_widths = [5, 36, 22, 10, 10, 10]
+    if gc_active:
+        for label in gc_labels:
+            idx_headers.append(f'{label} Sub')
+            idx_widths.append(10)
+    n_cols_idx = len(idx_headers)
+
+    gc_note = '  •  Assessment columns show submitted / enrolled' if gc_active else ''
     write_tab_header(
         ws_idx,
         f'{subject_code} — Class Index',
         f'{len(sheet_registry)} classes  •  Click any class to jump to its sheet',
-        'Click a class name to navigate directly. Each class sheet has a "← Back to Index" link.',
+        f'Click a class name to navigate directly. Each class sheet has a "← Back to Index" link.{gc_note}',
         n_cols_idx,
     )
-    idx_headers = ['#', 'Class', 'Teacher', 'Enrolled', 'Active', 'At Risk']
     write_col_headers(ws_idx, idx_headers, row=5)
 
-    for ri, (class_name, sname, enr, teacher, n_act, n_risk) in enumerate(sheet_registry):
+    for ri, (class_name, sname, enr, teacher, n_act, n_risk, sub_counts) in enumerate(sheet_registry):
         excel_row = 6 + ri
         row_data = [ri + 1, class_name, teacher, enr, n_act, n_risk]
+        if gc_active:
+            for label in gc_labels:
+                sub = sub_counts.get(label, 0)
+                row_data.append(f'{sub}/{enr}')
         fill = PatternFill('solid', start_color=ALT_ROW) if ri % 2 == 0 else None
         for ci, val in enumerate(row_data, 1):
             c = ws_idx.cell(excel_row, ci, val)
@@ -1243,7 +1268,23 @@ def build_class_report(subject_code, results, current_week, days_into_week, is_p
         if n_risk > 0:
             c_risk.font = Font(name='Arial', size=10, bold=True, color=RED)
 
-    autosize(ws_idx, [5, 36, 22, 10, 10, 10])
+        # Colour assessment submission cells
+        if gc_active:
+            for gi, label in enumerate(gc_labels):
+                sub = sub_counts.get(label, 0)
+                c_sub = ws_idx.cell(excel_row, 7 + gi)
+                if sub == enr:
+                    # All submitted — green
+                    c_sub.font = Font(name='Arial', size=10, color='1A7A3A', bold=True)
+                elif sub == 0:
+                    # None submitted — red
+                    c_sub.font = Font(name='Arial', size=10, color=RED, bold=True)
+                    c_sub.fill = GC_NO_SUB_FILL
+                else:
+                    # Partial — amber
+                    c_sub.font = Font(name='Arial', size=10, color=ORANGE, bold=True)
+
+    autosize(ws_idx, idx_widths)
     ws_idx.freeze_panes = 'A6'
 
     return wb
