@@ -965,7 +965,7 @@ def build_class_report(subject_code, results, current_week, days_into_week, is_p
         if dt and not classes[key]['teacher']:
             classes[key]['teacher'] = dt
 
-    group_order = sorted(classes.keys(), key=lambda k: (-len(classes[k]['sids']), str(k)))
+    group_order = sorted(classes.keys(), key=lambda k: str(k).lower())
 
     # ── Summary cross-tab ──
     ws = wb.create_sheet('Summary')
@@ -1122,6 +1122,9 @@ def build_class_report(subject_code, results, current_week, days_into_week, is_p
         detail_headers += gc_labels
         detail_widths += [18] * len(gc_labels)
 
+    # Track sheet names for index
+    sheet_registry = []  # list of (class_name, sheet_name, enrolled, teacher, active_count, at_risk_count)
+
     for gk in group_order:
         info = classes[gk]
         student_list = info['sids']
@@ -1132,6 +1135,12 @@ def build_class_report(subject_code, results, current_week, days_into_week, is_p
             sheet_name = (sheet_name[:28] + '_2')[:31]
 
         ws_g = wb.create_sheet(sheet_name)
+
+        # Track for index
+        n_active = sum(1 for r in student_list if r['segment'] == 'Active')
+        n_at_risk = len(student_list) - n_active
+        sheet_registry.append((gk, sheet_name, len(student_list), info['teacher'], n_active, n_at_risk))
+
         seg_counts = ', '.join(
             f'{sc}: {sum(1 for r in student_list if r["segment"] == sc)}'
             for sc in seg_codes
@@ -1145,6 +1154,13 @@ def build_class_report(subject_code, results, current_week, days_into_week, is_p
             f'All students sorted by segment then surname. W{current_week}{partial_tag}.',
             len(detail_headers),
         )
+
+        # "← Back to Index" link in row 4
+        c_back = ws_g.cell(4, 1, '← Back to Index')
+        c_back.font = Font(name='Arial', size=9, color='2980B9', underline='single')
+        c_back.hyperlink = "#'Index'!A1"
+        c_back.alignment = Alignment(horizontal='left', vertical='center', indent=1)
+
         write_col_headers(ws_g, detail_headers, row=5)
 
         sorted_students = sorted(
@@ -1189,6 +1205,46 @@ def build_class_report(subject_code, results, current_week, days_into_week, is_p
 
         autosize(ws_g, detail_widths)
         ws_g.freeze_panes = 'A6'
+
+    # ── Index sheet (clickable navigation) ──
+    ws_idx = wb.create_sheet('Index', 1)  # insert after Summary (position 1)
+    n_cols_idx = 6
+    write_tab_header(
+        ws_idx,
+        f'{subject_code} — Class Index',
+        f'{len(sheet_registry)} classes  •  Click any class to jump to its sheet',
+        'Click a class name to navigate directly. Each class sheet has a "← Back to Index" link.',
+        n_cols_idx,
+    )
+    idx_headers = ['#', 'Class', 'Teacher', 'Enrolled', 'Active', 'At Risk']
+    write_col_headers(ws_idx, idx_headers, row=5)
+
+    for ri, (class_name, sname, enr, teacher, n_act, n_risk) in enumerate(sheet_registry):
+        excel_row = 6 + ri
+        row_data = [ri + 1, class_name, teacher, enr, n_act, n_risk]
+        fill = PatternFill('solid', start_color=ALT_ROW) if ri % 2 == 0 else None
+        for ci, val in enumerate(row_data, 1):
+            c = ws_idx.cell(excel_row, ci, val)
+            c.font = Font(name='Arial', size=10)
+            if fill:
+                c.fill = fill
+            c.alignment = Alignment(
+                horizontal='left' if ci <= 3 else 'center',
+                vertical='center',
+            )
+            c.border = thin_border()
+        # Make class name a clickable hyperlink
+        c_link = ws_idx.cell(excel_row, 2)
+        c_link.font = Font(name='Arial', size=10, color='2980B9', underline='single', bold=True)
+        c_link.hyperlink = f"#'{sname}'!A1"
+
+        # Colour at-risk count red if > 0
+        c_risk = ws_idx.cell(excel_row, 6)
+        if n_risk > 0:
+            c_risk.font = Font(name='Arial', size=10, bold=True, color=RED)
+
+    autosize(ws_idx, [5, 36, 22, 10, 10, 10])
+    ws_idx.freeze_panes = 'A6'
 
     return wb
 
