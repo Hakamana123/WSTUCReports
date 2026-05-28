@@ -899,6 +899,7 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
             next_row += 2
 
     # Per-group sheets
+    group_sheet_names = {}
     seg_order = {f'S{i}': i for i in range(1, 8)}
     base_headers = ['Segment','Surname','First Name','Student ID','Course','Disc. Subject','Disc. Class','Disc. Teacher','Email'] + week_labels + ['Total Hits']
     if prev_key: base_headers += [f'W{current_week-1} Daily',f'W{current_week} Daily']
@@ -911,6 +912,7 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
         existing = [s.title for s in wb.worksheets]
         if sheet_name in existing: sheet_name = (sheet_name[:28] + '_2')[:31]
         ws_g = wb.create_sheet(sheet_name)
+        group_sheet_names[gk] = sheet_name
         seg_counts_str = ', '.join(f'{sc}: {sum(1 for sid in sids if seg.get(sid) == sc)}' for sc in seg_codes)
         subtitle = seg_counts_str
         teacher = info.get('teacher', '')
@@ -956,6 +958,15 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
         widths += [12, 14, 12]
         if gc_active: widths += [16] * len(gc_labels)
         autosize(ws_g, widths); ws_g.freeze_panes = 'A6'
+
+    # Add hyperlinks from summary sheet group names to their corresponding tabs
+    for i, gk in enumerate(group_order):
+        sn = group_sheet_names.get(gk)
+        if sn:
+            cell = ws.cell(6 + i, 1)
+            cell.hyperlink = f"#'{sn}'!A1"
+            cell.font = Font(name='Arial', size=10, color='2980B9', underline='single')
+
     return wb
 
 
