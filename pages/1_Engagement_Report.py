@@ -511,49 +511,48 @@ def fmt_login(l):
 def categorise_grade(val):
     """Collapse raw grade strings into 4 display buckets.
 
-    Satisfactory  — passed / satisfactory
-    Unsatisfactory — unsatisfactory OR resub fail
-    Needs Grading  — needs marking/grading OR any resubmission (pending outcome)
+    Satisfactory   — Satisfactory OR Resubmitted (Satisfactory)  [a pass]
+    Unsatisfactory — Unsatisfactory OR Resub Fail                 [a fail]
+    Needs Grading  — Needs Marking/Grading OR Resubmitted but outcome not yet satisfactory
     No Submission  — nothing submitted
     """
     if val == 'No Submission': return 'No Submission'
     v = val.strip().lower()
     if v in ('', 'no submission'): return 'No Submission'
     if 'needs grading' in v or 'needs marking' in v: return 'Needs Grading'
-    if v.startswith('resubmitted'): return 'Needs Grading'   # resubmission pending outcome
-    if v.startswith('resub fail'): return 'Unsatisfactory'   # resubmission failed
+    if v.startswith('resub fail'): return 'Unsatisfactory'
+    if v.startswith('resubmitted'):
+        if 'satisf' in v: return 'Satisfactory'
+        return 'Needs Grading'
     if 'unsatisf' in v: return 'Unsatisfactory'
     return 'Satisfactory'
 
 STATUS_COLS = ['Satisfactory', 'Unsatisfactory', 'Needs Grading', 'No Submission']
 
 
-def _write_submission_rate_table(ws, start_row, gc_data, gc_labels, students, seg, n_cols):
-    """
-    Write a compact submission rate summary table into ws beginning at start_row.
-    Columns: Assessment | Submitted (n) | Rate % | Submitted excl Ghosts (n) | Rate excl Ghosts %
-    Returns the next available row after the table.
+def _write_rate_table(ws, start_row, gc_data, gc_labels, students, seg, n_cols,
+                      title, note, col_headers, count_fn):
+    """Generic helper: write a titled rate table with 5 columns.
+
+    count_fn(sid, label) -> bool  — True if this student counts for this assessment.
+    Returns next available row.
     """
     ghost_sids = {sid for sid, s in seg.items() if s in GHOST_SEGS}
-    non_ghost_sids = [sid for sid in students if sid not in ghost_sids]
     enrolled = len(students)
-    non_ghost_enrolled = len(non_ghost_sids)
+    non_ghost_enrolled = sum(1 for sid in students if sid not in ghost_sids)
 
     # Section header
     ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=n_cols)
-    c = ws.cell(start_row, 1, 'Assessment Submission Rates')
+    c = ws.cell(start_row, 1, title)
     c.font = Font(name='Arial', size=11, bold=True, color=WHITE)
     c.fill = PatternFill('solid', start_color=NAVY)
     c.alignment = Alignment(horizontal='left', vertical='center', indent=1)
     ws.row_dimensions[start_row].height = 22
     start_row += 1
 
-    # Sub-note row
+    # Note row
     ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=n_cols)
-    c = ws.cell(start_row, 1,
-        f'Ghosts = S1 + S2 + S3 ({len(ghost_sids)} students). '
-        f'Submitted = any status except No Submission. '
-        f'Enrolled: {enrolled}  |  Excl. Ghosts: {non_ghost_enrolled}')
+    c = ws.cell(start_row, 1, note)
     c.font = Font(name='Arial', size=9, italic=True, color='2C3E50')
     c.fill = PatternFill('solid', start_color=LIGHT)
     c.alignment = Alignment(horizontal='left', vertical='center', indent=1, wrap_text=True)
@@ -561,15 +560,7 @@ def _write_submission_rate_table(ws, start_row, gc_data, gc_labels, students, se
     start_row += 1
 
     # Column headers
-    rate_headers = [
-        'Assessment',
-        'Submitted (n)',
-        'Rate % (all enrolled)',
-        'Submitted excl. Ghosts (n)',
-        'Rate % (excl. Ghosts)',
-    ]
-    n_rate_cols = len(rate_headers)
-    for ci, h in enumerate(rate_headers, 1):
+    for ci, h in enumerate(col_headers, 1):
         c = ws.cell(start_row, ci, h)
         c.font = Font(name='Arial', size=10, bold=True, color=WHITE)
         c.fill = PatternFill('solid', start_color=ACCENT)
@@ -578,29 +569,15 @@ def _write_submission_rate_table(ws, start_row, gc_data, gc_labels, students, se
     ws.row_dimensions[start_row].height = 30
     start_row += 1
 
-    # Data rows — one per assessment
+    # Data rows
     for ri, label in enumerate(gc_labels):
-        submitted_all = 0
-        submitted_non_ghost = 0
-
-        for sid in students:
-            val = gc_data.get(sid, {}).get(label, 'No Submission')
-            if categorise_grade(val) != 'No Submission':
-                submitted_all += 1
-                if sid not in ghost_sids:
-                    submitted_non_ghost += 1
-
-        rate_all = submitted_all / enrolled if enrolled else 0
-        rate_non_ghost = submitted_non_ghost / non_ghost_enrolled if non_ghost_enrolled else 0
+        n_all = sum(1 for sid in students if count_fn(sid, label))
+        n_non_ghost = sum(1 for sid in students if sid not in ghost_sids and count_fn(sid, label))
+        rate_all = n_all / enrolled if enrolled else 0
+        rate_non_ghost = n_non_ghost / non_ghost_enrolled if non_ghost_enrolled else 0
 
         fill = PatternFill('solid', start_color=ALT_ROW) if ri % 2 == 0 else None
-        row_vals = [
-            label.replace('AS', 'Assessment '),
-            submitted_all,
-            rate_all,
-            submitted_non_ghost,
-            rate_non_ghost,
-        ]
+        row_vals = [label.replace('AS', 'Assessment '), n_all, rate_all, n_non_ghost, rate_non_ghost]
         for ci, val in enumerate(row_vals, 1):
             c = ws.cell(start_row, ci, val)
             c.font = Font(name='Arial', size=10)
@@ -619,6 +596,46 @@ def _write_submission_rate_table(ws, start_row, gc_data, gc_labels, students, se
     # Spacer
     ws.row_dimensions[start_row].height = 8
     start_row += 1
+    return start_row
+
+
+def _write_submission_rate_table(ws, start_row, gc_data, gc_labels, students, seg, n_cols):
+    """Write submission rate table then pass rate table. Returns next available row."""
+    ghost_sids = {sid for sid, s in seg.items() if s in GHOST_SEGS}
+    enrolled = len(students)
+    non_ghost_enrolled = sum(1 for sid in students if sid not in ghost_sids)
+    shared_note_suffix = (
+        f'Ghosts = S1+S2+S3 ({len(ghost_sids)} students).  '
+        f'Enrolled: {enrolled}  |  Excl. Ghosts: {non_ghost_enrolled}'
+    )
+
+    sub_headers = [
+        'Assessment', 'Submitted (n)', 'Rate % (all enrolled)',
+        'Submitted excl. Ghosts (n)', 'Rate % (excl. Ghosts)',
+    ]
+    start_row = _write_rate_table(
+        ws, start_row, gc_data, gc_labels, students, seg, n_cols,
+        title='Assessment Submission Rates',
+        note='Submitted = any status except No Submission.  ' + shared_note_suffix,
+        col_headers=sub_headers,
+        count_fn=lambda sid, label: (
+            categorise_grade(gc_data.get(sid, {}).get(label, 'No Submission')) != 'No Submission'
+        ),
+    )
+
+    pass_headers = [
+        'Assessment', 'Passed (n)', 'Pass Rate % (all enrolled)',
+        'Passed excl. Ghosts (n)', 'Pass Rate % (excl. Ghosts)',
+    ]
+    start_row = _write_rate_table(
+        ws, start_row, gc_data, gc_labels, students, seg, n_cols,
+        title='Assessment Pass Rates',
+        note='Pass = Satisfactory or Resubmitted (Satisfactory).  ' + shared_note_suffix,
+        col_headers=pass_headers,
+        count_fn=lambda sid, label: (
+            categorise_grade(gc_data.get(sid, {}).get(label, 'No Submission')) == 'Satisfactory'
+        ),
+    )
     return start_row
 
 
