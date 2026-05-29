@@ -52,6 +52,8 @@ PURPLE = '7D3C98'
 SEG_COLOURS = {'S1': RED, 'S2': '8B4513', 'S3': ORANGE, 'S4': YELLOW,
                'S5': BLUE, 'S6': PURPLE, 'S7': GREEN}
 
+GHOST_SEGS = {'S1', 'S2', 'S3'}
+
 # ===========================================================================
 # CLASS LIST PARSING
 # ===========================================================================
@@ -504,6 +506,206 @@ def fmt_login(l):
     return (days if days is not None else '-', last_str, l['total_logins'] or 0)
 
 # ===========================================================================
+# GRADE CENTRE HELPERS
+# ===========================================================================
+def categorise_grade(val):
+    if val == 'No Submission': return 'No Submission'
+    v = val.strip().lower()
+    if v in ('', 'no submission'): return 'No Submission'
+    if 'needs grading' in v or 'needs marking' in v: return 'Needs Marking'
+    if v.startswith('resub fail'): return 'Resub Fail'
+    if v.startswith('resubmitted'): return 'Resubmitted'
+    if 'unsatisf' in v: return 'Unsatisfactory'
+    return 'Satisfactory'
+
+STATUS_COLS = ['Satisfactory', 'Unsatisfactory', 'Resubmitted', 'Resub Fail', 'Needs Marking', 'No Submission']
+
+
+def _write_submission_rate_table(ws, start_row, gc_data, gc_labels, students, seg, n_cols):
+    """
+    Write a compact submission rate summary table into ws beginning at start_row.
+    Columns: Assessment | Submitted (n) | Rate % | Submitted excl Ghosts (n) | Rate excl Ghosts %
+    Returns the next available row after the table.
+    """
+    ghost_sids = {sid for sid, s in seg.items() if s in GHOST_SEGS}
+    non_ghost_sids = [sid for sid in students if sid not in ghost_sids]
+    enrolled = len(students)
+    non_ghost_enrolled = len(non_ghost_sids)
+
+    # Section header
+    ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=n_cols)
+    c = ws.cell(start_row, 1, 'Assessment Submission Rates')
+    c.font = Font(name='Arial', size=11, bold=True, color=WHITE)
+    c.fill = PatternFill('solid', start_color=NAVY)
+    c.alignment = Alignment(horizontal='left', vertical='center', indent=1)
+    ws.row_dimensions[start_row].height = 22
+    start_row += 1
+
+    # Sub-note row
+    ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=n_cols)
+    c = ws.cell(start_row, 1,
+        f'Ghosts = S1 + S2 + S3 ({len(ghost_sids)} students). '
+        f'Submitted = any status except No Submission. '
+        f'Enrolled: {enrolled}  |  Excl. Ghosts: {non_ghost_enrolled}')
+    c.font = Font(name='Arial', size=9, italic=True, color='2C3E50')
+    c.fill = PatternFill('solid', start_color=LIGHT)
+    c.alignment = Alignment(horizontal='left', vertical='center', indent=1, wrap_text=True)
+    ws.row_dimensions[start_row].height = 18
+    start_row += 1
+
+    # Column headers
+    rate_headers = [
+        'Assessment',
+        'Submitted (n)',
+        'Rate % (all enrolled)',
+        'Submitted excl. Ghosts (n)',
+        'Rate % (excl. Ghosts)',
+    ]
+    n_rate_cols = len(rate_headers)
+    for ci, h in enumerate(rate_headers, 1):
+        c = ws.cell(start_row, ci, h)
+        c.font = Font(name='Arial', size=10, bold=True, color=WHITE)
+        c.fill = PatternFill('solid', start_color=ACCENT)
+        c.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        c.border = thin_border()
+    ws.row_dimensions[start_row].height = 30
+    start_row += 1
+
+    # Data rows — one per assessment
+    for ri, label in enumerate(gc_labels):
+        submitted_all = 0
+        submitted_non_ghost = 0
+
+        for sid in students:
+            val = gc_data.get(sid, {}).get(label, 'No Submission')
+            if categorise_grade(val) != 'No Submission':
+                submitted_all += 1
+                if sid not in ghost_sids:
+                    submitted_non_ghost += 1
+
+        rate_all = submitted_all / enrolled if enrolled else 0
+        rate_non_ghost = submitted_non_ghost / non_ghost_enrolled if non_ghost_enrolled else 0
+
+        fill = PatternFill('solid', start_color=ALT_ROW) if ri % 2 == 0 else None
+        row_vals = [
+            label.replace('AS', 'Assessment '),
+            submitted_all,
+            rate_all,
+            submitted_non_ghost,
+            rate_non_ghost,
+        ]
+        for ci, val in enumerate(row_vals, 1):
+            c = ws.cell(start_row, ci, val)
+            c.font = Font(name='Arial', size=10)
+            if fill:
+                c.fill = fill
+            c.border = thin_border()
+            if ci in (3, 5):
+                c.number_format = '0.0%'
+                c.alignment = Alignment(horizontal='center', vertical='center')
+            elif ci == 1:
+                c.alignment = Alignment(horizontal='left', vertical='center')
+            else:
+                c.alignment = Alignment(horizontal='center', vertical='center')
+        start_row += 1
+
+    # Spacer
+    ws.row_dimensions[start_row].height = 8
+    start_row += 1
+    return start_row
+
+
+def _write_assessment_detail_sheet(wb, gc_data, gc_labels, groups, group_label_col, current_week, is_partial):
+    """
+    Create a new 'Assessment Detail' sheet with per-class breakdown per assessment.
+    Layout: one section per assessment, rows = groups (classes), columns = status categories.
+    """
+    ws = wb.create_sheet('Assessment Detail')
+    partial_note = ' (PARTIAL)' if is_partial else ''
+    n_cols = len(STATUS_COLS) + 2  # group col + status cols + total
+
+    write_tab_header(
+        ws,
+        f'Assessment Detail — W{current_week}{partial_note}',
+        f'Submission status breakdown by {group_label_col.lower()} for each assessment',
+        'One section per assessment. Columns show count per submission status category.',
+        n_cols,
+    )
+
+    group_order = sorted(groups.keys(), key=lambda k: (-len(groups[k]['sids']), str(k)))
+    current_row = 5
+
+    for ai, label in enumerate(gc_labels):
+        # Assessment section header
+        ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=n_cols)
+        c = ws.cell(current_row, 1, label.replace('AS', 'Assessment '))
+        c.font = Font(name='Arial', size=11, bold=True, color=WHITE)
+        c.fill = PatternFill('solid', start_color=NAVY)
+        c.alignment = Alignment(horizontal='left', vertical='center', indent=1)
+        ws.row_dimensions[current_row].height = 22
+        current_row += 1
+
+        # Column headers
+        as_headers = [group_label_col] + STATUS_COLS + ['TOTAL']
+        for ci, h in enumerate(as_headers, 1):
+            c = ws.cell(current_row, ci, h)
+            c.font = Font(name='Arial', size=10, bold=True, color=WHITE)
+            c.fill = PatternFill('solid', start_color=ACCENT)
+            c.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+            c.border = thin_border()
+        ws.row_dimensions[current_row].height = 30
+        current_row += 1
+
+        # Data rows
+        grand_totals = {s: 0 for s in STATUS_COLS}
+        grand_total_all = 0
+
+        for ri_idx, gk in enumerate(group_order):
+            sids = groups[gk]['sids']
+            bucket = {s: 0 for s in STATUS_COLS}
+            for sid in sids:
+                sg = gc_data.get(sid, {})
+                val = sg.get(label, 'No Submission')
+                bucket[categorise_grade(val)] += 1
+            row_total = sum(bucket.values())
+            row_data = [gk] + [bucket[s] for s in STATUS_COLS] + [row_total]
+
+            fill = PatternFill('solid', start_color=ALT_ROW) if ri_idx % 2 == 0 else None
+            for ci, val in enumerate(row_data, 1):
+                c = ws.cell(current_row, ci, val)
+                c.font = Font(name='Arial', size=10)
+                if fill:
+                    c.fill = fill
+                c.alignment = Alignment(
+                    horizontal='center' if ci > 1 else 'left', vertical='center'
+                )
+                c.border = thin_border()
+            current_row += 1
+
+            for s in STATUS_COLS:
+                grand_totals[s] += bucket[s]
+            grand_total_all += row_total
+
+        # Totals row
+        total_row_data = ['TOTAL'] + [grand_totals[s] for s in STATUS_COLS] + [grand_total_all]
+        for ci, val in enumerate(total_row_data, 1):
+            c = ws.cell(current_row, ci, val)
+            c.font = Font(name='Arial', size=10, bold=True)
+            c.fill = PatternFill('solid', start_color=LIGHT)
+            c.border = thin_border()
+            c.alignment = Alignment(
+                horizontal='center' if ci > 1 else 'left', vertical='center'
+            )
+        current_row += 2  # spacer between assessments
+
+    # Column widths
+    widths = [28] + [14] * len(STATUS_COLS) + [10]
+    autosize(ws, widths)
+    ws.freeze_panes = 'A5'
+    return ws
+
+
+# ===========================================================================
 # MAIN ENGAGEMENT WORKBOOK
 # ===========================================================================
 def build_workbook(subject_code, students, login, hits, seg, current_week, prev_days, curr_days,
@@ -757,12 +959,7 @@ def build_workbook(subject_code, students, login, hits, seg, current_week, prev_
 def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, login, hits, seg,
                           current_week, prev_days, curr_days, is_partial, latest_date, login_window,
                           gc_data=None, gc_labels=None, extra_summary_cols=None):
-    """Shared logic for program report and class report.
-
-    groups: dict {group_key: {'sids': [...], ...extra_fields}}
-    group_label_col: str — column header for the group key (e.g. 'Program' or 'Class')
-    extra_summary_cols: list of (col_name, accessor_fn) for extra summary columns before segment counts
-    """
+    """Shared logic for program report and class report."""
     week_keys = [f'w{i}' for i in range(1, current_week + 1)]
     week_labels = [f'W{i}' for i in range(1, current_week + 1)]
     curr_key = f'w{current_week}'
@@ -771,10 +968,13 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
     if extra_summary_cols is None:
         extra_summary_cols = []
 
+    gc_active = gc_data is not None and gc_labels is not None and len(gc_labels) > 0
+
+    # -----------------------------------------------------------------------
     # Summary cross-tab
+    # -----------------------------------------------------------------------
     ws = wb.create_sheet('Summary')
     partial_note = ' (PARTIAL)' if is_partial else ''
-    subject_code = title_prefix.split(' ')[0] if title_prefix else ''
     write_tab_header(ws,
         f'{title_prefix} — W{current_week}{partial_note}',
         f'Enrolled {len(students)}  •  {len(groups)} groups  •  Latest data: {latest_date.strftime("%b %-d %Y")}',
@@ -808,7 +1008,7 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
     write_data_rows(ws, rows, start_row=6)
 
     # Colour segment headers
-    seg_start_col = 2 + extra_count + 1  # after group_label + extras + enrolled
+    seg_start_col = 2 + extra_count + 1
     for ci, sc in enumerate(seg_codes):
         col = seg_start_col + ci
         fill_colour = SEG_COLOURS.get(sc)
@@ -823,11 +1023,14 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
         ws.cell(totals_row, ci).border = thin_border()
 
     widths = [28] + [24] * extra_count + [10] + [8] * len(seg_codes) + [14]
-    autosize(ws, widths); ws.freeze_panes = 'A6'
+    autosize(ws, widths)
+    ws.freeze_panes = 'A6'
 
-    # Segment Legend
+    # -----------------------------------------------------------------------
+    # Segment Legend (in Summary)
+    # -----------------------------------------------------------------------
     legend_start = totals_row + 2
-    legend_span = 3 + extra_count
+    legend_span = max(3 + extra_count, 3)
     ws.merge_cells(start_row=legend_start, start_column=1, end_row=legend_start, end_column=legend_span)
     c = ws.cell(legend_start, 1, 'Segment Legend')
     c.font = Font(name='Arial', size=11, bold=True, color=WHITE)
@@ -849,57 +1052,34 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
         c_label.font = Font(name='Arial', size=10)
         c_label.alignment = Alignment(horizontal='left', vertical='center', indent=1)
         c_label.border = thin_border()
-        for extra_ci in range(3, legend_span + 1): ws.cell(row_i, extra_ci).border = thin_border()
+        for extra_ci in range(3, legend_span + 1):
+            ws.cell(row_i, extra_ci).border = thin_border()
 
     next_row = legend_start + 1 + len(seg_legend) + 1
 
-    # Assessment breakdown
-    gc_active = gc_data is not None and gc_labels is not None and len(gc_labels) > 0
+    # -----------------------------------------------------------------------
+    # Submission rate summary table (in Summary, if GC data present)
+    # -----------------------------------------------------------------------
     if gc_active:
-        def categorise_grade(val):
-            if val == 'No Submission': return 'No Submission'
-            v = val.strip().lower()
-            if v in ('', 'no submission'): return 'No Submission'
-            if 'needs grading' in v or 'needs marking' in v: return 'Needs Marking'
-            if v.startswith('resub fail'): return 'Resub Fail'
-            if v.startswith('resubmitted'): return 'Resubmitted'
-            if 'unsatisf' in v: return 'Unsatisfactory'
-            return 'Satisfactory'
-        status_cols = ['Satisfactory','Unsatisfactory','Resubmitted','Resub Fail','Needs Marking','No Submission']
-        for ai, label in enumerate(gc_labels):
-            ws.merge_cells(start_row=next_row, start_column=1, end_row=next_row, end_column=len(status_cols)+2)
-            c = ws.cell(next_row, 1, label.replace('AS','Assessment '))
-            c.font = Font(name='Arial',size=11,bold=True,color=WHITE); c.fill = PatternFill('solid',start_color=NAVY)
-            c.alignment = Alignment(horizontal='left',vertical='center',indent=1); ws.row_dimensions[next_row].height = 22; next_row += 1
-            as_headers = [group_label_col] + status_cols + ['TOTAL']
-            for ci, h in enumerate(as_headers, 1):
-                c = ws.cell(next_row, ci, h); c.font = Font(name='Arial',size=10,bold=True,color=WHITE)
-                c.fill = PatternFill('solid',start_color=ACCENT); c.alignment = Alignment(horizontal='center',vertical='center',wrap_text=True); c.border = thin_border()
-            ws.row_dimensions[next_row].height = 30; next_row += 1
-            grand_totals = {s:0 for s in status_cols}; grand_total_all = 0
-            for ri_idx, gk in enumerate(group_order):
-                sids = groups[gk]['sids']; bucket = {s:0 for s in status_cols}
-                for sid in sids:
-                    sg = gc_data.get(sid, {}); val = sg.get(label, 'No Submission'); bucket[categorise_grade(val)] += 1
-                row_total = sum(bucket.values())
-                row_data = [gk] + [bucket[s] for s in status_cols] + [row_total]
-                fill = PatternFill('solid',start_color=ALT_ROW) if ri_idx % 2 == 0 else None
-                for ci, val in enumerate(row_data, 1):
-                    c = ws.cell(next_row, ci, val); c.font = Font(name='Arial',size=10)
-                    if fill: c.fill = fill
-                    c.alignment = Alignment(horizontal='center' if ci > 1 else 'left',vertical='center'); c.border = thin_border()
-                next_row += 1
-                for s in status_cols: grand_totals[s] += bucket[s]
-                grand_total_all += row_total
-            total_row_data = ['TOTAL'] + [grand_totals[s] for s in status_cols] + [grand_total_all]
-            for ci, val in enumerate(total_row_data, 1):
-                c = ws.cell(next_row, ci, val); c.font = Font(name='Arial',size=10,bold=True)
-                c.fill = PatternFill('solid',start_color=LIGHT); c.border = thin_border()
-                c.alignment = Alignment(horizontal='center' if ci > 1 else 'left',vertical='center')
-            next_row += 2
+        n_summary_cols = len(seg_codes) + extra_count + 3  # must match header width above
+        next_row = _write_submission_rate_table(
+            ws, next_row, gc_data, gc_labels, students, seg, n_summary_cols
+        )
 
-    # Per-group sheets
+    # -----------------------------------------------------------------------
+    # Assessment Detail tab (immediately after Summary)
+    # -----------------------------------------------------------------------
+    if gc_active:
+        _write_assessment_detail_sheet(wb, gc_data, gc_labels, groups, group_label_col, current_week, is_partial)
+
+    # -----------------------------------------------------------------------
+    # Add hyperlinks from summary sheet group names to their tabs
+    # -----------------------------------------------------------------------
     group_sheet_names = {}
+
+    # -----------------------------------------------------------------------
+    # Per-group sheets
+    # -----------------------------------------------------------------------
     seg_order = {f'S{i}': i for i in range(1, 8)}
     base_headers = ['Segment','Surname','First Name','Student ID','Course','Disc. Subject','Disc. Class','Disc. Teacher','Email'] + week_labels + ['Total Hits']
     if prev_key: base_headers += [f'W{current_week-1} Daily',f'W{current_week} Daily']
@@ -959,7 +1139,7 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
         if gc_active: widths += [16] * len(gc_labels)
         autosize(ws_g, widths); ws_g.freeze_panes = 'A6'
 
-    # Add hyperlinks from summary sheet group names to their corresponding tabs
+    # Hyperlinks from summary to group tabs
     for i, gk in enumerate(group_order):
         sn = group_sheet_names.get(gk)
         if sn:
