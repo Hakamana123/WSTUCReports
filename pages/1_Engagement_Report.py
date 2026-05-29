@@ -1366,6 +1366,172 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
     return wb
 
 
+
+def _write_program_leaderboard_sheet(wb, title_prefix, groups, students, seg,
+                                      gc_data, gc_labels, group_sheet_names,
+                                      current_week, is_partial):
+    """
+    One consolidated table: Program, Enrolled, Active (S5+S6+S7), At Risk (S4),
+    then for each assessment: Sub n/enrolled  and  Pass n/enrolled.
+    Sorted by enrolled descending. Inserted as the second sheet (after Summary).
+    """
+    gc_active = gc_data is not None and gc_labels is not None and len(gc_labels) > 0
+    partial_note = ' (PARTIAL)' if is_partial else ''
+
+    # Fixed cols: #, Program, Enrolled, Active, At Risk
+    # Then per-assessment: AS# Sub, AS# Pass
+    n_fixed = 5
+    n_assess_cols = (len(gc_labels) * 2) if gc_active else 0
+    n_cols = n_fixed + n_assess_cols
+
+    ws = wb.create_sheet('Program Leaderboard')
+
+    write_tab_header(
+        ws,
+        f'{title_prefix} — Program Leaderboard{partial_note}',
+        f'{len(groups)} programs  •  Active = S5+S6+S7  •  At Risk = S4',
+        ('Sub = submitted/enrolled.  Pass = passed/enrolled.  '
+         'Green = 100%, Orange ≥ 50%, Red < 50%.'
+         if gc_active else
+         'Active = S5+S6+S7.  At Risk = S4.'),
+        n_cols,
+    )
+
+    # Column headers
+    col_headers = ['#', 'Program', 'Enrolled', 'Active', 'At Risk']
+    if gc_active:
+        for lbl in gc_labels:
+            col_headers += [f'{lbl} Sub', f'{lbl} Pass']
+
+    for ci, h in enumerate(col_headers, 1):
+        c = ws.cell(5, ci, h)
+        c.font = Font(name='Arial', size=10, bold=True, color=WHITE)
+        c.fill = PatternFill('solid', start_color=NAVY)
+        c.alignment = Alignment(
+            horizontal='left' if ci == 2 else 'center', vertical='center', wrap_text=True
+        )
+        c.border = thin_border()
+    ws.row_dimensions[5].height = 30
+
+    # Colour fills for fraction cells
+    fill_green  = PatternFill('solid', start_color='D5F5E3')
+    fill_orange = PatternFill('solid', start_color='FDEBD0')
+    fill_red    = PatternFill('solid', start_color='FADBD8')
+    font_green  = Font(name='Arial', size=10, color='1A7A3A', bold=True)
+    font_orange = Font(name='Arial', size=10, color=ORANGE, bold=True)
+    font_red    = Font(name='Arial', size=10, color=RED, bold=True)
+
+    def rate_style(cell, n, denom):
+        rate = n / denom if denom else 0
+        frac = f'{n}/{denom}'
+        cell.value = frac
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        cell.border = thin_border()
+        if rate == 1.0:
+            cell.fill = fill_green;  cell.font = font_green
+        elif rate >= 0.5:
+            cell.fill = fill_orange; cell.font = font_orange
+        else:
+            cell.fill = fill_red;   cell.font = font_red
+
+    group_order = sorted(groups.keys(), key=lambda k: (-len(groups[k]['sids']), str(k)))
+
+    for ri, gk in enumerate(group_order):
+        excel_row = 6 + ri
+        sids = groups[gk]['sids']
+        enrolled  = len(sids)
+        active    = sum(1 for sid in sids if seg.get(sid) in ('S5', 'S6', 'S7'))
+        at_risk   = sum(1 for sid in sids if seg.get(sid) == 'S4')
+
+        row_fill = PatternFill('solid', start_color=ALT_ROW) if ri % 2 == 0 else None
+
+        # Fixed columns
+        fixed_vals = [ri + 1, gk, enrolled, active, at_risk]
+        for ci, val in enumerate(fixed_vals, 1):
+            c = ws.cell(excel_row, ci, val)
+            c.font = Font(name='Arial', size=10)
+            if row_fill:
+                c.fill = row_fill
+            c.alignment = Alignment(
+                horizontal='left' if ci == 2 else 'center', vertical='center'
+            )
+            c.border = thin_border()
+
+        if at_risk > 0:
+            ws.cell(excel_row, 5).font = Font(name='Arial', size=10, color=RED, bold=True)
+
+        # Hyperlink program name to its sheet
+        sn = group_sheet_names.get(gk)
+        if sn:
+            cell = ws.cell(excel_row, 2)
+            cell.hyperlink = f"#{chr(39)}{sn}{chr(39)}!A1"
+            cell.font = Font(name='Arial', size=10, color='2980B9', underline='single')
+
+        # Assessment columns
+        if gc_active:
+            for ai, label in enumerate(gc_labels):
+                sub_col  = n_fixed + 1 + ai * 2
+                pass_col = n_fixed + 2 + ai * 2
+
+                n_sub  = sum(
+                    1 for sid in sids
+                    if categorise_grade(gc_data.get(sid, {}).get(label, 'No Submission')) != 'No Submission'
+                )
+                n_pass = sum(
+                    1 for sid in sids
+                    if categorise_grade(gc_data.get(sid, {}).get(label, 'No Submission')) == 'Satisfactory'
+                )
+
+                rate_style(ws.cell(excel_row, sub_col),  n_sub,  enrolled)
+                rate_style(ws.cell(excel_row, pass_col), n_pass, enrolled)
+                # Apply row background to uncoloured cells only if no submission colour set
+                # (rate_style always sets fill, so row_fill is intentionally overridden)
+
+    # Totals row
+    totals_row = 6 + len(group_order)
+    total_enrolled = sum(len(groups[gk]['sids']) for gk in group_order)
+    total_active   = sum(
+        sum(1 for sid in groups[gk]['sids'] if seg.get(sid) in ('S5', 'S6', 'S7'))
+        for gk in group_order
+    )
+    total_at_risk  = sum(
+        sum(1 for sid in groups[gk]['sids'] if seg.get(sid) == 'S4')
+        for gk in group_order
+    )
+    total_fixed = ['', 'TOTAL', total_enrolled, total_active, total_at_risk]
+    for ci, val in enumerate(total_fixed, 1):
+        c = ws.cell(totals_row, ci, val)
+        c.font = Font(name='Arial', size=10, bold=True)
+        c.fill = PatternFill('solid', start_color=LIGHT)
+        c.border = thin_border()
+        c.alignment = Alignment(horizontal='left' if ci == 2 else 'center', vertical='center')
+
+    if gc_active:
+        for ai, label in enumerate(gc_labels):
+            sub_col  = n_fixed + 1 + ai * 2
+            pass_col = n_fixed + 2 + ai * 2
+            t_sub  = sum(
+                1 for gk in group_order for sid in groups[gk]['sids']
+                if categorise_grade(gc_data.get(sid, {}).get(label, 'No Submission')) != 'No Submission'
+            )
+            t_pass = sum(
+                1 for gk in group_order for sid in groups[gk]['sids']
+                if categorise_grade(gc_data.get(sid, {}).get(label, 'No Submission')) == 'Satisfactory'
+            )
+            for col, n in ((sub_col, t_sub), (pass_col, t_pass)):
+                c = ws.cell(totals_row, col, f'{n}/{total_enrolled}')
+                c.font = Font(name='Arial', size=10, bold=True)
+                c.fill = PatternFill('solid', start_color=LIGHT)
+                c.border = thin_border()
+                c.alignment = Alignment(horizontal='center', vertical='center')
+
+    # Column widths: #, Program, Enrolled, Active, At Risk, then pairs per assessment
+    widths = [4, 20, 10, 10, 10] + ([9, 9] * len(gc_labels) if gc_active else [])
+    autosize(ws, widths)
+    ws.freeze_panes = 'C6'
+
+    return ws
+
 def build_program_workbook(subject_code, students, login, hits, seg, current_week,
                            prev_days, curr_days, is_partial, latest_date, login_window,
                            gc_data=None, gc_labels=None):
@@ -1375,9 +1541,36 @@ def build_program_workbook(subject_code, students, login, hits, seg, current_wee
         cc = st.get('course_code') or st.get('course') or 'UNKNOWN'
         programs.setdefault(cc, {'sids': []})
         programs[cc]['sids'].append(sid)
-    return _build_grouped_report(wb, f'{subject_code} Program Report', programs, 'Program',
+    title_prefix = f'{subject_code} Program Report'
+    wb = _build_grouped_report(wb, title_prefix, programs, 'Program',
         students, login, hits, seg, current_week, prev_days, curr_days, is_partial, latest_date, login_window,
         gc_data=gc_data, gc_labels=gc_labels)
+
+    # Build group_sheet_names from existing sheets (per-program sheets are named by program key)
+    reserved = {'Summary', 'Assessment Detail', 'Class Index'}
+    group_sheet_names = {}
+    for gk in programs:
+        sheet_name = str(gk)[:31] or 'Unknown'
+        if sheet_name in [s.title for s in wb.worksheets] and sheet_name not in reserved:
+            group_sheet_names[gk] = sheet_name
+
+    gc_active = gc_data is not None and gc_labels is not None and len(gc_labels) > 0
+    _write_program_leaderboard_sheet(
+        wb, title_prefix, programs, students, seg,
+        gc_data if gc_active else None,
+        gc_labels if gc_active else None,
+        group_sheet_names, current_week, is_partial,
+    )
+
+    # Insert Program Leaderboard as second sheet (after Summary)
+    current_idx = next(
+        (i for i, s in enumerate(wb._sheets) if s.title == 'Program Leaderboard'), None
+    )
+    if current_idx is not None and current_idx != 1:
+        sheet = wb._sheets.pop(current_idx)
+        wb._sheets.insert(1, sheet)
+
+    return wb
 
 
 def build_class_workbook(subject_code, students, login, hits, seg, current_week,
