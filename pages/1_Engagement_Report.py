@@ -509,16 +509,23 @@ def fmt_login(l):
 # GRADE CENTRE HELPERS
 # ===========================================================================
 def categorise_grade(val):
+    """Collapse raw grade strings into 4 display buckets.
+
+    Satisfactory  — passed / satisfactory
+    Unsatisfactory — unsatisfactory OR resub fail
+    Needs Grading  — needs marking/grading OR any resubmission (pending outcome)
+    No Submission  — nothing submitted
+    """
     if val == 'No Submission': return 'No Submission'
     v = val.strip().lower()
     if v in ('', 'no submission'): return 'No Submission'
-    if 'needs grading' in v or 'needs marking' in v: return 'Needs Marking'
-    if v.startswith('resub fail'): return 'Resub Fail'
-    if v.startswith('resubmitted'): return 'Resubmitted'
+    if 'needs grading' in v or 'needs marking' in v: return 'Needs Grading'
+    if v.startswith('resubmitted'): return 'Needs Grading'   # resubmission pending outcome
+    if v.startswith('resub fail'): return 'Unsatisfactory'   # resubmission failed
     if 'unsatisf' in v: return 'Unsatisfactory'
     return 'Satisfactory'
 
-STATUS_COLS = ['Satisfactory', 'Unsatisfactory', 'Resubmitted', 'Resub Fail', 'Needs Marking', 'No Submission']
+STATUS_COLS = ['Satisfactory', 'Unsatisfactory', 'Needs Grading', 'No Submission']
 
 
 def _write_submission_rate_table(ws, start_row, gc_data, gc_labels, students, seg, n_cols):
@@ -1121,18 +1128,24 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
                 ws_g.cell(6+ri, 1).fill = PatternFill('solid', start_color=fill_colour)
                 ws_g.cell(6+ri, 1).font = Font(name='Arial', size=10, bold=True, color=WHITE)
         if gc_active:
-            no_sub_fill = PatternFill('solid',start_color='FADBD8'); no_sub_font = Font(name='Arial',size=10,color=RED,bold=True)
-            resub_fill = PatternFill('solid',start_color='D5F5E3'); resub_font = Font(name='Arial',size=10,color='1A7A3A',bold=True)
-            resub_fail_fill = PatternFill('solid',start_color='FDEBD0'); resub_fail_font = Font(name='Arial',size=10,color=ORANGE,bold=True)
-            needs_grading_fill = PatternFill('solid',start_color='FEF9E7')
+            # Cell colours align with the 4-bucket scheme: No Submission, Unsatisfactory, Needs Grading, Satisfactory (no colour)
+            no_sub_fill = PatternFill('solid', start_color='FADBD8')
+            no_sub_font = Font(name='Arial', size=10, color=RED, bold=True)
+            unsat_fill = PatternFill('solid', start_color='FDEBD0')
+            unsat_font = Font(name='Arial', size=10, color=ORANGE, bold=True)
+            needs_grading_fill = PatternFill('solid', start_color='FEF9E7')
+            needs_grading_font = Font(name='Arial', size=10, color='7D6608')
             gc_start_col = len(base_headers) - len(gc_labels) + 1
             for ri in range(len(sorted_sids)):
                 for ci_offset in range(len(gc_labels)):
-                    cell = ws_g.cell(6+ri, gc_start_col+ci_offset)
-                    if cell.value == 'No Submission': cell.fill = no_sub_fill; cell.font = no_sub_font
-                    elif isinstance(cell.value, str) and cell.value.startswith('Resub Fail'): cell.fill = resub_fail_fill; cell.font = resub_fail_font
-                    elif isinstance(cell.value, str) and cell.value.startswith('Resubmitted'): cell.fill = resub_fill; cell.font = resub_font
-                    elif isinstance(cell.value, str) and 'needs grading' in cell.value.lower(): cell.fill = needs_grading_fill
+                    cell = ws_g.cell(6 + ri, gc_start_col + ci_offset)
+                    bucket = categorise_grade(cell.value or 'No Submission')
+                    if bucket == 'No Submission':
+                        cell.fill = no_sub_fill; cell.font = no_sub_font
+                    elif bucket == 'Unsatisfactory':
+                        cell.fill = unsat_fill; cell.font = unsat_font
+                    elif bucket == 'Needs Grading':
+                        cell.fill = needs_grading_fill; cell.font = needs_grading_font
         widths = [8,22,18,12,10,24,10,18,38] + [8]*current_week + [10]
         if prev_key: widths += [11, 11]
         widths += [12, 14, 12]
