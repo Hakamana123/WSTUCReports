@@ -712,6 +712,173 @@ def _write_assessment_detail_sheet(wb, gc_data, gc_labels, groups, group_label_c
     return ws
 
 
+def _write_class_index_sheet(wb, title_prefix, groups, group_label_col, students, seg,
+                              gc_data, gc_labels, group_sheet_names, current_week, is_partial):
+    """
+    Create a 'Class Index' sheet after Assessment Detail.
+    Columns: #, Class, Teacher, Enrolled, Active (S5+S6+S7), At Risk (S4),
+             then one 'AS# Sub' column per assessment showing 'submitted/enrolled'
+             coloured green (100%), orange (>=50%), red (<50%).
+    Each class name is hyperlinked to its sheet.
+    Each class sheet gets a '← Back to Index' link added in cell A4.
+    """
+    ws = wb.create_sheet('Class Index')
+    partial_note = ' (PARTIAL)' if is_partial else ''
+    gc_active = gc_data is not None and gc_labels is not None and len(gc_labels) > 0
+
+    n_fixed = 6  # #, Class, Teacher, Enrolled, Active, At Risk
+    n_cols = n_fixed + (len(gc_labels) if gc_active else 0)
+
+    # Header band
+    write_tab_header(
+        ws,
+        f'{title_prefix} — Class Index{partial_note}',
+        f'{len(groups)} classes  •  Click any class to jump to its sheet',
+        f'Active = S5+S6+S7.  At Risk = S4.  '
+        + ('AS# Sub = submitted / enrolled.  Green = 100%, Orange ≥ 50%, Red < 50%.'
+           if gc_active else ''),
+        n_cols,
+    )
+
+    # Instruction row (row 4, inside the spacer)
+    ws.merge_cells(start_row=4, start_column=1, end_row=4, end_column=n_cols)
+    c = ws.cell(4, 1,
+        f'Click a class name to navigate directly. '
+        f'Each class sheet has a "\u2190 Back to Index" link.  \u2022  '
+        + ('Assessment columns show submitted\u202f/\u202fenrolled'
+           if gc_active else ''))
+    c.font = Font(name='Arial', size=9, italic=True, color='2C3E50')
+    c.fill = PatternFill('solid', start_color=LIGHT)
+    c.alignment = Alignment(horizontal='left', vertical='center', indent=1)
+    ws.row_dimensions[4].height = 14
+
+    # Column headers (row 5)
+    col_headers = ['#', group_label_col, 'Teacher', 'Enrolled', 'Active', 'At Risk']
+    if gc_active:
+        col_headers += [f'{lbl} Sub' for lbl in gc_labels]
+    for ci, h in enumerate(col_headers, 1):
+        c = ws.cell(5, ci, h)
+        c.font = Font(name='Arial', size=10, bold=True, color=WHITE)
+        c.fill = PatternFill('solid', start_color=NAVY)
+        c.alignment = Alignment(horizontal='center' if ci != 2 else 'left',
+                                vertical='center', wrap_text=True)
+        c.border = thin_border()
+    ws.row_dimensions[5].height = 30
+
+    # Colour fills for submission rate cells
+    fill_green  = PatternFill('solid', start_color='D5F5E3')
+    fill_orange = PatternFill('solid', start_color='FDEBD0')
+    fill_red    = PatternFill('solid', start_color='FADBD8')
+    font_green  = Font(name='Arial', size=10, color='1A7A3A', bold=True)
+    font_orange = Font(name='Arial', size=10, color=ORANGE, bold=True)
+    font_red    = Font(name='Arial', size=10, color=RED, bold=True)
+
+    group_order = sorted(groups.keys(), key=lambda k: (-len(groups[k]['sids']), str(k)))
+
+    for ri, gk in enumerate(group_order):
+        excel_row = 6 + ri
+        info = groups[gk]
+        sids = info['sids']
+        teacher = info.get('teacher', '')
+        enrolled = len(sids)
+        active   = sum(1 for sid in sids if seg.get(sid) in ('S5', 'S6', 'S7'))
+        at_risk  = sum(1 for sid in sids if seg.get(sid) == 'S4')
+
+        row_fill = PatternFill('solid', start_color=ALT_ROW) if ri % 2 == 0 else None
+
+        # Fixed columns
+        fixed_vals = [ri + 1, gk, teacher, enrolled, active, at_risk]
+        for ci, val in enumerate(fixed_vals, 1):
+            c = ws.cell(excel_row, ci, val)
+            c.font = Font(name='Arial', size=10)
+            if row_fill:
+                c.fill = row_fill
+            c.alignment = Alignment(
+                horizontal='left' if ci == 2 else 'center', vertical='center'
+            )
+            c.border = thin_border()
+
+        # At Risk: colour red if > 0
+        if at_risk > 0:
+            ws.cell(excel_row, 6).font = Font(name='Arial', size=10, color=RED, bold=True)
+
+        # Hyperlink on class name cell
+        sn = group_sheet_names.get(gk)
+        if sn:
+            cell = ws.cell(excel_row, 2)
+            cell.hyperlink = f"#'{sn}'!A1"
+            cell.font = Font(name='Arial', size=10, color='2980B9', underline='single')
+
+        # Assessment submission columns
+        if gc_active:
+            for ai, label in enumerate(gc_labels):
+                col = n_fixed + 1 + ai
+                submitted = sum(
+                    1 for sid in sids
+                    if categorise_grade(gc_data.get(sid, {}).get(label, 'No Submission')) != 'No Submission'
+                )
+                frac_str = f'{submitted}/{enrolled}'
+                rate = submitted / enrolled if enrolled else 0
+
+                c = ws.cell(excel_row, col, frac_str)
+                c.alignment = Alignment(horizontal='center', vertical='center')
+                c.border = thin_border()
+                if rate == 1.0:
+                    c.fill = fill_green;  c.font = font_green
+                elif rate >= 0.5:
+                    c.fill = fill_orange; c.font = font_orange
+                else:
+                    c.fill = fill_red;   c.font = font_red
+
+    # Totals row
+    totals_row = 6 + len(group_order)
+    total_enrolled = sum(len(groups[gk]['sids']) for gk in group_order)
+    total_active   = sum(
+        sum(1 for sid in groups[gk]['sids'] if seg.get(sid) in ('S5', 'S6', 'S7'))
+        for gk in group_order
+    )
+    total_at_risk  = sum(
+        sum(1 for sid in groups[gk]['sids'] if seg.get(sid) == 'S4')
+        for gk in group_order
+    )
+    total_vals = ['', 'TOTAL', '', total_enrolled, total_active, total_at_risk]
+    if gc_active:
+        for label in gc_labels:
+            total_sub = sum(
+                1 for gk in group_order for sid in groups[gk]['sids']
+                if categorise_grade(gc_data.get(sid, {}).get(label, 'No Submission')) != 'No Submission'
+            )
+            total_vals.append(f'{total_sub}/{total_enrolled}')
+    for ci, val in enumerate(total_vals, 1):
+        c = ws.cell(totals_row, ci, val)
+        c.font = Font(name='Arial', size=10, bold=True)
+        c.fill = PatternFill('solid', start_color=LIGHT)
+        c.border = thin_border()
+        c.alignment = Alignment(horizontal='center' if ci != 2 else 'left', vertical='center')
+
+    # Column widths
+    widths = [4, 36, 22, 10, 10, 10] + ([9] * len(gc_labels) if gc_active else [])
+    autosize(ws, widths)
+    ws.freeze_panes = 'C6'
+
+    # Add '← Back to Index' link in each group sheet (cell A4, inside the description band)
+    for gk in group_order:
+        sn = group_sheet_names.get(gk)
+        if sn and sn in [s.title for s in wb.worksheets]:
+            ws_g = wb[sn]
+            # Row 3 is the description/italic band — write the back-link into it
+            # We merge into the existing merged row 3 by just writing to A3
+            back_cell = ws_g.cell(3, 1)
+            existing_val = back_cell.value or ''
+            # Append the back link text inline so it sits in the description row
+            back_cell.value = '\u2190 Back to Index      ' + existing_val
+            back_cell.hyperlink = "#'Class Index'!A1"
+            back_cell.font = Font(name='Arial', size=10, italic=True,
+                                  color='2980B9', underline='single')
+
+    return ws
+
+
 # ===========================================================================
 # MAIN ENGAGEMENT WORKBOOK
 # ===========================================================================
@@ -1159,6 +1326,25 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
             cell = ws.cell(6 + i, 1)
             cell.hyperlink = f"#'{sn}'!A1"
             cell.font = Font(name='Arial', size=10, color='2980B9', underline='single')
+
+    # -----------------------------------------------------------------------
+    # Class Index tab — built after per-group sheets so group_sheet_names is full
+    # -----------------------------------------------------------------------
+    _write_class_index_sheet(
+        wb, title_prefix, groups, group_label_col, students, seg,
+        gc_data if gc_active else None,
+        gc_labels if gc_active else None,
+        group_sheet_names, current_week, is_partial,
+    )
+
+    # Move Class Index to position 2 (0-based): Summary, Assessment Detail, Class Index, ...
+    target_idx = 2
+    current_idx = next(
+        (i for i, s in enumerate(wb._sheets) if s.title == 'Class Index'), None
+    )
+    if current_idx is not None and current_idx != target_idx:
+        sheet = wb._sheets.pop(current_idx)
+        wb._sheets.insert(target_idx, sheet)
 
     return wb
 
