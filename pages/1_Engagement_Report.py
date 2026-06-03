@@ -298,6 +298,17 @@ def merge_usage_files(usage_file_list):
 # GRADE CENTRE PARSING
 # ===========================================================================
 def load_grade_centre(file_bytes):
+    """
+    Parse the Grade Centre export.
+
+    gc_data structure:
+        gc_data[sid][label] = {
+            'original': str,   # raw value from the primary column ('' if blank)
+            'resubmit': str,   # raw value from the resubmit column  ('' if blank)
+        }
+
+    The four derived metrics are computed later via the gc_* helper functions.
+    """
     import csv as _csv
     text = file_bytes.decode('utf-16-le')
     if text and text[0] == '\ufeff':
@@ -306,6 +317,7 @@ def load_grade_centre(file_bytes):
     headers_raw = next(reader)
     rows = list(reader)
     headers = [h.strip().strip('"') for h in headers_raw]
+
     sid_col = None
     for i, h in enumerate(headers):
         if h.lower() in ('username', 'student id'):
@@ -313,14 +325,18 @@ def load_grade_centre(file_bytes):
             break
     if sid_col is None:
         raise ValueError("Grade Centre: cannot find Username or Student ID column.")
+
     avail_col = None
     for i, h in enumerate(headers):
         if h.lower() == 'availability':
             avail_col = i
             break
+
     def short_name(h):
         return h.split('[')[0].strip() if '[' in h else h.strip()
+
     import re as _re
+
     primary_cols = []
     resubmit_cols = []
     for i, h in enumerate(headers):
@@ -331,12 +347,14 @@ def load_grade_centre(file_bytes):
             resubmit_cols.append((i, short_name(h)))
         else:
             primary_cols.append((i, short_name(h)))
+
     collated_nums = set()
     for _, name in primary_cols:
         if 'collated' in name.lower() or 'total' in name.lower().split('assessment')[-1]:
             m = _re.search(r'Assessment\s+(\d+)', name, _re.IGNORECASE)
             if m:
                 collated_nums.add(m.group(1))
+
     selected = []
     seen_nums = set()
     for i, name in primary_cols:
@@ -348,19 +366,23 @@ def load_grade_centre(file_bytes):
             if is_collated and num not in seen_nums:
                 selected.append((i, name, num)); seen_nums.add(num)
         else:
-            same_num = [n for _, n in primary_cols if _re.search(r'Assessment\s+' + num + r'\b', n, _re.IGNORECASE)]
             if num not in seen_nums:
                 selected.append((i, name, num)); seen_nums.add(num)
     selected.sort(key=lambda x: int(x[2]))
+
+    # Map assessment number -> resubmit column index
     resub_map = {}
     for i, name in resubmit_cols:
         m = _re.search(r'Assessment\s+(\d+)', name, _re.IGNORECASE)
         if m:
             num = m.group(1)
-            if num in seen_nums: resub_map[num] = i
+            if num in seen_nums:
+                resub_map[num] = i
+
     gc_labels = [f'AS{num}' for _, _, num in selected]
     gc_col_indices = [i for i, _, _ in selected]
     gc_nums = [num for _, _, num in selected]
+
     gc_data = {}
     for row in rows:
         if len(row) <= sid_col: continue
@@ -369,26 +391,139 @@ def load_grade_centre(file_bytes):
         if sid.startswith('30') or sid.startswith('96'): continue
         if avail_col is not None and row[avail_col].strip().strip('"').lower() != 'yes': continue
         if 'PreviewUser' in (row[0] if row else ''): continue
+
         student_gc = {}
         for label, col_idx, num in zip(gc_labels, gc_col_indices, gc_nums):
-            val = row[col_idx].strip().strip('"') if col_idx < len(row) else ''
+            # Raw original value
+            original_raw = row[col_idx].strip().strip('"') if col_idx < len(row) else ''
+
+            # Raw resubmit value
             resub_idx = resub_map.get(num)
+            resubmit_raw = ''
             if resub_idx is not None and resub_idx < len(row):
-                resub_val = row[resub_idx].strip().strip('"')
-                if resub_val:
-                    rv = resub_val.lower()
-                    if 'needs grading' in rv or 'needs marking' in rv: val = 'Resubmitted (Needs Grading)'
-                    elif 'unsatisf' in rv: val = 'Resub Fail (Unsatisfactory)'
-                    elif 'satisf' in rv: val = 'Resubmitted (Satisfactory)'
-                    else:
-                        try:
-                            score = float(resub_val)
-                            val = f'Resubmitted ({resub_val})' if score >= 50 else f'Resub Fail ({resub_val})'
-                        except ValueError:
-                            val = f'Resubmitted ({resub_val})'
-            student_gc[label] = 'No Submission' if val == '' else val
+                resubmit_raw = row[resub_idx].strip().strip('"')
+
+            student_gc[label] = {
+                'original': original_raw,
+                'resubmit': resubmit_raw,
+            }
         gc_data[sid] = student_gc
     return gc_data, gc_labels
+
+
+# ===========================================================================
+# GRADE CENTRE METRIC HELPERS
+# ===========================================================================
+
+def gc_submitted(entry):
+    """Submission: original column has any non-blank value."""
+    return bool(entry.get('original', ''))
+
+
+def gc_passed(entry):
+    """
+    Pass: original = Satisfactory, OR
+          original failed/needs grading AND resubmit = Satisfactory (or numeric >= 50).
+    """
+    original = entry.get('original', '').lower()
+    resubmit = entry.get('resubmit', '').lower()
+
+    if 'satisf' in original and 'unsatisf' not in original:
+        return True  # original pass
+
+    # Original was a fail or needs grading — check resubmit
+    if original and ('unsatisf' in original or 'needs' in original):
+        if 'satisf' in resubmit and 'unsatisf' not in resubmit:
+            return True
+        try:
+            return float(resubmit) >= 50
+        except (ValueError, TypeError):
+            pass
+
+    return False
+
+
+def gc_needed_resubmit(entry):
+    """Needed to resubmit: original = Unsatisfactory or Needs Grading/Marking."""
+    original = entry.get('original', '').lower()
+    return bool(original) and ('unsatisf' in original or 'needs grading' in original or 'needs marking' in original)
+
+
+def gc_resubmitted(entry):
+    """
+    Resubmission: needed to resubmit AND actually submitted something in the resubmit column.
+    """
+    return gc_needed_resubmit(entry) and bool(entry.get('resubmit', ''))
+
+
+def gc_resubmit_passed(entry):
+    """
+    Resubmission pass: needed to resubmit AND resubmit outcome = Satisfactory (or score >= 50).
+    """
+    if not gc_needed_resubmit(entry):
+        return False
+    resubmit = entry.get('resubmit', '').lower()
+    if 'satisf' in resubmit and 'unsatisf' not in resubmit:
+        return True
+    try:
+        return float(resubmit) >= 50
+    except (ValueError, TypeError):
+        return False
+
+
+def gc_final_outcome(entry):
+    """
+    Final outcome for cell colouring (where they ended up):
+      'Satisfactory'   — passed (original or via resubmit)
+      'Unsatisfactory' — failed and either did not resubmit or resubmit also failed
+      'Needs Grading'  — submitted but outcome not yet determined
+      'No Submission'  — nothing submitted
+    """
+    if not gc_submitted(entry):
+        return 'No Submission'
+
+    if gc_passed(entry):
+        return 'Satisfactory'
+
+    resubmit = entry.get('resubmit', '').lower()
+    original = entry.get('original', '').lower()
+
+    # If resubmit column has something but didn't pass
+    if resubmit:
+        if 'needs' in resubmit:
+            return 'Needs Grading'
+        return 'Unsatisfactory'
+
+    # No resubmit yet — judge by original
+    if 'needs' in original:
+        return 'Needs Grading'
+    if 'unsatisf' in original:
+        return 'Unsatisfactory'
+
+    # Satisfactory already handled above
+    return 'Needs Grading'
+
+
+def gc_display_value(entry):
+    """
+    Human-readable string for display in per-student cells.
+    Shows final outcome label so readers see where the student ended up.
+    """
+    outcome = gc_final_outcome(entry)
+    if outcome == 'No Submission':
+        return 'No Submission'
+    if outcome == 'Satisfactory':
+        original = entry.get('original', '').lower()
+        if 'satisf' in original and 'unsatisf' not in original:
+            return 'Satisfactory'
+        return 'Satisfactory (via Resubmit)'
+    if outcome == 'Unsatisfactory':
+        resubmit = entry.get('resubmit', '')
+        if resubmit:
+            return f'Resub Fail'
+        return 'Unsatisfactory'
+    return 'Needs Grading'
+
 
 # ===========================================================================
 # WEEK DETECTION
@@ -506,39 +641,23 @@ def fmt_login(l):
     return (days if days is not None else '-', last_str, l['total_logins'] or 0)
 
 # ===========================================================================
-# GRADE CENTRE HELPERS
+# GRADE CENTRE RATE TABLE HELPERS
 # ===========================================================================
-def categorise_grade(val):
-    """Collapse raw grade strings into 4 display buckets.
-
-    Satisfactory   — Satisfactory OR Resubmitted (Satisfactory)  [a pass]
-    Unsatisfactory — Unsatisfactory OR Resub Fail                 [a fail]
-    Needs Grading  — Needs Marking/Grading OR Resubmitted but outcome not yet satisfactory
-    No Submission  — nothing submitted
-    """
-    if val == 'No Submission': return 'No Submission'
-    v = val.strip().lower()
-    if v in ('', 'no submission'): return 'No Submission'
-    if 'needs grading' in v or 'needs marking' in v: return 'Needs Grading'
-    if v.startswith('resub fail'): return 'Unsatisfactory'
-    if v.startswith('resubmitted'):
-        if 'satisf' in v: return 'Satisfactory'
-        return 'Needs Grading'
-    if 'unsatisf' in v: return 'Unsatisfactory'
-    return 'Satisfactory'
 
 STATUS_COLS = ['Satisfactory', 'Unsatisfactory', 'Needs Grading', 'No Submission']
 
 
-def _write_rate_table(ws, start_row, gc_data, gc_labels, students, seg, n_cols,
-                      title, note, col_headers, count_fn):
-    """Generic helper: write a titled rate table with 5 columns.
+def _write_rate_section(ws, start_row, title, note, col_headers, gc_labels, students,
+                        seg, enrolled_fn, count_fn, n_cols):
+    """
+    Generic rate table writer.
 
-    count_fn(sid, label) -> bool  — True if this student counts for this assessment.
+    enrolled_fn(sid) -> bool   counts who is in the denominator for this metric
+    count_fn(sid, label) -> bool   counts who hits the numerator
     Returns next available row.
     """
     ghost_sids = {sid for sid, s in seg.items() if s in GHOST_SEGS}
-    enrolled = len(students)
+    enrolled_all = len(students)
     non_ghost_enrolled = sum(1 for sid in students if sid not in ghost_sids)
 
     # Section header
@@ -569,15 +688,19 @@ def _write_rate_table(ws, start_row, gc_data, gc_labels, students, seg, n_cols,
     ws.row_dimensions[start_row].height = 30
     start_row += 1
 
-    # Data rows
+    # Data rows — one per assessment
     for ri, label in enumerate(gc_labels):
-        n_all = sum(1 for sid in students if count_fn(sid, label))
-        n_non_ghost = sum(1 for sid in students if sid not in ghost_sids and count_fn(sid, label))
-        rate_all = n_all / enrolled if enrolled else 0
-        rate_non_ghost = n_non_ghost / non_ghost_enrolled if non_ghost_enrolled else 0
+        denom_all   = sum(1 for sid in students if enrolled_fn(sid, label, 'all'))
+        denom_ng    = sum(1 for sid in students if sid not in ghost_sids and enrolled_fn(sid, label, 'non_ghost'))
+        n_all       = sum(1 for sid in students if enrolled_fn(sid, label, 'all')      and count_fn(sid, label))
+        n_ng        = sum(1 for sid in students if sid not in ghost_sids
+                          and enrolled_fn(sid, label, 'non_ghost') and count_fn(sid, label))
+
+        rate_all = n_all / denom_all if denom_all else 0
+        rate_ng  = n_ng  / denom_ng  if denom_ng  else 0
 
         fill = PatternFill('solid', start_color=ALT_ROW) if ri % 2 == 0 else None
-        row_vals = [label.replace('AS', 'Assessment '), n_all, rate_all, n_non_ghost, rate_non_ghost]
+        row_vals = [label.replace('AS', 'Assessment '), n_all, rate_all, n_ng, rate_ng]
         for ci, val in enumerate(row_vals, 1):
             c = ws.cell(start_row, ci, val)
             c.font = Font(name='Arial', size=10)
@@ -599,50 +722,108 @@ def _write_rate_table(ws, start_row, gc_data, gc_labels, students, seg, n_cols,
     return start_row
 
 
-def _write_submission_rate_table(ws, start_row, gc_data, gc_labels, students, seg, n_cols):
-    """Write submission rate table then pass rate table. Returns next available row."""
+def _write_all_rate_tables(ws, start_row, gc_data, gc_labels, students, seg, n_cols):
+    """
+    Write four rate tables:
+      1. Submission rate      — submitted / all enrolled
+      2. Pass rate            — passed / all enrolled
+      3. Resubmission rate    — resubmitted / those who needed to resubmit
+      4. Resubmission pass rate — resubmit passed / those who needed to resubmit
+    """
     ghost_sids = {sid for sid, s in seg.items() if s in GHOST_SEGS}
     enrolled = len(students)
     non_ghost_enrolled = sum(1 for sid in students if sid not in ghost_sids)
-    shared_note_suffix = (
+    suffix = (
         f'Ghosts = S1+S2+S3 ({len(ghost_sids)} students).  '
         f'Enrolled: {enrolled}  |  Excl. Ghosts: {non_ghost_enrolled}'
     )
 
-    sub_headers = [
-        'Assessment', 'Submitted (n)', 'Rate % (all enrolled)',
-        'Submitted excl. Ghosts (n)', 'Rate % (excl. Ghosts)',
-    ]
-    start_row = _write_rate_table(
-        ws, start_row, gc_data, gc_labels, students, seg, n_cols,
+    def all_enrolled(sid, label, scope):
+        return True
+
+    def non_ghost_enrolled_fn(sid, label, scope):
+        return sid not in ghost_sids
+
+    def needed_resub(sid, label, scope):
+        entry = gc_data.get(sid, {}).get(label, {})
+        result = gc_needed_resubmit(entry)
+        if scope == 'non_ghost':
+            return result and sid not in ghost_sids
+        return result
+
+    # 1. Submission rate
+    start_row = _write_rate_section(
+        ws, start_row,
         title='Assessment Submission Rates',
-        note='Submitted = any status except No Submission.  ' + shared_note_suffix,
-        col_headers=sub_headers,
-        count_fn=lambda sid, label: (
-            categorise_grade(gc_data.get(sid, {}).get(label, 'No Submission')) != 'No Submission'
-        ),
+        note='Submitted = any value in the original submission column.  ' + suffix,
+        col_headers=[
+            'Assessment', 'Submitted (n)', 'Rate % (all enrolled)',
+            'Submitted excl. Ghosts (n)', 'Rate % (excl. Ghosts)',
+        ],
+        gc_labels=gc_labels, students=students, seg=seg,
+        enrolled_fn=lambda sid, label, scope: True,
+        count_fn=lambda sid, label: gc_submitted(gc_data.get(sid, {}).get(label, {})),
+        n_cols=n_cols,
     )
 
-    pass_headers = [
-        'Assessment', 'Passed (n)', 'Pass Rate % (all enrolled)',
-        'Passed excl. Ghosts (n)', 'Pass Rate % (excl. Ghosts)',
-    ]
-    start_row = _write_rate_table(
-        ws, start_row, gc_data, gc_labels, students, seg, n_cols,
+    # 2. Pass rate
+    start_row = _write_rate_section(
+        ws, start_row,
         title='Assessment Pass Rates',
-        note='Pass = Satisfactory or Resubmitted (Satisfactory).  ' + shared_note_suffix,
-        col_headers=pass_headers,
-        count_fn=lambda sid, label: (
-            categorise_grade(gc_data.get(sid, {}).get(label, 'No Submission')) == 'Satisfactory'
-        ),
+        note='Pass = Satisfactory on original submission, or Satisfactory on resubmission.  ' + suffix,
+        col_headers=[
+            'Assessment', 'Passed (n)', 'Pass Rate % (all enrolled)',
+            'Passed excl. Ghosts (n)', 'Pass Rate % (excl. Ghosts)',
+        ],
+        gc_labels=gc_labels, students=students, seg=seg,
+        enrolled_fn=lambda sid, label, scope: True,
+        count_fn=lambda sid, label: gc_passed(gc_data.get(sid, {}).get(label, {})),
+        n_cols=n_cols,
     )
+
+    # 3. Resubmission rate  (denominator = those who needed to resubmit)
+    start_row = _write_rate_section(
+        ws, start_row,
+        title='Assessment Resubmission Rates',
+        note=(
+            'Denominator = students who needed to resubmit (original = Unsatisfactory or Needs Grading).  '
+            'Numerator = those who actually resubmitted (regardless of outcome).  ' + suffix
+        ),
+        col_headers=[
+            'Assessment', 'Resubmitted (n)', 'Resub Rate % (of those needing resub)',
+            'Resubmitted excl. Ghosts (n)', 'Resub Rate % (excl. Ghosts)',
+        ],
+        gc_labels=gc_labels, students=students, seg=seg,
+        enrolled_fn=lambda sid, label, scope: gc_needed_resubmit(gc_data.get(sid, {}).get(label, {})),
+        count_fn=lambda sid, label: gc_resubmitted(gc_data.get(sid, {}).get(label, {})),
+        n_cols=n_cols,
+    )
+
+    # 4. Resubmission pass rate  (denominator = those who needed to resubmit)
+    start_row = _write_rate_section(
+        ws, start_row,
+        title='Assessment Resubmission Pass Rates',
+        note=(
+            'Denominator = students who needed to resubmit (original = Unsatisfactory or Needs Grading).  '
+            'Numerator = those who passed on resubmission.  ' + suffix
+        ),
+        col_headers=[
+            'Assessment', 'Resub Passed (n)', 'Resub Pass Rate % (of those needing resub)',
+            'Resub Passed excl. Ghosts (n)', 'Resub Pass Rate % (excl. Ghosts)',
+        ],
+        gc_labels=gc_labels, students=students, seg=seg,
+        enrolled_fn=lambda sid, label, scope: gc_needed_resubmit(gc_data.get(sid, {}).get(label, {})),
+        count_fn=lambda sid, label: gc_resubmit_passed(gc_data.get(sid, {}).get(label, {})),
+        n_cols=n_cols,
+    )
+
     return start_row
 
 
 def _write_assessment_detail_sheet(wb, gc_data, gc_labels, groups, group_label_col, current_week, is_partial):
     """
     Create a new 'Assessment Detail' sheet with per-class breakdown per assessment.
-    Layout: one section per assessment, rows = groups (classes), columns = status categories.
+    Layout: one section per assessment, rows = groups (classes), columns = final-outcome status categories.
     """
     ws = wb.create_sheet('Assessment Detail')
     partial_note = ' (PARTIAL)' if is_partial else ''
@@ -652,7 +833,7 @@ def _write_assessment_detail_sheet(wb, gc_data, gc_labels, groups, group_label_c
         ws,
         f'Assessment Detail — W{current_week}{partial_note}',
         f'Submission status breakdown by {group_label_col.lower()} for each assessment',
-        'One section per assessment. Columns show count per submission status category.',
+        'One section per assessment. Columns show final outcome (where the student ended up).',
         n_cols,
     )
 
@@ -688,11 +869,11 @@ def _write_assessment_detail_sheet(wb, gc_data, gc_labels, groups, group_label_c
             sids = groups[gk]['sids']
             bucket = {s: 0 for s in STATUS_COLS}
             for sid in sids:
-                sg = gc_data.get(sid, {})
-                val = sg.get(label, 'No Submission')
-                bucket[categorise_grade(val)] += 1
+                entry = gc_data.get(sid, {}).get(label, {})
+                outcome = gc_final_outcome(entry)
+                bucket[outcome] = bucket.get(outcome, 0) + 1
             row_total = sum(bucket.values())
-            row_data = [gk] + [bucket[s] for s in STATUS_COLS] + [row_total]
+            row_data = [gk] + [bucket.get(s, 0) for s in STATUS_COLS] + [row_total]
 
             fill = PatternFill('solid', start_color=ALT_ROW) if ri_idx % 2 == 0 else None
             for ci, val in enumerate(row_data, 1):
@@ -707,11 +888,11 @@ def _write_assessment_detail_sheet(wb, gc_data, gc_labels, groups, group_label_c
             current_row += 1
 
             for s in STATUS_COLS:
-                grand_totals[s] += bucket[s]
+                grand_totals[s] = grand_totals.get(s, 0) + bucket.get(s, 0)
             grand_total_all += row_total
 
         # Totals row
-        total_row_data = ['TOTAL'] + [grand_totals[s] for s in STATUS_COLS] + [grand_total_all]
+        total_row_data = ['TOTAL'] + [grand_totals.get(s, 0) for s in STATUS_COLS] + [grand_total_all]
         for ci, val in enumerate(total_row_data, 1):
             c = ws.cell(current_row, ci, val)
             c.font = Font(name='Arial', size=10, bold=True)
@@ -731,22 +912,13 @@ def _write_assessment_detail_sheet(wb, gc_data, gc_labels, groups, group_label_c
 
 def _write_class_index_sheet(wb, title_prefix, groups, group_label_col, students, seg,
                               gc_data, gc_labels, group_sheet_names, current_week, is_partial):
-    """
-    Create a 'Class Index' sheet after Assessment Detail.
-    Columns: #, Class, Teacher, Enrolled, Active (S5+S6+S7), At Risk (S4),
-             then one 'AS# Sub' column per assessment showing 'submitted/enrolled'
-             coloured green (100%), orange (>=50%), red (<50%).
-    Each class name is hyperlinked to its sheet.
-    Each class sheet gets a '← Back to Index' link added in cell A4.
-    """
     ws = wb.create_sheet('Class Index')
     partial_note = ' (PARTIAL)' if is_partial else ''
     gc_active = gc_data is not None and gc_labels is not None and len(gc_labels) > 0
 
-    n_fixed = 6  # #, Class, Teacher, Enrolled, Active, At Risk
+    n_fixed = 6
     n_cols = n_fixed + (len(gc_labels) if gc_active else 0)
 
-    # Header band
     write_tab_header(
         ws,
         f'{title_prefix} — Class Index{partial_note}',
@@ -757,7 +929,6 @@ def _write_class_index_sheet(wb, title_prefix, groups, group_label_col, students
         n_cols,
     )
 
-    # Instruction row (row 4, inside the spacer)
     ws.merge_cells(start_row=4, start_column=1, end_row=4, end_column=n_cols)
     c = ws.cell(4, 1,
         f'Click a class name to navigate directly. '
@@ -769,7 +940,6 @@ def _write_class_index_sheet(wb, title_prefix, groups, group_label_col, students
     c.alignment = Alignment(horizontal='left', vertical='center', indent=1)
     ws.row_dimensions[4].height = 14
 
-    # Column headers (row 5)
     col_headers = ['#', group_label_col, 'Teacher', 'Enrolled', 'Active', 'At Risk']
     if gc_active:
         col_headers += [f'{lbl} Sub' for lbl in gc_labels]
@@ -782,7 +952,6 @@ def _write_class_index_sheet(wb, title_prefix, groups, group_label_col, students
         c.border = thin_border()
     ws.row_dimensions[5].height = 30
 
-    # Colour fills for submission rate cells
     fill_green  = PatternFill('solid', start_color='D5F5E3')
     fill_orange = PatternFill('solid', start_color='FDEBD0')
     fill_red    = PatternFill('solid', start_color='FADBD8')
@@ -803,7 +972,6 @@ def _write_class_index_sheet(wb, title_prefix, groups, group_label_col, students
 
         row_fill = PatternFill('solid', start_color=ALT_ROW) if ri % 2 == 0 else None
 
-        # Fixed columns
         fixed_vals = [ri + 1, gk, teacher, enrolled, active, at_risk]
         for ci, val in enumerate(fixed_vals, 1):
             c = ws.cell(excel_row, ci, val)
@@ -815,24 +983,21 @@ def _write_class_index_sheet(wb, title_prefix, groups, group_label_col, students
             )
             c.border = thin_border()
 
-        # At Risk: colour red if > 0
         if at_risk > 0:
             ws.cell(excel_row, 6).font = Font(name='Arial', size=10, color=RED, bold=True)
 
-        # Hyperlink on class name cell
         sn = group_sheet_names.get(gk)
         if sn:
             cell = ws.cell(excel_row, 2)
             cell.hyperlink = f"#'{sn}'!A1"
             cell.font = Font(name='Arial', size=10, color='2980B9', underline='single')
 
-        # Assessment submission columns
         if gc_active:
             for ai, label in enumerate(gc_labels):
                 col = n_fixed + 1 + ai
                 submitted = sum(
                     1 for sid in sids
-                    if categorise_grade(gc_data.get(sid, {}).get(label, 'No Submission')) != 'No Submission'
+                    if gc_submitted(gc_data.get(sid, {}).get(label, {}))
                 )
                 frac_str = f'{submitted}/{enrolled}'
                 rate = submitted / enrolled if enrolled else 0
@@ -847,7 +1012,6 @@ def _write_class_index_sheet(wb, title_prefix, groups, group_label_col, students
                 else:
                     c.fill = fill_red;   c.font = font_red
 
-    # Totals row
     totals_row = 6 + len(group_order)
     total_enrolled = sum(len(groups[gk]['sids']) for gk in group_order)
     total_active   = sum(
@@ -863,7 +1027,7 @@ def _write_class_index_sheet(wb, title_prefix, groups, group_label_col, students
         for label in gc_labels:
             total_sub = sum(
                 1 for gk in group_order for sid in groups[gk]['sids']
-                if categorise_grade(gc_data.get(sid, {}).get(label, 'No Submission')) != 'No Submission'
+                if gc_submitted(gc_data.get(sid, {}).get(label, {}))
             )
             total_vals.append(f'{total_sub}/{total_enrolled}')
     for ci, val in enumerate(total_vals, 1):
@@ -873,21 +1037,16 @@ def _write_class_index_sheet(wb, title_prefix, groups, group_label_col, students
         c.border = thin_border()
         c.alignment = Alignment(horizontal='center' if ci != 2 else 'left', vertical='center')
 
-    # Column widths
     widths = [4, 36, 22, 10, 10, 10] + ([9] * len(gc_labels) if gc_active else [])
     autosize(ws, widths)
     ws.freeze_panes = 'C6'
 
-    # Add '← Back to Index' link in each group sheet (cell A4, inside the description band)
     for gk in group_order:
         sn = group_sheet_names.get(gk)
         if sn and sn in [s.title for s in wb.worksheets]:
             ws_g = wb[sn]
-            # Row 3 is the description/italic band — write the back-link into it
-            # We merge into the existing merged row 3 by just writing to A3
             back_cell = ws_g.cell(3, 1)
             existing_val = back_cell.value or ''
-            # Append the back link text inline so it sits in the description row
             back_cell.value = '\u2190 Back to Index      ' + existing_val
             back_cell.hyperlink = "#'Class Index'!A1"
             back_cell.font = Font(name='Arial', size=10, italic=True,
@@ -1147,10 +1306,13 @@ def build_workbook(subject_code, students, login, hits, seg, current_week, prev_
 # ===========================================================================
 # SHARED HELPER FOR GROUP-BASED REPORTS (Program & Class)
 # ===========================================================================
+
+# ===========================================================================
+# SHARED HELPER FOR GROUP-BASED REPORTS (Program & Class)
+# ===========================================================================
 def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, login, hits, seg,
                           current_week, prev_days, curr_days, is_partial, latest_date, login_window,
                           gc_data=None, gc_labels=None, extra_summary_cols=None):
-    """Shared logic for program report and class report."""
     week_keys = [f'w{i}' for i in range(1, current_week + 1)]
     week_labels = [f'W{i}' for i in range(1, current_week + 1)]
     curr_key = f'w{current_week}'
@@ -1161,14 +1323,12 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
 
     gc_active = gc_data is not None and gc_labels is not None and len(gc_labels) > 0
 
-    # -----------------------------------------------------------------------
     # Summary cross-tab
-    # -----------------------------------------------------------------------
     ws = wb.create_sheet('Summary')
     partial_note = ' (PARTIAL)' if is_partial else ''
     write_tab_header(ws,
-        f'{title_prefix} — W{current_week}{partial_note}',
-        f'Enrolled {len(students)}  •  {len(groups)} groups  •  Latest data: {latest_date.strftime("%b %-d %Y")}',
+        f'{title_prefix} \u2014 W{current_week}{partial_note}',
+        f'Enrolled {len(students)}  \u2022  {len(groups)} groups  \u2022  Latest data: {latest_date.strftime("%b %-d %Y")}',
         f'Segment counts per {group_label_col.lower()}. One sheet per group follows.',
         len(seg_codes) + len(extra_summary_cols) + 3)
 
@@ -1189,7 +1349,6 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
         row.append(round(100 * active / max(enrolled, 1), 1))
         rows.append(row)
 
-    # Totals
     totals = ['TOTAL'] + ['' for _ in extra_summary_cols] + [len(students)]
     for i, sc in enumerate(seg_codes):
         totals.append(sum(r[i + 2 + extra_count] for r in rows))
@@ -1198,7 +1357,6 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
     rows.append(totals)
     write_data_rows(ws, rows, start_row=6)
 
-    # Colour segment headers
     seg_start_col = 2 + extra_count + 1
     for ci, sc in enumerate(seg_codes):
         col = seg_start_col + ci
@@ -1217,9 +1375,7 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
     autosize(ws, widths)
     ws.freeze_panes = 'A6'
 
-    # -----------------------------------------------------------------------
-    # Segment Legend (in Summary)
-    # -----------------------------------------------------------------------
+    # Segment Legend
     legend_start = totals_row + 2
     legend_span = max(3 + extra_count, 3)
     ws.merge_cells(start_row=legend_start, start_column=1, end_row=legend_start, end_column=legend_span)
@@ -1228,9 +1384,15 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
     c.fill = PatternFill('solid', start_color=NAVY)
     c.alignment = Alignment(horizontal='left', vertical='center', indent=1)
     ws.row_dimensions[legend_start].height = 22
-    seg_legend = [('S1','Never Engaged'),('S2','Pre-Teaching Ghosts'),('S3','W1 Early Drop-Offs'),
-                  ('S4',f'Active then W{current_week} Absent'),('S5','Late Arrivals + Returners'),
-                  ('S6','Fading Engagers'),('S7','Sustained Participants')]
+    seg_legend = [
+        ('S1', 'Never Engaged'),
+        ('S2', 'Pre-Teaching Ghosts'),
+        ('S3', 'W1 Early Drop-Offs'),
+        ('S4', f'Active then W{current_week} Absent'),
+        ('S5', 'Late Arrivals + Returners'),
+        ('S6', 'Fading Engagers'),
+        ('S7', 'Sustained Participants'),
+    ]
     for li, (code, label) in enumerate(seg_legend):
         row_i = legend_start + 1 + li
         c_code = ws.cell(row_i, 1, code)
@@ -1248,93 +1410,130 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
 
     next_row = legend_start + 1 + len(seg_legend) + 1
 
-    # -----------------------------------------------------------------------
-    # Submission rate summary table (in Summary, if GC data present)
-    # -----------------------------------------------------------------------
+    # Four rate tables (if GC data present)
     if gc_active:
-        n_summary_cols = len(seg_codes) + extra_count + 3  # must match header width above
-        next_row = _write_submission_rate_table(
+        n_summary_cols = len(seg_codes) + extra_count + 3
+        next_row = _write_all_rate_tables(
             ws, next_row, gc_data, gc_labels, students, seg, n_summary_cols
         )
 
-    # -----------------------------------------------------------------------
-    # Assessment Detail tab (immediately after Summary)
-    # -----------------------------------------------------------------------
+    # Assessment Detail tab
     if gc_active:
-        _write_assessment_detail_sheet(wb, gc_data, gc_labels, groups, group_label_col, current_week, is_partial)
+        _write_assessment_detail_sheet(
+            wb, gc_data, gc_labels, groups, group_label_col, current_week, is_partial
+        )
 
-    # -----------------------------------------------------------------------
-    # Add hyperlinks from summary sheet group names to their tabs
-    # -----------------------------------------------------------------------
     group_sheet_names = {}
 
-    # -----------------------------------------------------------------------
     # Per-group sheets
-    # -----------------------------------------------------------------------
     seg_order = {f'S{i}': i for i in range(1, 8)}
-    base_headers = ['Segment','Surname','First Name','Student ID','Course','Disc. Subject','Disc. Class','Disc. Teacher','Email'] + week_labels + ['Total Hits']
-    if prev_key: base_headers += [f'W{current_week-1} Daily',f'W{current_week} Daily']
-    base_headers += ['Total Logins','Last Login','Days Since']
-    if gc_active: base_headers += gc_labels
+    base_headers = (
+        ['Segment', 'Surname', 'First Name', 'Student ID', 'Course',
+         'Disc. Subject', 'Disc. Class', 'Disc. Teacher', 'Email']
+        + week_labels + ['Total Hits']
+    )
+    if prev_key:
+        base_headers += [f'W{current_week-1} Daily', f'W{current_week} Daily']
+    base_headers += ['Total Logins', 'Last Login', 'Days Since']
+    if gc_active:
+        base_headers += gc_labels
 
     for gk in group_order:
         info = groups[gk]; sids = info['sids']
         sheet_name = str(gk)[:31] or 'Unknown'
-        existing = [s.title for s in wb.worksheets]
-        if sheet_name in existing: sheet_name = (sheet_name[:28] + '_2')[:31]
+        existing_sheets = [s.title for s in wb.worksheets]
+        if sheet_name in existing_sheets:
+            sheet_name = (sheet_name[:28] + '_2')[:31]
         ws_g = wb.create_sheet(sheet_name)
         group_sheet_names[gk] = sheet_name
-        seg_counts_str = ', '.join(f'{sc}: {sum(1 for sid in sids if seg.get(sid) == sc)}' for sc in seg_codes)
+        seg_counts_str = ', '.join(
+            f'{sc}: {sum(1 for sid in sids if seg.get(sid) == sc)}' for sc in seg_codes
+        )
         subtitle = seg_counts_str
         teacher = info.get('teacher', '')
-        if teacher: subtitle += f'  •  Teacher: {teacher}'
-        write_tab_header(ws_g, f'{gk} — {len(sids)} students', subtitle,
-            f'All students sorted by segment then surname. W{current_week}{"(partial)" if is_partial else ""}.', len(base_headers))
+        if teacher:
+            subtitle += f'  \u2022  Teacher: {teacher}'
+        write_tab_header(
+            ws_g, f'{gk} \u2014 {len(sids)} students', subtitle,
+            f'All students sorted by segment then surname. W{current_week}{"(partial)" if is_partial else ""}.',
+            len(base_headers)
+        )
         write_col_headers(ws_g, base_headers, row=5)
-        sorted_sids = sorted(sids, key=lambda sid: (seg_order.get(seg.get(sid,'S1'),99), students[sid]['last'].lower(), students[sid]['first'].lower()))
+
+        sorted_sids = sorted(
+            sids,
+            key=lambda sid: (
+                seg_order.get(seg.get(sid, 'S1'), 99),
+                students[sid]['last'].lower(),
+                students[sid]['first'].lower(),
+            )
+        )
         rows_g = []
         for sid in sorted_sids:
             st = students[sid]; h = hits[sid]; l = login.get(sid)
             days_since, last_str, total_logins = fmt_login(l)
             total_hits = sum(h[k] for k in week_keys)
-            row = [seg.get(sid,'?'),st['last'],st['first'],sid,st['course'],st.get('discipline_subject',''),st.get('discipline_class',''),st.get('discipline_teacher',''),st['email']]
+            row = [
+                seg.get(sid, '?'), st['last'], st['first'], sid, st['course'],
+                st.get('discipline_subject', ''), st.get('discipline_class', ''),
+                st.get('discipline_teacher', ''), st['email'],
+            ]
             row += [h[k] for k in week_keys] + [total_hits]
-            if prev_key: row += [round(h[prev_key]/prev_days,1) if prev_days else 0, round(h[curr_key]/curr_days,1) if curr_days else 0]
+            if prev_key:
+                row += [
+                    round(h[prev_key] / prev_days, 1) if prev_days else 0,
+                    round(h[curr_key] / curr_days, 1) if curr_days else 0,
+                ]
             row += [total_logins, last_str, days_since]
             if gc_active:
-                sg = gc_data.get(sid, {})
-                for label in gc_labels: row.append(sg.get(label, 'No Submission'))
+                for label in gc_labels:
+                    entry = gc_data.get(sid, {}).get(label, {})
+                    row.append(gc_display_value(entry))
             rows_g.append(row)
+
         write_data_rows(ws_g, rows_g, start_row=6)
+
+        # Segment colour on col 1
         for ri, sid in enumerate(sorted_sids):
-            fill_colour = SEG_COLOURS.get(seg.get(sid,''))
+            fill_colour = SEG_COLOURS.get(seg.get(sid, ''))
             if fill_colour:
-                ws_g.cell(6+ri, 1).fill = PatternFill('solid', start_color=fill_colour)
-                ws_g.cell(6+ri, 1).font = Font(name='Arial', size=10, bold=True, color=WHITE)
+                ws_g.cell(6 + ri, 1).fill = PatternFill('solid', start_color=fill_colour)
+                ws_g.cell(6 + ri, 1).font = Font(name='Arial', size=10, bold=True, color=WHITE)
+
+        # Assessment cell colouring based on final outcome
         if gc_active:
-            # Cell colours align with the 4-bucket scheme: No Submission, Unsatisfactory, Needs Grading, Satisfactory (no colour)
-            no_sub_fill = PatternFill('solid', start_color='FADBD8')
-            no_sub_font = Font(name='Arial', size=10, color=RED, bold=True)
-            unsat_fill = PatternFill('solid', start_color='FDEBD0')
-            unsat_font = Font(name='Arial', size=10, color=ORANGE, bold=True)
+            no_sub_fill        = PatternFill('solid', start_color='FADBD8')
+            no_sub_font        = Font(name='Arial', size=10, color=RED, bold=True)
+            unsat_fill         = PatternFill('solid', start_color='FDEBD0')
+            unsat_font         = Font(name='Arial', size=10, color=ORANGE, bold=True)
             needs_grading_fill = PatternFill('solid', start_color='FEF9E7')
             needs_grading_font = Font(name='Arial', size=10, color='7D6608')
+            sat_fill           = PatternFill('solid', start_color='D5F5E3')
+            sat_font           = Font(name='Arial', size=10, color='1A7A3A', bold=True)
+
             gc_start_col = len(base_headers) - len(gc_labels) + 1
-            for ri in range(len(sorted_sids)):
-                for ci_offset in range(len(gc_labels)):
+            for ri, sid in enumerate(sorted_sids):
+                for ci_offset, label in enumerate(gc_labels):
                     cell = ws_g.cell(6 + ri, gc_start_col + ci_offset)
-                    bucket = categorise_grade(cell.value or 'No Submission')
-                    if bucket == 'No Submission':
-                        cell.fill = no_sub_fill; cell.font = no_sub_font
-                    elif bucket == 'Unsatisfactory':
-                        cell.fill = unsat_fill; cell.font = unsat_font
-                    elif bucket == 'Needs Grading':
+                    entry = gc_data.get(sid, {}).get(label, {})
+                    outcome = gc_final_outcome(entry)
+                    if outcome == 'No Submission':
+                        cell.fill = no_sub_fill;        cell.font = no_sub_font
+                    elif outcome == 'Unsatisfactory':
+                        cell.fill = unsat_fill;         cell.font = unsat_font
+                    elif outcome == 'Needs Grading':
                         cell.fill = needs_grading_fill; cell.font = needs_grading_font
-        widths = [8,22,18,12,10,24,10,18,38] + [8]*current_week + [10]
-        if prev_key: widths += [11, 11]
+                    else:  # Satisfactory (original or via resubmit)
+                        cell.fill = sat_fill;           cell.font = sat_font
+
+        widths = [8, 22, 18, 12, 10, 24, 10, 18, 38] + [8] * current_week + [10]
+        if prev_key:
+            widths += [11, 11]
         widths += [12, 14, 12]
-        if gc_active: widths += [16] * len(gc_labels)
-        autosize(ws_g, widths); ws_g.freeze_panes = 'A6'
+        if gc_active:
+            widths += [22] * len(gc_labels)
+        autosize(ws_g, widths)
+        ws_g.freeze_panes = 'A6'
 
     # Hyperlinks from summary to group tabs
     for i, gk in enumerate(group_order):
@@ -1344,9 +1543,7 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
             cell.hyperlink = f"#'{sn}'!A1"
             cell.font = Font(name='Arial', size=10, color='2980B9', underline='single')
 
-    # -----------------------------------------------------------------------
-    # Class Index tab — built after per-group sheets so group_sheet_names is full
-    # -----------------------------------------------------------------------
+    # Class Index tab
     _write_class_index_sheet(
         wb, title_prefix, groups, group_label_col, students, seg,
         gc_data if gc_active else None,
@@ -1354,7 +1551,7 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
         group_sheet_names, current_week, is_partial,
     )
 
-    # Move Class Index to position 2 (0-based): Summary, Assessment Detail, Class Index, ...
+    # Move Class Index to position 2 (after Summary, before Assessment Detail)
     target_idx = 2
     current_idx = next(
         (i for i, s in enumerate(wb._sheets) if s.title == 'Class Index'), None
@@ -1366,20 +1563,12 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
     return wb
 
 
-
 def _write_program_leaderboard_sheet(wb, title_prefix, groups, students, seg,
                                       gc_data, gc_labels, group_sheet_names,
                                       current_week, is_partial):
-    """
-    One consolidated table: Program, Enrolled, Active (S5+S6+S7), At Risk (S4),
-    then for each assessment: Sub n/enrolled  and  Pass n/enrolled.
-    Sorted by enrolled descending. Inserted as the second sheet (after Summary).
-    """
     gc_active = gc_data is not None and gc_labels is not None and len(gc_labels) > 0
     partial_note = ' (PARTIAL)' if is_partial else ''
 
-    # Fixed cols: #, Program, Enrolled, Active, At Risk
-    # Then per-assessment: AS# Sub, AS# Pass
     n_fixed = 5
     n_assess_cols = (len(gc_labels) * 2) if gc_active else 0
     n_cols = n_fixed + n_assess_cols
@@ -1388,16 +1577,15 @@ def _write_program_leaderboard_sheet(wb, title_prefix, groups, students, seg,
 
     write_tab_header(
         ws,
-        f'{title_prefix} — Program Leaderboard{partial_note}',
-        f'{len(groups)} programs  •  Active = S5+S6+S7  •  At Risk = S4',
-        ('Sub = submitted/enrolled.  Pass = passed/enrolled.  '
-         'Green = 100%, Orange ≥ 50%, Red < 50%.'
+        f'{title_prefix} \u2014 Program Leaderboard{partial_note}',
+        f'{len(groups)} programs  \u2022  Active = S5+S6+S7  \u2022  At Risk = S4',
+        ('Sub = submitted/enrolled.  Pass = passed (incl. resubmit)/enrolled.  '
+         'Green = 100%, Orange >= 50%, Red < 50%.'
          if gc_active else
          'Active = S5+S6+S7.  At Risk = S4.'),
         n_cols,
     )
 
-    # Column headers
     col_headers = ['#', 'Program', 'Enrolled', 'Active', 'At Risk']
     if gc_active:
         for lbl in gc_labels:
@@ -1413,7 +1601,6 @@ def _write_program_leaderboard_sheet(wb, title_prefix, groups, students, seg,
         c.border = thin_border()
     ws.row_dimensions[5].height = 30
 
-    # Colour fills for fraction cells
     fill_green  = PatternFill('solid', start_color='D5F5E3')
     fill_orange = PatternFill('solid', start_color='FDEBD0')
     fill_red    = PatternFill('solid', start_color='FADBD8')
@@ -1423,8 +1610,7 @@ def _write_program_leaderboard_sheet(wb, title_prefix, groups, students, seg,
 
     def rate_style(cell, n, denom):
         rate = n / denom if denom else 0
-        frac = f'{n}/{denom}'
-        cell.value = frac
+        cell.value = f'{n}/{denom}'
         cell.alignment = Alignment(horizontal='center', vertical='center')
         cell.border = thin_border()
         if rate == 1.0:
@@ -1439,13 +1625,12 @@ def _write_program_leaderboard_sheet(wb, title_prefix, groups, students, seg,
     for ri, gk in enumerate(group_order):
         excel_row = 6 + ri
         sids = groups[gk]['sids']
-        enrolled  = len(sids)
-        active    = sum(1 for sid in sids if seg.get(sid) in ('S5', 'S6', 'S7'))
-        at_risk   = sum(1 for sid in sids if seg.get(sid) == 'S4')
+        enrolled = len(sids)
+        active   = sum(1 for sid in sids if seg.get(sid) in ('S5', 'S6', 'S7'))
+        at_risk  = sum(1 for sid in sids if seg.get(sid) == 'S4')
 
         row_fill = PatternFill('solid', start_color=ALT_ROW) if ri % 2 == 0 else None
 
-        # Fixed columns
         fixed_vals = [ri + 1, gk, enrolled, active, at_risk]
         for ci, val in enumerate(fixed_vals, 1):
             c = ws.cell(excel_row, ci, val)
@@ -1460,34 +1645,27 @@ def _write_program_leaderboard_sheet(wb, title_prefix, groups, students, seg,
         if at_risk > 0:
             ws.cell(excel_row, 5).font = Font(name='Arial', size=10, color=RED, bold=True)
 
-        # Hyperlink program name to its sheet
         sn = group_sheet_names.get(gk)
         if sn:
             cell = ws.cell(excel_row, 2)
-            cell.hyperlink = f"#{chr(39)}{sn}{chr(39)}!A1"
+            cell.hyperlink = f"#'{sn}'!A1"
             cell.font = Font(name='Arial', size=10, color='2980B9', underline='single')
 
-        # Assessment columns
         if gc_active:
             for ai, label in enumerate(gc_labels):
                 sub_col  = n_fixed + 1 + ai * 2
                 pass_col = n_fixed + 2 + ai * 2
-
                 n_sub  = sum(
                     1 for sid in sids
-                    if categorise_grade(gc_data.get(sid, {}).get(label, 'No Submission')) != 'No Submission'
+                    if gc_submitted(gc_data.get(sid, {}).get(label, {}))
                 )
                 n_pass = sum(
                     1 for sid in sids
-                    if categorise_grade(gc_data.get(sid, {}).get(label, 'No Submission')) == 'Satisfactory'
+                    if gc_passed(gc_data.get(sid, {}).get(label, {}))
                 )
-
                 rate_style(ws.cell(excel_row, sub_col),  n_sub,  enrolled)
                 rate_style(ws.cell(excel_row, pass_col), n_pass, enrolled)
-                # Apply row background to uncoloured cells only if no submission colour set
-                # (rate_style always sets fill, so row_fill is intentionally overridden)
 
-    # Totals row
     totals_row = 6 + len(group_order)
     total_enrolled = sum(len(groups[gk]['sids']) for gk in group_order)
     total_active   = sum(
@@ -1512,11 +1690,11 @@ def _write_program_leaderboard_sheet(wb, title_prefix, groups, students, seg,
             pass_col = n_fixed + 2 + ai * 2
             t_sub  = sum(
                 1 for gk in group_order for sid in groups[gk]['sids']
-                if categorise_grade(gc_data.get(sid, {}).get(label, 'No Submission')) != 'No Submission'
+                if gc_submitted(gc_data.get(sid, {}).get(label, {}))
             )
             t_pass = sum(
                 1 for gk in group_order for sid in groups[gk]['sids']
-                if categorise_grade(gc_data.get(sid, {}).get(label, 'No Submission')) == 'Satisfactory'
+                if gc_passed(gc_data.get(sid, {}).get(label, {}))
             )
             for col, n in ((sub_col, t_sub), (pass_col, t_pass)):
                 c = ws.cell(totals_row, col, f'{n}/{total_enrolled}')
@@ -1525,12 +1703,11 @@ def _write_program_leaderboard_sheet(wb, title_prefix, groups, students, seg,
                 c.border = thin_border()
                 c.alignment = Alignment(horizontal='center', vertical='center')
 
-    # Column widths: #, Program, Enrolled, Active, At Risk, then pairs per assessment
     widths = [4, 20, 10, 10, 10] + ([9, 9] * len(gc_labels) if gc_active else [])
     autosize(ws, widths)
     ws.freeze_panes = 'C6'
-
     return ws
+
 
 def build_program_workbook(subject_code, students, login, hits, seg, current_week,
                            prev_days, curr_days, is_partial, latest_date, login_window,
@@ -1542,11 +1719,13 @@ def build_program_workbook(subject_code, students, login, hits, seg, current_wee
         programs.setdefault(cc, {'sids': []})
         programs[cc]['sids'].append(sid)
     title_prefix = f'{subject_code} Program Report'
-    wb = _build_grouped_report(wb, title_prefix, programs, 'Program',
-        students, login, hits, seg, current_week, prev_days, curr_days, is_partial, latest_date, login_window,
-        gc_data=gc_data, gc_labels=gc_labels)
+    wb = _build_grouped_report(
+        wb, title_prefix, programs, 'Program',
+        students, login, hits, seg, current_week, prev_days, curr_days,
+        is_partial, latest_date, login_window,
+        gc_data=gc_data, gc_labels=gc_labels,
+    )
 
-    # Build group_sheet_names from existing sheets (per-program sheets are named by program key)
     reserved = {'Summary', 'Assessment Detail', 'Class Index'}
     group_sheet_names = {}
     for gk in programs:
@@ -1562,7 +1741,6 @@ def build_program_workbook(subject_code, students, login, hits, seg, current_wee
         group_sheet_names, current_week, is_partial,
     )
 
-    # Insert Program Leaderboard as second sheet (after Summary)
     current_idx = next(
         (i for i, s in enumerate(wb._sheets) if s.title == 'Program Leaderboard'), None
     )
@@ -1582,51 +1760,60 @@ def build_class_workbook(subject_code, students, login, hits, seg, current_week,
         ds = st.get('discipline_subject', '') or ''
         dc = st.get('discipline_class', '') or ''
         dt = st.get('discipline_teacher', '') or ''
-        key = f'{ds} — {dc}'.strip(' —') if ds else (dc if dc else 'Unassigned')
+        key = f'{ds} \u2014 {dc}'.strip(' \u2014') if ds else (dc if dc else 'Unassigned')
         if key not in classes:
             classes[key] = {'sids': [], 'teacher': dt}
         classes[key]['sids'].append(sid)
         if dt and not classes[key]['teacher']:
             classes[key]['teacher'] = dt
-    return _build_grouped_report(wb, f'{subject_code} Class Report', classes, 'Class',
-        students, login, hits, seg, current_week, prev_days, curr_days, is_partial, latest_date, login_window,
+    return _build_grouped_report(
+        wb, f'{subject_code} Class Report', classes, 'Class',
+        students, login, hits, seg, current_week, prev_days, curr_days,
+        is_partial, latest_date, login_window,
         gc_data=gc_data, gc_labels=gc_labels,
-        extra_summary_cols=[('Teacher', lambda info: info.get('teacher', ''))])
+        extra_summary_cols=[('Teacher', lambda info: info.get('teacher', ''))],
+    )
+
 
 # ===========================================================================
 # STREAMLIT UI
 # ===========================================================================
-st.set_page_config(page_title='WSUTC Engagement Report', layout='wide', page_icon='📊')
+st.set_page_config(page_title='WSUTC Engagement Report', layout='wide', page_icon='\U0001f4ca')
 st.title('WSUTC Student Engagement Report')
-st.caption('Upload Blackboard exports for one subject. Generates a 10-tab Excel workbook with engagement segmentation.')
+st.caption('Upload Blackboard exports for one subject. Generates an Excel workbook with engagement segmentation.')
 
 with st.expander('Instructions', expanded=False):
-    st.markdown("""
-- Upload the **class list** (.xls or .xlsx), the **login report** (.xlsx), and **all relevant usage report files** (.xls).
-- **Enriched class list (.xlsx):** If your class list includes `Course Code`, `Class Code`, and `Teacher` columns, these will appear in all tabs and a **Program Report** download becomes available (one sheet per program with segment tags).
-- **Grade Centre (.xls, optional):** If uploaded, assessment submission status columns (AS1, AS2, …) are appended to each per-program sheet. Cells show the grade, "Needs Grading", or "No Submission".
-- Usage files can overlap; the most recent data wins where they do.
-- The current teaching week is auto-detected from the latest day with data in the usage files.
-- If the current week is partial, S4 will be flagged as inflated and S7 as understated.
-- Defaults: S2 ≥ pre-Mar 2 days, S3 = W1 login range, S4 split into Just Dropped + Long Silent, exclusions per project spec.
-""")
+    st.markdown(
+        'Upload the **class list** (.xls or .xlsx), the **login report** (.xlsx), '
+        'and **all relevant usage report files** (.xls).  \n'
+        '**Grade Centre (.xls, optional):** Four rate tables are shown per report: '
+        'Submission, Pass, Resubmission, and Resubmission Pass rates.  \n'
+        'Per-student assessment cells show final outcome (green = passed, including via resubmit).  \n'
+        'Usage files can overlap; the most recent data wins.  \n'
+        'The current teaching week is auto-detected from the latest day with data.'
+    )
 
 col1, col2 = st.columns(2)
 with col1:
     classlist_file = st.file_uploader('Class list (.xls / .xlsx)', type=['xls', 'xlsx'], key='cl')
     login_file = st.file_uploader('Login report (.xlsx)', type=['xlsx'], key='lr')
 with col2:
-    usage_files = st.file_uploader('Usage report files (.xls) — upload all that apply',
-                                    type=['xls'], accept_multiple_files=True, key='uf')
-    gc_file = st.file_uploader('Grade Centre (.xls) — optional', type=['xls'], key='gc')
+    usage_files = st.file_uploader(
+        'Usage report files (.xls) \u2014 upload all that apply',
+        type=['xls'], accept_multiple_files=True, key='uf',
+    )
+    gc_file = st.file_uploader('Grade Centre (.xls) \u2014 optional', type=['xls'], key='gc')
 
-run_btn = st.button('Generate report', type='primary', disabled=not (classlist_file and login_file and usage_files))
+run_btn = st.button(
+    'Generate report', type='primary',
+    disabled=not (classlist_file and login_file and usage_files),
+)
 
 if run_btn:
     try:
         with st.spinner('Loading class list...'):
             subject_code, students = load_classlist(classlist_file.getvalue())
-        st.success(f'**{subject_code}** • {len(students)} enrolled (after exclusions)')
+        st.success(f'**{subject_code}** \u2022 {len(students)} enrolled (after exclusions)')
 
         with st.spinner('Loading login report...'):
             login, win_start, win_end = load_login_report(login_file.getvalue())
@@ -1652,8 +1839,11 @@ if run_btn:
         if current_week == 1:
             prev_days = curr_days
 
-        partial_msg = f' (PARTIAL — {curr_days} days)' if is_partial else ' (full)'
-        st.success(f'Detected current week: **W{current_week}**{partial_msg}  •  Latest data: **{latest.strftime("%b %-d %Y")}**')
+        partial_msg = f' (PARTIAL \u2014 {curr_days} days)' if is_partial else ' (full)'
+        st.success(
+            f'Detected current week: **W{current_week}**{partial_msg}  \u2022  '
+            f'Latest data: **{latest.strftime("%b %-d %Y")}**'
+        )
         if current_week == 1:
             st.warning('W1 is the only week with data. S5/S6/S7 will be empty (no comparison week available).')
 
@@ -1661,7 +1851,9 @@ if run_btn:
             hits = bucket_by_week(merged, students, current_week, max_date=latest)
 
         with st.spinner('Classifying students...'):
-            seg, s2_thresh, s3_rng = classify(students, login, hits, current_week, prev_days, curr_days)
+            seg, s2_thresh, s3_rng = classify(
+                students, login, hits, current_week, prev_days, curr_days
+            )
 
         counts = {f'S{i}': 0 for i in range(1, 8)}
         for s in seg.values():
@@ -1674,16 +1866,20 @@ if run_btn:
         for i, (code, _) in enumerate([
             ('S1', 'Never'), ('S2', 'Ghosts'), ('S3', 'W1 drop'),
             ('S4', f'W{current_week} absent'), ('S5', 'Late/return'),
-            ('S6', 'Fading'), ('S7', 'Sustained')]):
+            ('S6', 'Fading'), ('S7', 'Sustained'),
+        ]):
             cols[i].metric(code, counts[code], f'{counts[code]/len(students)*100:.1f}%')
 
         st.subheader('Standing checks')
         missing = sum(1 for s in students if s not in login)
-        st.write(f'• Enrolled: **{len(students)}**')
-        st.write(f'• Missing from login report: **{missing}**')
-        st.write(f'• S2 days-since threshold: **≥ {s2_thresh}**')
-        st.write(f'• S3 days-since range: **{s3_rng[0]}-{s3_rng[1]}**')
-        st.write(f'• Comparison: W{current_week-1} (7d) vs W{current_week} ({curr_days}d)' if current_week > 1 else '• No prior week to compare')
+        st.write(f'\u2022 Enrolled: **{len(students)}**')
+        st.write(f'\u2022 Missing from login report: **{missing}**')
+        st.write(f'\u2022 S2 days-since threshold: **>= {s2_thresh}**')
+        st.write(f'\u2022 S3 days-since range: **{s3_rng[0]}-{s3_rng[1]}**')
+        if current_week > 1:
+            st.write(f'\u2022 Comparison: W{current_week-1} (7d) vs W{current_week} ({curr_days}d)')
+        else:
+            st.write('\u2022 No prior week to compare')
 
         with st.spinner('Building workbook...'):
             wb, _ = build_workbook(
@@ -1696,20 +1892,23 @@ if run_btn:
         date_str = latest.strftime('%Y%m%d')
         suffix = '_Partial' if is_partial else ''
         filename = f'{subject_code}_Engagement_Report_W{current_week}_{date_str}{suffix}.xlsx'
-        st.download_button('⬇ Download workbook', data=buf, file_name=filename,
-                           mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                           type='primary')
+        st.download_button(
+            '\u2b07 Download workbook', data=buf, file_name=filename,
+            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            type='primary',
+        )
 
-        # Parse grade centre if uploaded
         gc_data = None
         gc_labels = None
         if gc_file is not None:
             with st.spinner('Parsing grade centre...'):
                 gc_data, gc_labels = load_grade_centre(gc_file.getvalue())
             matched = sum(1 for sid in students if sid in gc_data)
-            st.info(f'Grade Centre: detected **{len(gc_labels)}** assessments ({", ".join(gc_labels)}) • matched **{matched}/{len(students)}** students')
+            st.info(
+                f'Grade Centre: detected **{len(gc_labels)}** assessments '
+                f'({", ".join(gc_labels)}) \u2022 matched **{matched}/{len(students)}** students'
+            )
 
-        # Program report
         has_programs = any(st_data.get('course_code') for st_data in students.values())
         if has_programs:
             with st.spinner('Building program report...'):
@@ -1720,11 +1919,12 @@ if run_btn:
                 )
                 buf_prog = io.BytesIO(); wb_prog.save(buf_prog); buf_prog.seek(0)
             prog_filename = f'{subject_code}_Program_Report_W{current_week}_{date_str}{suffix}.xlsx'
-            st.download_button('⬇ Download program report', data=buf_prog, file_name=prog_filename,
-                               mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                               key='prog_dl')
+            st.download_button(
+                '\u2b07 Download program report', data=buf_prog, file_name=prog_filename,
+                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                key='prog_dl',
+            )
 
-            # Class report — grouped by discipline subject + class
             has_classes = any(st_data.get('discipline_class') for st_data in students.values())
             if has_classes:
                 with st.spinner('Building class report...'):
@@ -1735,9 +1935,11 @@ if run_btn:
                     )
                     buf_class = io.BytesIO(); wb_class.save(buf_class); buf_class.seek(0)
                 class_filename = f'{subject_code}_Class_Report_W{current_week}_{date_str}{suffix}.xlsx'
-                st.download_button('⬇ Download class report', data=buf_class, file_name=class_filename,
-                                   mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                                   key='class_dl')
+                st.download_button(
+                    '\u2b07 Download class report', data=buf_class, file_name=class_filename,
+                    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    key='class_dl',
+                )
 
     except Exception as e:
         st.error(f'Error: {e}')
