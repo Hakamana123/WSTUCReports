@@ -394,15 +394,11 @@ def load_grade_centre(file_bytes):
 
         student_gc = {}
         for label, col_idx, num in zip(gc_labels, gc_col_indices, gc_nums):
-            # Raw original value
             original_raw = row[col_idx].strip().strip('"') if col_idx < len(row) else ''
-
-            # Raw resubmit value
             resub_idx = resub_map.get(num)
             resubmit_raw = ''
             if resub_idx is not None and resub_idx < len(row):
                 resubmit_raw = row[resub_idx].strip().strip('"')
-
             student_gc[label] = {
                 'original': original_raw,
                 'resubmit': resubmit_raw,
@@ -421,17 +417,10 @@ def gc_submitted(entry):
 
 
 def gc_passed(entry):
-    """
-    Pass: original = Satisfactory, OR
-          original failed/needs grading AND resubmit = Satisfactory (or numeric >= 50).
-    """
     original = entry.get('original', '').lower()
     resubmit = entry.get('resubmit', '').lower()
-
     if 'satisf' in original and 'unsatisf' not in original:
-        return True  # original pass
-
-    # Original was a fail or needs grading — check resubmit
+        return True
     if original and ('unsatisf' in original or 'needs' in original):
         if 'satisf' in resubmit and 'unsatisf' not in resubmit:
             return True
@@ -439,27 +428,19 @@ def gc_passed(entry):
             return float(resubmit) >= 50
         except (ValueError, TypeError):
             pass
-
     return False
 
 
 def gc_needed_resubmit(entry):
-    """Needed to resubmit: original = Unsatisfactory or Needs Grading/Marking."""
     original = entry.get('original', '').lower()
     return bool(original) and ('unsatisf' in original or 'needs grading' in original or 'needs marking' in original)
 
 
 def gc_resubmitted(entry):
-    """
-    Resubmission: needed to resubmit AND actually submitted something in the resubmit column.
-    """
     return gc_needed_resubmit(entry) and bool(entry.get('resubmit', ''))
 
 
 def gc_resubmit_passed(entry):
-    """
-    Resubmission pass: needed to resubmit AND resubmit outcome = Satisfactory (or score >= 50).
-    """
     if not gc_needed_resubmit(entry):
         return False
     resubmit = entry.get('resubmit', '').lower()
@@ -472,43 +453,24 @@ def gc_resubmit_passed(entry):
 
 
 def gc_final_outcome(entry):
-    """
-    Final outcome for cell colouring (where they ended up):
-      'Satisfactory'   — passed (original or via resubmit)
-      'Unsatisfactory' — failed and either did not resubmit or resubmit also failed
-      'Needs Grading'  — submitted but outcome not yet determined
-      'No Submission'  — nothing submitted
-    """
     if not gc_submitted(entry):
         return 'No Submission'
-
     if gc_passed(entry):
         return 'Satisfactory'
-
     resubmit = entry.get('resubmit', '').lower()
     original = entry.get('original', '').lower()
-
-    # If resubmit column has something but didn't pass
     if resubmit:
         if 'needs' in resubmit:
             return 'Needs Grading'
         return 'Unsatisfactory'
-
-    # No resubmit yet — judge by original
     if 'needs' in original:
         return 'Needs Grading'
     if 'unsatisf' in original:
         return 'Unsatisfactory'
-
-    # Satisfactory already handled above
     return 'Needs Grading'
 
 
 def gc_display_value(entry):
-    """
-    Human-readable string for display in per-student cells.
-    Shows final outcome label so readers see where the student ended up.
-    """
     outcome = gc_final_outcome(entry)
     if outcome == 'No Submission':
         return 'No Submission'
@@ -649,18 +611,8 @@ STATUS_COLS = ['Satisfactory', 'Unsatisfactory', 'Needs Grading', 'No Submission
 
 def _write_rate_section(ws, start_row, title, note, col_headers, gc_labels, students,
                         seg, enrolled_fn, count_fn, n_cols):
-    """
-    Generic rate table writer.
-
-    enrolled_fn(sid) -> bool   counts who is in the denominator for this metric
-    count_fn(sid, label) -> bool   counts who hits the numerator
-    Returns next available row.
-    """
     ghost_sids = {sid for sid, s in seg.items() if s in GHOST_SEGS}
-    enrolled_all = len(students)
-    non_ghost_enrolled = sum(1 for sid in students if sid not in ghost_sids)
 
-    # Section header
     ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=n_cols)
     c = ws.cell(start_row, 1, title)
     c.font = Font(name='Arial', size=11, bold=True, color=WHITE)
@@ -669,7 +621,6 @@ def _write_rate_section(ws, start_row, title, note, col_headers, gc_labels, stud
     ws.row_dimensions[start_row].height = 22
     start_row += 1
 
-    # Note row
     ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=n_cols)
     c = ws.cell(start_row, 1, note)
     c.font = Font(name='Arial', size=9, italic=True, color='2C3E50')
@@ -678,7 +629,6 @@ def _write_rate_section(ws, start_row, title, note, col_headers, gc_labels, stud
     ws.row_dimensions[start_row].height = 18
     start_row += 1
 
-    # Column headers
     for ci, h in enumerate(col_headers, 1):
         c = ws.cell(start_row, ci, h)
         c.font = Font(name='Arial', size=10, bold=True, color=WHITE)
@@ -688,7 +638,6 @@ def _write_rate_section(ws, start_row, title, note, col_headers, gc_labels, stud
     ws.row_dimensions[start_row].height = 30
     start_row += 1
 
-    # Data rows — one per assessment
     for ri, label in enumerate(gc_labels):
         denom_all   = sum(1 for sid in students if enrolled_fn(sid, label, 'all'))
         denom_ng    = sum(1 for sid in students if sid not in ghost_sids and enrolled_fn(sid, label, 'non_ghost'))
@@ -716,20 +665,12 @@ def _write_rate_section(ws, start_row, title, note, col_headers, gc_labels, stud
                 c.alignment = Alignment(horizontal='center', vertical='center')
         start_row += 1
 
-    # Spacer
     ws.row_dimensions[start_row].height = 8
     start_row += 1
     return start_row
 
 
 def _write_all_rate_tables(ws, start_row, gc_data, gc_labels, students, seg, n_cols):
-    """
-    Write four rate tables:
-      1. Submission rate      — submitted / all enrolled
-      2. Pass rate            — passed / all enrolled
-      3. Resubmission rate    — resubmitted / those who needed to resubmit
-      4. Resubmission pass rate — resubmit passed / those who needed to resubmit
-    """
     ghost_sids = {sid for sid, s in seg.items() if s in GHOST_SEGS}
     enrolled = len(students)
     non_ghost_enrolled = sum(1 for sid in students if sid not in ghost_sids)
@@ -738,20 +679,6 @@ def _write_all_rate_tables(ws, start_row, gc_data, gc_labels, students, seg, n_c
         f'Enrolled: {enrolled}  |  Excl. Ghosts: {non_ghost_enrolled}'
     )
 
-    def all_enrolled(sid, label, scope):
-        return True
-
-    def non_ghost_enrolled_fn(sid, label, scope):
-        return sid not in ghost_sids
-
-    def needed_resub(sid, label, scope):
-        entry = gc_data.get(sid, {}).get(label, {})
-        result = gc_needed_resubmit(entry)
-        if scope == 'non_ghost':
-            return result and sid not in ghost_sids
-        return result
-
-    # 1. Submission rate
     start_row = _write_rate_section(
         ws, start_row,
         title='Assessment Submission Rates',
@@ -766,7 +693,6 @@ def _write_all_rate_tables(ws, start_row, gc_data, gc_labels, students, seg, n_c
         n_cols=n_cols,
     )
 
-    # 2. Pass rate
     start_row = _write_rate_section(
         ws, start_row,
         title='Assessment Pass Rates',
@@ -781,7 +707,6 @@ def _write_all_rate_tables(ws, start_row, gc_data, gc_labels, students, seg, n_c
         n_cols=n_cols,
     )
 
-    # 3. Resubmission rate  (denominator = those who needed to resubmit)
     start_row = _write_rate_section(
         ws, start_row,
         title='Assessment Resubmission Rates',
@@ -799,7 +724,6 @@ def _write_all_rate_tables(ws, start_row, gc_data, gc_labels, students, seg, n_c
         n_cols=n_cols,
     )
 
-    # 4. Resubmission pass rate  (denominator = those who needed to resubmit)
     start_row = _write_rate_section(
         ws, start_row,
         title='Assessment Resubmission Pass Rates',
@@ -821,13 +745,9 @@ def _write_all_rate_tables(ws, start_row, gc_data, gc_labels, students, seg, n_c
 
 
 def _write_assessment_detail_sheet(wb, gc_data, gc_labels, groups, group_label_col, current_week, is_partial):
-    """
-    Create a new 'Assessment Detail' sheet with per-class breakdown per assessment.
-    Layout: one section per assessment, rows = groups (classes), columns = final-outcome status categories.
-    """
     ws = wb.create_sheet('Assessment Detail')
     partial_note = ' (PARTIAL)' if is_partial else ''
-    n_cols = len(STATUS_COLS) + 2  # group col + status cols + total
+    n_cols = len(STATUS_COLS) + 2
 
     write_tab_header(
         ws,
@@ -841,7 +761,6 @@ def _write_assessment_detail_sheet(wb, gc_data, gc_labels, groups, group_label_c
     current_row = 5
 
     for ai, label in enumerate(gc_labels):
-        # Assessment section header
         ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=n_cols)
         c = ws.cell(current_row, 1, label.replace('AS', 'Assessment '))
         c.font = Font(name='Arial', size=11, bold=True, color=WHITE)
@@ -850,7 +769,6 @@ def _write_assessment_detail_sheet(wb, gc_data, gc_labels, groups, group_label_c
         ws.row_dimensions[current_row].height = 22
         current_row += 1
 
-        # Column headers
         as_headers = [group_label_col] + STATUS_COLS + ['TOTAL']
         for ci, h in enumerate(as_headers, 1):
             c = ws.cell(current_row, ci, h)
@@ -861,7 +779,6 @@ def _write_assessment_detail_sheet(wb, gc_data, gc_labels, groups, group_label_c
         ws.row_dimensions[current_row].height = 30
         current_row += 1
 
-        # Data rows
         grand_totals = {s: 0 for s in STATUS_COLS}
         grand_total_all = 0
 
@@ -891,7 +808,6 @@ def _write_assessment_detail_sheet(wb, gc_data, gc_labels, groups, group_label_c
                 grand_totals[s] = grand_totals.get(s, 0) + bucket.get(s, 0)
             grand_total_all += row_total
 
-        # Totals row
         total_row_data = ['TOTAL'] + [grand_totals.get(s, 0) for s in STATUS_COLS] + [grand_total_all]
         for ci, val in enumerate(total_row_data, 1):
             c = ws.cell(current_row, ci, val)
@@ -901,9 +817,8 @@ def _write_assessment_detail_sheet(wb, gc_data, gc_labels, groups, group_label_c
             c.alignment = Alignment(
                 horizontal='center' if ci > 1 else 'left', vertical='center'
             )
-        current_row += 2  # spacer between assessments
+        current_row += 2
 
-    # Column widths
     widths = [28] + [14] * len(STATUS_COLS) + [10]
     autosize(ws, widths)
     ws.freeze_panes = 'A5'
@@ -1051,6 +966,198 @@ def _write_class_index_sheet(wb, title_prefix, groups, group_label_col, students
             back_cell.hyperlink = "#'Class Index'!A1"
             back_cell.font = Font(name='Arial', size=10, italic=True,
                                   color='2980B9', underline='single')
+
+    return ws
+
+
+# ===========================================================================
+# MISSING ASSESSMENTS SHEET
+# ===========================================================================
+
+def _write_missing_assessments_sheet(wb, gc_data, gc_labels, students, seg, current_week, is_partial):
+    """
+    Add a 'Missing Assessments' sheet to the workbook.
+
+    Three sections (each sorted by surname then first name):
+      1. Missing ALL assessments  — no submissions at all, non-ghost students
+      2. Missing AT LEAST ONE    — submitted some but not all, non-ghost students
+      3. Ghosts (S1/S2/S3)       — shown separately regardless of submission status
+
+    Columns: Segment | Surname | First Name | Student ID | Course | Email
+             | <one col per assessment showing outcome> | # Missing
+    """
+    ws = wb.create_sheet('Missing Assessments')
+    partial_note = ' (PARTIAL)' if is_partial else ''
+    ghost_sids = {sid for sid, s in seg.items() if s in GHOST_SEGS}
+
+    n_fixed = 7   # Segment, Surname, First, SID, Course, Email, # Missing
+    n_as = len(gc_labels)
+    n_cols = n_fixed + n_as
+
+    # ---- header ----
+    write_tab_header(
+        ws,
+        f'Missing Assessments — W{current_week}{partial_note}',
+        f'Students with one or more assessment not yet submitted',
+        (
+            'Section 1: Missing ALL assessments (excl. ghosts).  '
+            'Section 2: Missing at least one (excl. ghosts).  '
+            'Section 3: Ghost students (S1/S2/S3) — shown separately.  '
+            'Cell colour: Red = No Submission, Orange = Unsatisfactory, '
+            'Yellow = Needs Grading, Green = Satisfactory.'
+        ),
+        n_cols,
+    )
+
+    col_headers = (
+        ['Segment', 'Surname', 'First Name', 'Student ID', 'Course', 'Email']
+        + [lbl.replace('AS', 'Assessment ') for lbl in gc_labels]
+        + ['# Missing']
+    )
+    # We'll write the column headers fresh for each section, so just define them here.
+
+    # ---- cell fills ----
+    no_sub_fill        = PatternFill('solid', start_color='FADBD8')
+    no_sub_font        = Font(name='Arial', size=10, color=RED, bold=True)
+    unsat_fill         = PatternFill('solid', start_color='FDEBD0')
+    unsat_font         = Font(name='Arial', size=10, color=ORANGE, bold=True)
+    needs_grading_fill = PatternFill('solid', start_color='FEF9E7')
+    needs_grading_font = Font(name='Arial', size=10, color='7D6608')
+    sat_fill           = PatternFill('solid', start_color='D5F5E3')
+    sat_font           = Font(name='Arial', size=10, color='1A7A3A', bold=True)
+
+    def outcome_style(cell, entry):
+        outcome = gc_final_outcome(entry)
+        cell.value = gc_display_value(entry)
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        cell.border = thin_border()
+        cell.font = Font(name='Arial', size=10)
+        if outcome == 'No Submission':
+            cell.fill = no_sub_fill; cell.font = no_sub_font
+        elif outcome == 'Unsatisfactory':
+            cell.fill = unsat_fill;  cell.font = unsat_font
+        elif outcome == 'Needs Grading':
+            cell.fill = needs_grading_fill; cell.font = needs_grading_font
+        else:
+            cell.fill = sat_fill;    cell.font = sat_font
+
+    def count_missing(sid):
+        return sum(
+            1 for lbl in gc_labels
+            if not gc_submitted(gc_data.get(sid, {}).get(lbl, {}))
+        )
+
+    def sort_key(sid):
+        st = students[sid]
+        return (st['last'].lower(), st['first'].lower())
+
+    # ---- categorise non-ghost students ----
+    non_ghost = [sid for sid in students if sid not in ghost_sids]
+    missing_all  = sorted([sid for sid in non_ghost if count_missing(sid) == n_as], key=sort_key)
+    missing_some = sorted([
+        sid for sid in non_ghost
+        if 0 < count_missing(sid) < n_as
+    ], key=sort_key)
+    ghosts = sorted(list(ghost_sids), key=sort_key)
+
+    current_row = 5
+
+    def write_section_header(label, colour, count):
+        nonlocal current_row
+        ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=n_cols)
+        c = ws.cell(current_row, 1, f'{label}  ({count} students)')
+        c.font = Font(name='Arial', size=10, bold=True, color=WHITE)
+        c.fill = PatternFill('solid', start_color=colour)
+        c.alignment = Alignment(horizontal='left', vertical='center', indent=1)
+        ws.row_dimensions[current_row].height = 22
+        current_row += 1
+        # column headers
+        write_col_headers(ws, col_headers, row=current_row)
+        current_row += 1
+
+    def write_student_rows(sid_list):
+        nonlocal current_row
+        for ri, sid in enumerate(sid_list):
+            st = students[sid]
+            n_missing = count_missing(sid)
+            seg_code = seg.get(sid, '?')
+            row_fill = PatternFill('solid', start_color=ALT_ROW) if ri % 2 == 0 else None
+
+            fixed_vals = [seg_code, st['last'], st['first'], sid, st.get('course', ''), st.get('email', '')]
+            for ci, val in enumerate(fixed_vals, 1):
+                c = ws.cell(current_row, ci, val)
+                c.font = Font(name='Arial', size=10)
+                if row_fill:
+                    c.fill = row_fill
+                c.alignment = Alignment(horizontal='left' if ci > 1 else 'center', vertical='center')
+                c.border = thin_border()
+
+            # segment colour on col 1
+            seg_fill = SEG_COLOURS.get(seg_code)
+            if seg_fill:
+                ws.cell(current_row, 1).fill = PatternFill('solid', start_color=seg_fill)
+                ws.cell(current_row, 1).font = Font(name='Arial', size=10, bold=True, color=WHITE)
+
+            # one col per assessment
+            for ai, lbl in enumerate(gc_labels):
+                entry = gc_data.get(sid, {}).get(lbl, {})
+                outcome_style(ws.cell(current_row, 7 + ai), entry)
+
+            # # Missing column
+            miss_cell = ws.cell(current_row, n_cols, n_missing)
+            miss_cell.font = Font(name='Arial', size=10, bold=True, color=RED)
+            miss_cell.alignment = Alignment(horizontal='center', vertical='center')
+            miss_cell.border = thin_border()
+            if row_fill:
+                miss_cell.fill = row_fill
+
+            current_row += 1
+
+    # ---- Section 1: Missing ALL ----
+    write_section_header(
+        '▼ MISSING ALL ASSESSMENTS — no submissions at all (excl. ghosts)',
+        RED, len(missing_all)
+    )
+    if missing_all:
+        write_student_rows(missing_all)
+    else:
+        ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=n_cols)
+        ws.cell(current_row, 1, 'No students in this category.').font = Font(name='Arial', size=10, italic=True, color='888888')
+        current_row += 1
+
+    current_row += 1  # spacer
+
+    # ---- Section 2: Missing at least one ----
+    write_section_header(
+        '▼ MISSING AT LEAST ONE ASSESSMENT — submitted some but not all (excl. ghosts)',
+        ORANGE, len(missing_some)
+    )
+    if missing_some:
+        write_student_rows(missing_some)
+    else:
+        ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=n_cols)
+        ws.cell(current_row, 1, 'No students in this category.').font = Font(name='Arial', size=10, italic=True, color='888888')
+        current_row += 1
+
+    current_row += 1  # spacer
+
+    # ---- Section 3: Ghosts ----
+    # For ghosts, include all regardless of submission status (show what they have/haven't done)
+    write_section_header(
+        '▼ GHOST STUDENTS (S1/S2/S3) — shown separately regardless of submission status',
+        NAVY, len(ghosts)
+    )
+    if ghosts:
+        write_student_rows(ghosts)
+    else:
+        ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=n_cols)
+        ws.cell(current_row, 1, 'No ghost students.').font = Font(name='Arial', size=10, italic=True, color='888888')
+        current_row += 1
+
+    # ---- column widths & freeze ----
+    widths = [9, 22, 18, 12, 10, 36] + [20] * n_as + [10]
+    autosize(ws, widths)
+    ws.freeze_panes = 'A5'
 
     return ws
 
@@ -1306,10 +1413,6 @@ def build_workbook(subject_code, students, login, hits, seg, current_week, prev_
 # ===========================================================================
 # SHARED HELPER FOR GROUP-BASED REPORTS (Program & Class)
 # ===========================================================================
-
-# ===========================================================================
-# SHARED HELPER FOR GROUP-BASED REPORTS (Program & Class)
-# ===========================================================================
 def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, login, hits, seg,
                           current_week, prev_days, curr_days, is_partial, latest_date, login_window,
                           gc_data=None, gc_labels=None, extra_summary_cols=None):
@@ -1523,7 +1626,7 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
                         cell.fill = unsat_fill;         cell.font = unsat_font
                     elif outcome == 'Needs Grading':
                         cell.fill = needs_grading_fill; cell.font = needs_grading_font
-                    else:  # Satisfactory (original or via resubmit)
+                    else:
                         cell.fill = sat_fill;           cell.font = sat_font
 
         widths = [8, 22, 18, 12, 10, 24, 10, 18, 38] + [8] * current_week + [10]
@@ -1740,6 +1843,19 @@ def build_program_workbook(subject_code, students, login, hits, seg, current_wee
         gc_labels if gc_active else None,
         group_sheet_names, current_week, is_partial,
     )
+
+    # Add Missing Assessments sheet (only when GC data is present)
+    if gc_active:
+        _write_missing_assessments_sheet(
+            wb, gc_data, gc_labels, students, seg, current_week, is_partial
+        )
+        # Position it after Program Leaderboard (index 2, after Summary=0 and Leaderboard=1)
+        missing_idx = next(
+            (i for i, s in enumerate(wb._sheets) if s.title == 'Missing Assessments'), None
+        )
+        if missing_idx is not None:
+            sheet = wb._sheets.pop(missing_idx)
+            wb._sheets.insert(2, sheet)
 
     current_idx = next(
         (i for i, s in enumerate(wb._sheets) if s.title == 'Program Leaderboard'), None
