@@ -997,6 +997,28 @@ def _write_class_index_sheet(wb, title_prefix, groups, group_label_col, students
     autosize(ws, widths)
     ws.freeze_panes = 'C6'
 
+    # Row grouping by program (Class report only) — one collapsible group per program block
+    if show_program_col and group_programs:
+        ws.sheet_properties.outlinePr.summaryBelow = False  # +/- button above each group
+        current_prog = None
+        group_start = None
+        for ri, gk in enumerate(group_order):
+            prog = group_programs.get(gk, '')
+            excel_row = 6 + ri
+            if prog != current_prog:
+                # Close previous group
+                if current_prog is not None and group_start is not None:
+                    for r in range(group_start, excel_row):
+                        ws.row_dimensions[r].outline_level = 1
+                        ws.row_dimensions[r].hidden = False
+                current_prog = prog
+                group_start = excel_row
+        # Close final group
+        if current_prog is not None and group_start is not None:
+            for r in range(group_start, totals_row):
+                ws.row_dimensions[r].outline_level = 1
+                ws.row_dimensions[r].hidden = False
+
     for gk in group_order:
         sn = group_sheet_names.get(gk)
         if sn and sn in [s.title for s in wb.worksheets]:
@@ -1655,6 +1677,16 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
             widths += [22] * len(gc_labels)
         autosize(ws_g, widths)
         ws_g.freeze_panes = 'A6'
+
+        # Column grouping: collapse weekly hit columns (W1…Wn) by default
+        # Fixed cols: 1-9 (Segment … Email), then W1=10 … Wn=9+current_week
+        week_col_start = 10
+        week_col_end   = 9 + current_week
+        for col_idx in range(week_col_start, week_col_end + 1):
+            col_letter = get_column_letter(col_idx)
+            ws_g.column_dimensions[col_letter].outline_level = 1
+            ws_g.column_dimensions[col_letter].hidden = True
+        ws_g.sheet_properties.outlinePr.summaryRight = False  # +/- button to the left of group
 
     # Hyperlinks from summary to group tabs
     for i, gk in enumerate(group_order):
