@@ -298,17 +298,6 @@ def merge_usage_files(usage_file_list):
 # GRADE CENTRE PARSING
 # ===========================================================================
 def load_grade_centre(file_bytes):
-    """
-    Parse the Grade Centre export.
-
-    gc_data structure:
-        gc_data[sid][label] = {
-            'original': str,   # raw value from the primary column ('' if blank)
-            'resubmit': str,   # raw value from the resubmit column  ('' if blank)
-        }
-
-    The four derived metrics are computed later via the gc_* helper functions.
-    """
     import csv as _csv
     text = file_bytes.decode('utf-16-le')
     if text and text[0] == '\ufeff':
@@ -370,7 +359,6 @@ def load_grade_centre(file_bytes):
                 selected.append((i, name, num)); seen_nums.add(num)
     selected.sort(key=lambda x: int(x[2]))
 
-    # Map assessment number -> resubmit column index
     resub_map = {}
     for i, name in resubmit_cols:
         m = _re.search(r'Assessment\s+(\d+)', name, _re.IGNORECASE)
@@ -412,7 +400,6 @@ def load_grade_centre(file_bytes):
 # ===========================================================================
 
 def gc_submitted(entry):
-    """Submission: original column has any non-blank value."""
     return bool(entry.get('original', ''))
 
 
@@ -601,6 +588,20 @@ def fmt_login(l):
     days = l['days_since']; last = l['last_login']
     last_str = last.strftime('%Y-%m-%d') if isinstance(last, (datetime, date)) else (str(last) if last else '-')
     return (days if days is not None else '-', last_str, l['total_logins'] or 0)
+
+
+# ===========================================================================
+# HELPER: derive dominant program for a group of student IDs
+# ===========================================================================
+def _dominant_program(sids, students):
+    """Return the most common course_code among sids, or '' if none."""
+    from collections import Counter
+    codes = [students[sid].get('course_code', '') or '' for sid in sids if sid in students]
+    codes = [c for c in codes if c]
+    if not codes:
+        return ''
+    return Counter(codes).most_common(1)[0][0]
+
 
 # ===========================================================================
 # GRADE CENTRE RATE TABLE HELPERS
@@ -826,12 +827,22 @@ def _write_assessment_detail_sheet(wb, gc_data, gc_labels, groups, group_label_c
 
 
 def _write_class_index_sheet(wb, title_prefix, groups, group_label_col, students, seg,
-                              gc_data, gc_labels, group_sheet_names, current_week, is_partial):
+                              gc_data, gc_labels, group_sheet_names, current_week, is_partial,
+                              show_program_col=False):
+    """
+    Build the Class Index sheet.
+
+    When show_program_col=True (class report only), a Program column is inserted
+    at position 3 (after #, Class) and rows are sorted by Program → Class name.
+    """
     ws = wb.create_sheet('Class Index')
     partial_note = ' (PARTIAL)' if is_partial else ''
     gc_active = gc_data is not None and gc_labels is not None and len(gc_labels) > 0
 
-    n_fixed = 6
+    # Column layout depends on whether we show the Program column
+    # Base fixed cols (without program): #, Class, Teacher, Enrolled, Active, At Risk  → 6
+    # With program:                      #, Class, Program, Teacher, Enrolled, Active, At Risk → 7
+    n_fixed = 7 if show_program_col else 6
     n_cols = n_fixed + (len(gc_labels) if gc_active else 0)
 
     write_tab_header(
@@ -847,7 +858,7 @@ def _write_class_index_sheet(wb, title_prefix, groups, group_label_col, students
     ws.merge_cells(start_row=4, start_column=1, end_row=4, end_column=n_cols)
     c = ws.cell(4, 1,
         f'Click a class name to navigate directly. '
-        f'Each class sheet has a "\u2190 Back to Index" link.  \u2022  '
+        f'Each class sheet has a "← Back to Index" link.  •  '
         + ('Assessment columns show submitted\u202f/\u202fenrolled'
            if gc_active else ''))
     c.font = Font(name='Arial', size=9, italic=True, color='2C3E50')
@@ -855,9 +866,13 @@ def _write_class_index_sheet(wb, title_prefix, groups, group_label_col, students
     c.alignment = Alignment(horizontal='left', vertical='center', indent=1)
     ws.row_dimensions[4].height = 14
 
-    col_headers = ['#', group_label_col, 'Teacher', 'Enrolled', 'Active', 'At Risk']
+    if show_program_col:
+        col_headers = ['#', group_label_col, 'Program', 'Teacher', 'Enrolled', 'Active', 'At Risk']
+    else:
+        col_headers = ['#', group_label_col, 'Teacher', 'Enrolled', 'Active', 'At Risk']
     if gc_active:
         col_headers += [f'{lbl} Sub' for lbl in gc_labels]
+
     for ci, h in enumerate(col_headers, 1):
         c = ws.cell(5, ci, h)
         c.font = Font(name='Arial', size=10, bold=True, color=WHITE)
@@ -874,7 +889,20 @@ def _write_class_index_sheet(wb, title_prefix, groups, group_label_col, students
     font_orange = Font(name='Arial', size=10, color=ORANGE, bold=True)
     font_red    = Font(name='Arial', size=10, color=RED, bold=True)
 
-    group_order = sorted(groups.keys(), key=lambda k: (-len(groups[k]['sids']), str(k)))
+    # Determine program for each group (needed even for sort when show_program_col=True)
+    group_programs = {}
+    if show_program_col:
+        for gk, info in groups.items():
+            group_programs[gk] = _dominant_program(info['sids'], students)
+
+    # Sort order
+    if show_program_col:
+        group_order = sorted(
+            groups.keys(),
+            key=lambda k: (group_programs.get(k, '').lower(), str(k).lower())
+        )
+    else:
+        group_order = sorted(groups.keys(), key=lambda k: (-len(groups[k]['sids']), str(k)))
 
     for ri, gk in enumerate(group_order):
         excel_row = 6 + ri
@@ -887,7 +915,12 @@ def _write_class_index_sheet(wb, title_prefix, groups, group_label_col, students
 
         row_fill = PatternFill('solid', start_color=ALT_ROW) if ri % 2 == 0 else None
 
-        fixed_vals = [ri + 1, gk, teacher, enrolled, active, at_risk]
+        if show_program_col:
+            program = group_programs.get(gk, '')
+            fixed_vals = [ri + 1, gk, program, teacher, enrolled, active, at_risk]
+        else:
+            fixed_vals = [ri + 1, gk, teacher, enrolled, active, at_risk]
+
         for ci, val in enumerate(fixed_vals, 1):
             c = ws.cell(excel_row, ci, val)
             c.font = Font(name='Arial', size=10)
@@ -898,8 +931,10 @@ def _write_class_index_sheet(wb, title_prefix, groups, group_label_col, students
             )
             c.border = thin_border()
 
+        # At Risk coloured red
+        at_risk_col = 7 if show_program_col else 6
         if at_risk > 0:
-            ws.cell(excel_row, 6).font = Font(name='Arial', size=10, color=RED, bold=True)
+            ws.cell(excel_row, at_risk_col).font = Font(name='Arial', size=10, color=RED, bold=True)
 
         sn = group_sheet_names.get(gk)
         if sn:
@@ -937,7 +972,10 @@ def _write_class_index_sheet(wb, title_prefix, groups, group_label_col, students
         sum(1 for sid in groups[gk]['sids'] if seg.get(sid) == 'S4')
         for gk in group_order
     )
-    total_vals = ['', 'TOTAL', '', total_enrolled, total_active, total_at_risk]
+    if show_program_col:
+        total_vals = ['', 'TOTAL', '', '', total_enrolled, total_active, total_at_risk]
+    else:
+        total_vals = ['', 'TOTAL', '', total_enrolled, total_active, total_at_risk]
     if gc_active:
         for label in gc_labels:
             total_sub = sum(
@@ -952,7 +990,10 @@ def _write_class_index_sheet(wb, title_prefix, groups, group_label_col, students
         c.border = thin_border()
         c.alignment = Alignment(horizontal='center' if ci != 2 else 'left', vertical='center')
 
-    widths = [4, 36, 22, 10, 10, 10] + ([9] * len(gc_labels) if gc_active else [])
+    if show_program_col:
+        widths = [4, 36, 18, 22, 10, 10, 10] + ([9] * len(gc_labels) if gc_active else [])
+    else:
+        widths = [4, 36, 22, 10, 10, 10] + ([9] * len(gc_labels) if gc_active else [])
     autosize(ws, widths)
     ws.freeze_panes = 'C6'
 
@@ -962,7 +1003,7 @@ def _write_class_index_sheet(wb, title_prefix, groups, group_label_col, students
             ws_g = wb[sn]
             back_cell = ws_g.cell(3, 1)
             existing_val = back_cell.value or ''
-            back_cell.value = '\u2190 Back to Index      ' + existing_val
+            back_cell.value = '← Back to Index      ' + existing_val
             back_cell.hyperlink = "#'Class Index'!A1"
             back_cell.font = Font(name='Arial', size=10, italic=True,
                                   color='2980B9', underline='single')
@@ -975,26 +1016,14 @@ def _write_class_index_sheet(wb, title_prefix, groups, group_label_col, students
 # ===========================================================================
 
 def _write_missing_assessments_sheet(wb, gc_data, gc_labels, students, seg, current_week, is_partial):
-    """
-    Add a 'Missing Assessments' sheet to the workbook.
-
-    Three sections (each sorted by surname then first name):
-      1. Missing ALL assessments  — no submissions at all, non-ghost students
-      2. Missing AT LEAST ONE    — submitted some but not all, non-ghost students
-      3. Ghosts (S1/S2/S3)       — shown separately regardless of submission status
-
-    Columns: Segment | Surname | First Name | Student ID | Course | Email
-             | <one col per assessment showing outcome> | # Missing
-    """
     ws = wb.create_sheet('Missing Assessments')
     partial_note = ' (PARTIAL)' if is_partial else ''
     ghost_sids = {sid for sid, s in seg.items() if s in GHOST_SEGS}
 
-    n_fixed = 7   # Segment, Surname, First, SID, Course, Email, # Missing
+    n_fixed = 7
     n_as = len(gc_labels)
     n_cols = n_fixed + n_as
 
-    # ---- header ----
     write_tab_header(
         ws,
         f'Missing Assessments — W{current_week}{partial_note}',
@@ -1014,9 +1043,7 @@ def _write_missing_assessments_sheet(wb, gc_data, gc_labels, students, seg, curr
         + [lbl.replace('AS', 'Assessment ') for lbl in gc_labels]
         + ['# Missing']
     )
-    # We'll write the column headers fresh for each section, so just define them here.
 
-    # ---- cell fills ----
     no_sub_fill        = PatternFill('solid', start_color='FADBD8')
     no_sub_font        = Font(name='Arial', size=10, color=RED, bold=True)
     unsat_fill         = PatternFill('solid', start_color='FDEBD0')
@@ -1051,7 +1078,6 @@ def _write_missing_assessments_sheet(wb, gc_data, gc_labels, students, seg, curr
         st = students[sid]
         return (st['last'].lower(), st['first'].lower())
 
-    # ---- categorise non-ghost students ----
     non_ghost = [sid for sid in students if sid not in ghost_sids]
     missing_all  = sorted([sid for sid in non_ghost if count_missing(sid) == n_as], key=sort_key)
     missing_some = sorted([
@@ -1071,7 +1097,6 @@ def _write_missing_assessments_sheet(wb, gc_data, gc_labels, students, seg, curr
         c.alignment = Alignment(horizontal='left', vertical='center', indent=1)
         ws.row_dimensions[current_row].height = 22
         current_row += 1
-        # column headers
         write_col_headers(ws, col_headers, row=current_row)
         current_row += 1
 
@@ -1092,18 +1117,15 @@ def _write_missing_assessments_sheet(wb, gc_data, gc_labels, students, seg, curr
                 c.alignment = Alignment(horizontal='left' if ci > 1 else 'center', vertical='center')
                 c.border = thin_border()
 
-            # segment colour on col 1
             seg_fill = SEG_COLOURS.get(seg_code)
             if seg_fill:
                 ws.cell(current_row, 1).fill = PatternFill('solid', start_color=seg_fill)
                 ws.cell(current_row, 1).font = Font(name='Arial', size=10, bold=True, color=WHITE)
 
-            # one col per assessment
             for ai, lbl in enumerate(gc_labels):
                 entry = gc_data.get(sid, {}).get(lbl, {})
                 outcome_style(ws.cell(current_row, 7 + ai), entry)
 
-            # # Missing column
             miss_cell = ws.cell(current_row, n_cols, n_missing)
             miss_cell.font = Font(name='Arial', size=10, bold=True, color=RED)
             miss_cell.alignment = Alignment(horizontal='center', vertical='center')
@@ -1113,7 +1135,6 @@ def _write_missing_assessments_sheet(wb, gc_data, gc_labels, students, seg, curr
 
             current_row += 1
 
-    # ---- Section 1: Missing ALL ----
     write_section_header(
         '▼ MISSING ALL ASSESSMENTS — no submissions at all (excl. ghosts)',
         RED, len(missing_all)
@@ -1125,9 +1146,8 @@ def _write_missing_assessments_sheet(wb, gc_data, gc_labels, students, seg, curr
         ws.cell(current_row, 1, 'No students in this category.').font = Font(name='Arial', size=10, italic=True, color='888888')
         current_row += 1
 
-    current_row += 1  # spacer
+    current_row += 1
 
-    # ---- Section 2: Missing at least one ----
     write_section_header(
         '▼ MISSING AT LEAST ONE ASSESSMENT — submitted some but not all (excl. ghosts)',
         ORANGE, len(missing_some)
@@ -1139,10 +1159,8 @@ def _write_missing_assessments_sheet(wb, gc_data, gc_labels, students, seg, curr
         ws.cell(current_row, 1, 'No students in this category.').font = Font(name='Arial', size=10, italic=True, color='888888')
         current_row += 1
 
-    current_row += 1  # spacer
+    current_row += 1
 
-    # ---- Section 3: Ghosts ----
-    # For ghosts, include all regardless of submission status (show what they have/haven't done)
     write_section_header(
         '▼ GHOST STUDENTS (S1/S2/S3) — shown separately regardless of submission status',
         NAVY, len(ghosts)
@@ -1154,7 +1172,6 @@ def _write_missing_assessments_sheet(wb, gc_data, gc_labels, students, seg, curr
         ws.cell(current_row, 1, 'No ghost students.').font = Font(name='Arial', size=10, italic=True, color='888888')
         current_row += 1
 
-    # ---- column widths & freeze ----
     widths = [9, 22, 18, 12, 10, 36] + [20] * n_as + [10]
     autosize(ws, widths)
     ws.freeze_panes = 'A5'
@@ -1415,7 +1432,8 @@ def build_workbook(subject_code, students, login, hits, seg, current_week, prev_
 # ===========================================================================
 def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, login, hits, seg,
                           current_week, prev_days, curr_days, is_partial, latest_date, login_window,
-                          gc_data=None, gc_labels=None, extra_summary_cols=None):
+                          gc_data=None, gc_labels=None, extra_summary_cols=None,
+                          show_program_col_in_index=False):
     week_keys = [f'w{i}' for i in range(1, current_week + 1)]
     week_labels = [f'W{i}' for i in range(1, current_week + 1)]
     curr_key = f'w{current_week}'
@@ -1430,8 +1448,8 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
     ws = wb.create_sheet('Summary')
     partial_note = ' (PARTIAL)' if is_partial else ''
     write_tab_header(ws,
-        f'{title_prefix} \u2014 W{current_week}{partial_note}',
-        f'Enrolled {len(students)}  \u2022  {len(groups)} groups  \u2022  Latest data: {latest_date.strftime("%b %-d %Y")}',
+        f'{title_prefix} — W{current_week}{partial_note}',
+        f'Enrolled {len(students)}  •  {len(groups)} groups  •  Latest data: {latest_date.strftime("%b %-d %Y")}',
         f'Segment counts per {group_label_col.lower()}. One sheet per group follows.',
         len(seg_codes) + len(extra_summary_cols) + 3)
 
@@ -1555,9 +1573,9 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
         subtitle = seg_counts_str
         teacher = info.get('teacher', '')
         if teacher:
-            subtitle += f'  \u2022  Teacher: {teacher}'
+            subtitle += f'  •  Teacher: {teacher}'
         write_tab_header(
-            ws_g, f'{gk} \u2014 {len(sids)} students', subtitle,
+            ws_g, f'{gk} — {len(sids)} students', subtitle,
             f'All students sorted by segment then surname. W{current_week}{"(partial)" if is_partial else ""}.',
             len(base_headers)
         )
@@ -1603,7 +1621,7 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
                 ws_g.cell(6 + ri, 1).fill = PatternFill('solid', start_color=fill_colour)
                 ws_g.cell(6 + ri, 1).font = Font(name='Arial', size=10, bold=True, color=WHITE)
 
-        # Assessment cell colouring based on final outcome
+        # Assessment cell colouring
         if gc_active:
             no_sub_fill        = PatternFill('solid', start_color='FADBD8')
             no_sub_font        = Font(name='Arial', size=10, color=RED, bold=True)
@@ -1652,6 +1670,7 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
         gc_data if gc_active else None,
         gc_labels if gc_active else None,
         group_sheet_names, current_week, is_partial,
+        show_program_col=show_program_col_in_index,
     )
 
     # Move Class Index to position 2 (after Summary, before Assessment Detail)
@@ -1680,8 +1699,8 @@ def _write_program_leaderboard_sheet(wb, title_prefix, groups, students, seg,
 
     write_tab_header(
         ws,
-        f'{title_prefix} \u2014 Program Leaderboard{partial_note}',
-        f'{len(groups)} programs  \u2022  Active = S5+S6+S7  \u2022  At Risk = S4',
+        f'{title_prefix} — Program Leaderboard{partial_note}',
+        f'{len(groups)} programs  •  Active = S5+S6+S7  •  At Risk = S4',
         ('Sub = submitted/enrolled.  Pass = passed (incl. resubmit)/enrolled.  '
          'Green = 100%, Orange >= 50%, Red < 50%.'
          if gc_active else
@@ -1827,6 +1846,7 @@ def build_program_workbook(subject_code, students, login, hits, seg, current_wee
         students, login, hits, seg, current_week, prev_days, curr_days,
         is_partial, latest_date, login_window,
         gc_data=gc_data, gc_labels=gc_labels,
+        show_program_col_in_index=False,
     )
 
     reserved = {'Summary', 'Assessment Detail', 'Class Index'}
@@ -1844,12 +1864,10 @@ def build_program_workbook(subject_code, students, login, hits, seg, current_wee
         group_sheet_names, current_week, is_partial,
     )
 
-    # Add Missing Assessments sheet (only when GC data is present)
     if gc_active:
         _write_missing_assessments_sheet(
             wb, gc_data, gc_labels, students, seg, current_week, is_partial
         )
-        # Position it after Program Leaderboard (index 2, after Summary=0 and Leaderboard=1)
         missing_idx = next(
             (i for i, s in enumerate(wb._sheets) if s.title == 'Missing Assessments'), None
         )
@@ -1876,7 +1894,7 @@ def build_class_workbook(subject_code, students, login, hits, seg, current_week,
         ds = st.get('discipline_subject', '') or ''
         dc = st.get('discipline_class', '') or ''
         dt = st.get('discipline_teacher', '') or ''
-        key = f'{ds} \u2014 {dc}'.strip(' \u2014') if ds else (dc if dc else 'Unassigned')
+        key = f'{ds} — {dc}'.strip(' —') if ds else (dc if dc else 'Unassigned')
         if key not in classes:
             classes[key] = {'sids': [], 'teacher': dt}
         classes[key]['sids'].append(sid)
@@ -1888,6 +1906,7 @@ def build_class_workbook(subject_code, students, login, hits, seg, current_week,
         is_partial, latest_date, login_window,
         gc_data=gc_data, gc_labels=gc_labels,
         extra_summary_cols=[('Teacher', lambda info: info.get('teacher', ''))],
+        show_program_col_in_index=True,   # <-- Program column in Class Index only
     )
 
 
@@ -1915,10 +1934,10 @@ with col1:
     login_file = st.file_uploader('Login report (.xlsx)', type=['xlsx'], key='lr')
 with col2:
     usage_files = st.file_uploader(
-        'Usage report files (.xls) \u2014 upload all that apply',
+        'Usage report files (.xls) — upload all that apply',
         type=['xls'], accept_multiple_files=True, key='uf',
     )
-    gc_file = st.file_uploader('Grade Centre (.xls) \u2014 optional', type=['xls'], key='gc')
+    gc_file = st.file_uploader('Grade Centre (.xls) — optional', type=['xls'], key='gc')
 
 run_btn = st.button(
     'Generate report', type='primary',
@@ -1929,7 +1948,7 @@ if run_btn:
     try:
         with st.spinner('Loading class list...'):
             subject_code, students = load_classlist(classlist_file.getvalue())
-        st.success(f'**{subject_code}** \u2022 {len(students)} enrolled (after exclusions)')
+        st.success(f'**{subject_code}** • {len(students)} enrolled (after exclusions)')
 
         with st.spinner('Loading login report...'):
             login, win_start, win_end = load_login_report(login_file.getvalue())
@@ -1955,9 +1974,9 @@ if run_btn:
         if current_week == 1:
             prev_days = curr_days
 
-        partial_msg = f' (PARTIAL \u2014 {curr_days} days)' if is_partial else ' (full)'
+        partial_msg = f' (PARTIAL — {curr_days} days)' if is_partial else ' (full)'
         st.success(
-            f'Detected current week: **W{current_week}**{partial_msg}  \u2022  '
+            f'Detected current week: **W{current_week}**{partial_msg}  •  '
             f'Latest data: **{latest.strftime("%b %-d %Y")}**'
         )
         if current_week == 1:
@@ -1988,14 +2007,14 @@ if run_btn:
 
         st.subheader('Standing checks')
         missing = sum(1 for s in students if s not in login)
-        st.write(f'\u2022 Enrolled: **{len(students)}**')
-        st.write(f'\u2022 Missing from login report: **{missing}**')
-        st.write(f'\u2022 S2 days-since threshold: **>= {s2_thresh}**')
-        st.write(f'\u2022 S3 days-since range: **{s3_rng[0]}-{s3_rng[1]}**')
+        st.write(f'• Enrolled: **{len(students)}**')
+        st.write(f'• Missing from login report: **{missing}**')
+        st.write(f'• S2 days-since threshold: **>= {s2_thresh}**')
+        st.write(f'• S3 days-since range: **{s3_rng[0]}-{s3_rng[1]}**')
         if current_week > 1:
-            st.write(f'\u2022 Comparison: W{current_week-1} (7d) vs W{current_week} ({curr_days}d)')
+            st.write(f'• Comparison: W{current_week-1} (7d) vs W{current_week} ({curr_days}d)')
         else:
-            st.write('\u2022 No prior week to compare')
+            st.write('• No prior week to compare')
 
         with st.spinner('Building workbook...'):
             wb, _ = build_workbook(
@@ -2009,7 +2028,7 @@ if run_btn:
         suffix = '_Partial' if is_partial else ''
         filename = f'{subject_code}_Engagement_Report_W{current_week}_{date_str}{suffix}.xlsx'
         st.download_button(
-            '\u2b07 Download workbook', data=buf, file_name=filename,
+            '⬇ Download workbook', data=buf, file_name=filename,
             mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             type='primary',
         )
@@ -2022,7 +2041,7 @@ if run_btn:
             matched = sum(1 for sid in students if sid in gc_data)
             st.info(
                 f'Grade Centre: detected **{len(gc_labels)}** assessments '
-                f'({", ".join(gc_labels)}) \u2022 matched **{matched}/{len(students)}** students'
+                f'({", ".join(gc_labels)}) • matched **{matched}/{len(students)}** students'
             )
 
         has_programs = any(st_data.get('course_code') for st_data in students.values())
@@ -2036,7 +2055,7 @@ if run_btn:
                 buf_prog = io.BytesIO(); wb_prog.save(buf_prog); buf_prog.seek(0)
             prog_filename = f'{subject_code}_Program_Report_W{current_week}_{date_str}{suffix}.xlsx'
             st.download_button(
-                '\u2b07 Download program report', data=buf_prog, file_name=prog_filename,
+                '⬇ Download program report', data=buf_prog, file_name=prog_filename,
                 mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                 key='prog_dl',
             )
@@ -2052,7 +2071,7 @@ if run_btn:
                     buf_class = io.BytesIO(); wb_class.save(buf_class); buf_class.seek(0)
                 class_filename = f'{subject_code}_Class_Report_W{current_week}_{date_str}{suffix}.xlsx'
                 st.download_button(
-                    '\u2b07 Download class report', data=buf_class, file_name=class_filename,
+                    '⬇ Download class report', data=buf_class, file_name=class_filename,
                     mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                     key='class_dl',
                 )
