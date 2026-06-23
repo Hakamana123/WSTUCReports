@@ -904,74 +904,180 @@ def _write_class_index_sheet(wb, title_prefix, groups, group_label_col, students
     else:
         group_order = sorted(groups.keys(), key=lambda k: (-len(groups[k]['sids']), str(k)))
 
-    for ri, gk in enumerate(group_order):
-        excel_row = 6 + ri
-        info = groups[gk]
-        sids = info['sids']
-        teacher = info.get('teacher', '')
-        enrolled = len(sids)
-        active   = sum(1 for sid in sids if seg.get(sid) in ('S5', 'S6', 'S7'))
-        at_risk  = sum(1 for sid in sids if seg.get(sid) == 'S4')
+    if show_program_col:
+        # ---------------------------------------------------------------
+        # Program-grouped layout:
+        #   • One navy summary row per program (outline level 0, always visible)
+        #   • Class rows nested underneath (outline level 1, hidden by default)
+        #   • +/- button sits above each group (summaryBelow=False)
+        # ---------------------------------------------------------------
+        ws.sheet_properties.outlinePr.summaryBelow = False
 
-        row_fill = PatternFill('solid', start_color=ALT_ROW) if ri % 2 == 0 else None
+        current_excel_row = 6
+        class_counter = 0
+        total_enrolled = 0
+        total_active   = 0
+        total_at_risk  = 0
 
-        if show_program_col:
-            program = group_programs.get(gk, '')
-            fixed_vals = [ri + 1, gk, program, teacher, enrolled, active, at_risk]
-        else:
+        # Group classes by program in sorted order
+        from itertools import groupby as _groupby
+        def _prog_key(gk):
+            return group_programs.get(gk, '')
+
+        prog_blocks = []
+        for prog, gk_iter in _groupby(group_order, key=_prog_key):
+            prog_blocks.append((prog, list(gk_iter)))
+
+        for prog, prog_classes in prog_blocks:
+            # Aggregate totals for this program's summary row
+            prog_sids   = [sid for gk in prog_classes for sid in groups[gk]['sids']]
+            prog_enr    = len(prog_sids)
+            prog_active = sum(1 for sid in prog_sids if seg.get(sid) in ('S5', 'S6', 'S7'))
+            prog_risk   = sum(1 for sid in prog_sids if seg.get(sid) == 'S4')
+            total_enrolled += prog_enr
+            total_active   += prog_active
+            total_at_risk  += prog_risk
+
+            # ---- Program summary row (level 0 — always visible) ----
+            summary_row = current_excel_row
+            prog_label = f'▶  {prog}  —  {len(prog_classes)} class{"es" if len(prog_classes) != 1 else ""}'
+            ws.merge_cells(start_row=summary_row, start_column=1,
+                           end_row=summary_row, end_column=n_cols)
+            c = ws.cell(summary_row, 1, prog_label)
+            c.font = Font(name='Arial', size=10, bold=True, color=WHITE)
+            c.fill = PatternFill('solid', start_color=NAVY)
+            c.alignment = Alignment(horizontal='left', vertical='center', indent=1)
+            c.border = thin_border()
+            ws.row_dimensions[summary_row].height = 20
+            # Level 0 = not grouped; it's the summary row Excel attaches the +/- to
+            ws.row_dimensions[summary_row].outline_level = 0
+            current_excel_row += 1
+
+            # ---- Class rows (level 1 — collapsed by default) ----
+            for ri_prog, gk in enumerate(prog_classes):
+                class_counter += 1
+                info  = groups[gk]
+                sids  = info['sids']
+                teacher  = info.get('teacher', '')
+                enrolled = len(sids)
+                active   = sum(1 for sid in sids if seg.get(sid) in ('S5', 'S6', 'S7'))
+                at_risk  = sum(1 for sid in sids if seg.get(sid) == 'S4')
+
+                row_fill = PatternFill('solid', start_color=ALT_ROW) if ri_prog % 2 == 0 else None
+                fixed_vals = [class_counter, gk, prog, teacher, enrolled, active, at_risk]
+
+                for ci, val in enumerate(fixed_vals, 1):
+                    c = ws.cell(current_excel_row, ci, val)
+                    c.font = Font(name='Arial', size=10)
+                    if row_fill:
+                        c.fill = row_fill
+                    c.alignment = Alignment(
+                        horizontal='left' if ci == 2 else 'center', vertical='center'
+                    )
+                    c.border = thin_border()
+
+                if at_risk > 0:
+                    ws.cell(current_excel_row, 7).font = Font(
+                        name='Arial', size=10, color=RED, bold=True)
+
+                sn = group_sheet_names.get(gk)
+                if sn:
+                    cell = ws.cell(current_excel_row, 2)
+                    cell.hyperlink = f"#'{sn}'!A1"
+                    cell.font = Font(name='Arial', size=10, color='2980B9', underline='single')
+
+                if gc_active:
+                    for ai, label in enumerate(gc_labels):
+                        col = n_fixed + 1 + ai
+                        submitted = sum(
+                            1 for sid in sids
+                            if gc_submitted(gc_data.get(sid, {}).get(label, {}))
+                        )
+                        frac_str = f'{submitted}/{enrolled}'
+                        rate = submitted / enrolled if enrolled else 0
+                        c = ws.cell(current_excel_row, col, frac_str)
+                        c.alignment = Alignment(horizontal='center', vertical='center')
+                        c.border = thin_border()
+                        if rate == 1.0:
+                            c.fill = fill_green;  c.font = font_green
+                        elif rate >= 0.5:
+                            c.fill = fill_orange; c.font = font_orange
+                        else:
+                            c.fill = fill_red;   c.font = font_red
+
+                # Collapse this row under the program summary row above it
+                ws.row_dimensions[current_excel_row].outline_level = 1
+                ws.row_dimensions[current_excel_row].hidden = True
+                current_excel_row += 1
+
+        totals_row = current_excel_row
+
+    else:
+        # ---------------------------------------------------------------
+        # Non-program layout: flat list sorted by size
+        # ---------------------------------------------------------------
+        for ri, gk in enumerate(group_order):
+            excel_row = 6 + ri
+            info = groups[gk]
+            sids = info['sids']
+            teacher = info.get('teacher', '')
+            enrolled = len(sids)
+            active   = sum(1 for sid in sids if seg.get(sid) in ('S5', 'S6', 'S7'))
+            at_risk  = sum(1 for sid in sids if seg.get(sid) == 'S4')
+
+            row_fill = PatternFill('solid', start_color=ALT_ROW) if ri % 2 == 0 else None
             fixed_vals = [ri + 1, gk, teacher, enrolled, active, at_risk]
 
-        for ci, val in enumerate(fixed_vals, 1):
-            c = ws.cell(excel_row, ci, val)
-            c.font = Font(name='Arial', size=10)
-            if row_fill:
-                c.fill = row_fill
-            c.alignment = Alignment(
-                horizontal='left' if ci == 2 else 'center', vertical='center'
-            )
-            c.border = thin_border()
-
-        # At Risk coloured red
-        at_risk_col = 7 if show_program_col else 6
-        if at_risk > 0:
-            ws.cell(excel_row, at_risk_col).font = Font(name='Arial', size=10, color=RED, bold=True)
-
-        sn = group_sheet_names.get(gk)
-        if sn:
-            cell = ws.cell(excel_row, 2)
-            cell.hyperlink = f"#'{sn}'!A1"
-            cell.font = Font(name='Arial', size=10, color='2980B9', underline='single')
-
-        if gc_active:
-            for ai, label in enumerate(gc_labels):
-                col = n_fixed + 1 + ai
-                submitted = sum(
-                    1 for sid in sids
-                    if gc_submitted(gc_data.get(sid, {}).get(label, {}))
+            for ci, val in enumerate(fixed_vals, 1):
+                c = ws.cell(excel_row, ci, val)
+                c.font = Font(name='Arial', size=10)
+                if row_fill:
+                    c.fill = row_fill
+                c.alignment = Alignment(
+                    horizontal='left' if ci == 2 else 'center', vertical='center'
                 )
-                frac_str = f'{submitted}/{enrolled}'
-                rate = submitted / enrolled if enrolled else 0
-
-                c = ws.cell(excel_row, col, frac_str)
-                c.alignment = Alignment(horizontal='center', vertical='center')
                 c.border = thin_border()
-                if rate == 1.0:
-                    c.fill = fill_green;  c.font = font_green
-                elif rate >= 0.5:
-                    c.fill = fill_orange; c.font = font_orange
-                else:
-                    c.fill = fill_red;   c.font = font_red
 
-    totals_row = 6 + len(group_order)
-    total_enrolled = sum(len(groups[gk]['sids']) for gk in group_order)
-    total_active   = sum(
-        sum(1 for sid in groups[gk]['sids'] if seg.get(sid) in ('S5', 'S6', 'S7'))
-        for gk in group_order
-    )
-    total_at_risk  = sum(
-        sum(1 for sid in groups[gk]['sids'] if seg.get(sid) == 'S4')
-        for gk in group_order
-    )
+            if at_risk > 0:
+                ws.cell(excel_row, 6).font = Font(name='Arial', size=10, color=RED, bold=True)
+
+            sn = group_sheet_names.get(gk)
+            if sn:
+                cell = ws.cell(excel_row, 2)
+                cell.hyperlink = f"#'{sn}'!A1"
+                cell.font = Font(name='Arial', size=10, color='2980B9', underline='single')
+
+            if gc_active:
+                for ai, label in enumerate(gc_labels):
+                    col = n_fixed + 1 + ai
+                    submitted = sum(
+                        1 for sid in sids
+                        if gc_submitted(gc_data.get(sid, {}).get(label, {}))
+                    )
+                    frac_str = f'{submitted}/{enrolled}'
+                    rate = submitted / enrolled if enrolled else 0
+                    c = ws.cell(excel_row, col, frac_str)
+                    c.alignment = Alignment(horizontal='center', vertical='center')
+                    c.border = thin_border()
+                    if rate == 1.0:
+                        c.fill = fill_green;  c.font = font_green
+                    elif rate >= 0.5:
+                        c.fill = fill_orange; c.font = font_orange
+                    else:
+                        c.fill = fill_red;   c.font = font_red
+
+        totals_row = 6 + len(group_order)
+        total_enrolled = sum(len(groups[gk]['sids']) for gk in group_order)
+        total_active   = sum(
+            sum(1 for sid in groups[gk]['sids'] if seg.get(sid) in ('S5', 'S6', 'S7'))
+            for gk in group_order
+        )
+        total_at_risk  = sum(
+            sum(1 for sid in groups[gk]['sids'] if seg.get(sid) == 'S4')
+            for gk in group_order
+        )
+
+    # ---- Totals row ----
     if show_program_col:
         total_vals = ['', 'TOTAL', '', '', total_enrolled, total_active, total_at_risk]
     else:
@@ -996,28 +1102,6 @@ def _write_class_index_sheet(wb, title_prefix, groups, group_label_col, students
         widths = [4, 36, 22, 10, 10, 10] + ([9] * len(gc_labels) if gc_active else [])
     autosize(ws, widths)
     ws.freeze_panes = 'C6'
-
-    # Row grouping by program (Class report only) — one collapsible group per program block
-    if show_program_col and group_programs:
-        ws.sheet_properties.outlinePr.summaryBelow = False  # +/- button above each group
-        current_prog = None
-        group_start = None
-        for ri, gk in enumerate(group_order):
-            prog = group_programs.get(gk, '')
-            excel_row = 6 + ri
-            if prog != current_prog:
-                # Close previous group
-                if current_prog is not None and group_start is not None:
-                    for r in range(group_start, excel_row):
-                        ws.row_dimensions[r].outline_level = 1
-                        ws.row_dimensions[r].hidden = False
-                current_prog = prog
-                group_start = excel_row
-        # Close final group
-        if current_prog is not None and group_start is not None:
-            for r in range(group_start, totals_row):
-                ws.row_dimensions[r].outline_level = 1
-                ws.row_dimensions[r].hidden = False
 
     for gk in group_order:
         sn = group_sheet_names.get(gk)
