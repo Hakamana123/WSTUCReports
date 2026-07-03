@@ -1294,6 +1294,167 @@ def _write_missing_assessments_sheet(wb, gc_data, gc_labels, students, seg, curr
 
 
 # ===========================================================================
+# UNSATISFACTORY (BY ASSESSMENT COMBINATION) SHEET
+# ===========================================================================
+
+def _write_unsatisfactory_sheet(wb, gc_data, gc_labels, students, seg, current_week, is_partial):
+    """
+    Groups every student by the exact combination of assessments on which they are
+    'Unsatisfactory' (final outcome). A missing / no-submission assessment counts as
+    Unsatisfactory for this grouping. 'Needs Grading' does NOT count as Unsatisfactory
+    here (it's excluded from the grouping — a student pending grading on an assessment
+    but satisfactory/no-issue elsewhere will land in the "ALL SATISFACTORY" group).
+    Ghost students (S1/S2/S3) are grouped normally alongside everyone else.
+    """
+    ws = wb.create_sheet('Unsatisfactory')
+    partial_note = ' (PARTIAL)' if is_partial else ''
+    n_as = len(gc_labels)
+    n_cols = 6 + n_as + 1
+
+    write_tab_header(
+        ws,
+        f'Unsatisfactory — W{current_week}{partial_note}',
+        'Students grouped by which assessment(s) are Unsatisfactory (missing counts as Unsatisfactory)',
+        (
+            'Unsatisfactory here = final outcome of Unsatisfactory OR No Submission. '
+            "Needs Grading is excluded from this grouping — it does not count toward a student's combination. "
+            'One section per combination, ordered by number of assessments affected, then by which assessments. '
+            'Cell colour: Red = No Submission, Orange = Unsatisfactory, '
+            'Yellow = Needs Grading, Green = Satisfactory.'
+        ),
+        n_cols,
+    )
+
+    col_headers = (
+        ['Segment', 'Surname', 'First Name', 'Student ID', 'Course', 'Email']
+        + [lbl.replace('AS', 'Assessment ') for lbl in gc_labels]
+        + ['# Unsatisfactory']
+    )
+
+    no_sub_fill        = PatternFill('solid', start_color='FADBD8')
+    no_sub_font        = Font(name='Arial', size=10, color=RED, bold=True)
+    unsat_fill         = PatternFill('solid', start_color='FDEBD0')
+    unsat_font         = Font(name='Arial', size=10, color=ORANGE, bold=True)
+    needs_grading_fill = PatternFill('solid', start_color='FEF9E7')
+    needs_grading_font = Font(name='Arial', size=10, color='7D6608')
+    sat_fill           = PatternFill('solid', start_color='D5F5E3')
+    sat_font           = Font(name='Arial', size=10, color='1A7A3A', bold=True)
+
+    def outcome_style(cell, entry):
+        outcome = gc_final_outcome(entry)
+        cell.value = gc_display_value(entry)
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        cell.border = thin_border()
+        cell.font = Font(name='Arial', size=10)
+        if outcome == 'No Submission':
+            cell.fill = no_sub_fill; cell.font = no_sub_font
+        elif outcome == 'Unsatisfactory':
+            cell.fill = unsat_fill;  cell.font = unsat_font
+        elif outcome == 'Needs Grading':
+            cell.fill = needs_grading_fill; cell.font = needs_grading_font
+        else:
+            cell.fill = sat_fill;    cell.font = sat_font
+
+    def is_unsat(entry):
+        return gc_final_outcome(entry) in ('Unsatisfactory', 'No Submission')
+
+    def unsat_combo(sid):
+        return tuple(
+            i + 1 for i, lbl in enumerate(gc_labels)
+            if is_unsat(gc_data.get(sid, {}).get(lbl, {}))
+        )
+
+    def sort_key(sid):
+        st = students[sid]
+        return (st['last'].lower(), st['first'].lower())
+
+    groups = {}
+    for sid in students:
+        groups.setdefault(unsat_combo(sid), []).append(sid)
+
+    # Always include the "all satisfactory" (empty) and "every assessment unsatisfactory"
+    # (full) combinations in the section list, even if no student currently falls in them.
+    all_combo = tuple(range(1, n_as + 1))
+    groups.setdefault((), [])
+    if n_as > 0:
+        groups.setdefault(all_combo, [])
+
+    combo_order = sorted(groups.keys(), key=lambda c: (len(c), c))
+
+    def combo_label(combo):
+        if not combo:
+            return 'ALL SATISFACTORY — no Unsatisfactory or Missing assessments'
+        names = ', '.join(gc_labels[i - 1].replace('AS', 'Assessment ') for i in combo)
+        return f'UNSATISFACTORY: {names}'
+
+    current_row = 5
+
+    def write_section_header(label, count):
+        nonlocal current_row
+        ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=n_cols)
+        c = ws.cell(current_row, 1, f'▼ {label}  ({count} students)')
+        c.font = Font(name='Arial', size=10, bold=True, color=WHITE)
+        c.fill = PatternFill('solid', start_color=NAVY)
+        c.alignment = Alignment(horizontal='left', vertical='center', indent=1)
+        ws.row_dimensions[current_row].height = 22
+        current_row += 1
+        write_col_headers(ws, col_headers, row=current_row)
+        current_row += 1
+
+    def write_student_rows(sid_list):
+        nonlocal current_row
+        for ri, sid in enumerate(sid_list):
+            st = students[sid]
+            n_unsat = len(unsat_combo(sid))
+            seg_code = seg.get(sid, '?')
+            row_fill = PatternFill('solid', start_color=ALT_ROW) if ri % 2 == 0 else None
+
+            fixed_vals = [seg_code, st['last'], st['first'], sid, st.get('course', ''), st.get('email', '')]
+            for ci, val in enumerate(fixed_vals, 1):
+                c = ws.cell(current_row, ci, val)
+                c.font = Font(name='Arial', size=10)
+                if row_fill:
+                    c.fill = row_fill
+                c.alignment = Alignment(horizontal='left' if ci > 1 else 'center', vertical='center')
+                c.border = thin_border()
+
+            seg_fill = SEG_COLOURS.get(seg_code)
+            if seg_fill:
+                ws.cell(current_row, 1).fill = PatternFill('solid', start_color=seg_fill)
+                ws.cell(current_row, 1).font = Font(name='Arial', size=10, bold=True, color=WHITE)
+
+            for ai, lbl in enumerate(gc_labels):
+                entry = gc_data.get(sid, {}).get(lbl, {})
+                outcome_style(ws.cell(current_row, 7 + ai), entry)
+
+            n_cell = ws.cell(current_row, n_cols, n_unsat)
+            n_cell.font = Font(name='Arial', size=10, bold=True, color=(RED if n_unsat else '1A7A3A'))
+            n_cell.alignment = Alignment(horizontal='center', vertical='center')
+            n_cell.border = thin_border()
+            if row_fill:
+                n_cell.fill = row_fill
+
+            current_row += 1
+
+    for combo in combo_order:
+        sids = sorted(groups[combo], key=sort_key)
+        write_section_header(combo_label(combo), len(sids))
+        if sids:
+            write_student_rows(sids)
+        else:
+            ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=n_cols)
+            ws.cell(current_row, 1, 'No students in this category.').font = Font(name='Arial', size=10, italic=True, color='888888')
+            current_row += 1
+        current_row += 1
+
+    widths = [9, 22, 18, 12, 10, 36] + [20] * n_as + [14]
+    autosize(ws, widths)
+    ws.freeze_panes = 'A5'
+
+    return ws
+
+
+# ===========================================================================
 # MAIN ENGAGEMENT WORKBOOK
 # ===========================================================================
 def build_workbook(subject_code, students, login, hits, seg, current_week, prev_days, curr_days,
@@ -1999,6 +2160,16 @@ def build_program_workbook(subject_code, students, login, hits, seg, current_wee
         if missing_idx is not None:
             sheet = wb._sheets.pop(missing_idx)
             wb._sheets.insert(2, sheet)
+
+        _write_unsatisfactory_sheet(
+            wb, gc_data, gc_labels, students, seg, current_week, is_partial
+        )
+        unsat_idx = next(
+            (i for i, s in enumerate(wb._sheets) if s.title == 'Unsatisfactory'), None
+        )
+        if unsat_idx is not None:
+            sheet = wb._sheets.pop(unsat_idx)
+            wb._sheets.insert(3, sheet)
 
     current_idx = next(
         (i for i, s in enumerate(wb._sheets) if s.title == 'Program Leaderboard'), None
