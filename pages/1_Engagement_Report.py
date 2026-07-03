@@ -33,7 +33,15 @@ DAY_TO_COL = {
     29: 45, 30: 46, 31: 47,
 }
 
-WEEK1_START = date(2026, 3, 2)
+WEEK1_START = date(2026, 3, 2)  # overwritten at runtime based on the term picked in the UI
+
+TERM_OPTIONS = {
+    'Autumn 2026': date(2026, 3, 2),
+    'Spring 2026': date(2026, 7, 20),
+    'Summer 2026': date(2026, 11, 23),
+    'Autumn 2027': date(2027, 3, 1),
+    'Spring 2027': date(2027, 7, 19),
+}
 
 EXCLUDE_SURNAMES = {'Curtin', 'Rouillon', 'Turro', 'Tyler', 'Wyborn', 'Wagstaffe', 'Pinkerton'}
 USAGE_EXCLUDE_NAMES = {'Guest', 'Total'}
@@ -1298,6 +1306,7 @@ def build_workbook(subject_code, students, login, hits, seg, current_week, prev_
     week_labels = [f'W{i}' for i in range(1, current_week + 1)]
     curr_key = f'w{current_week}'
     prev_key = f'w{current_week - 1}' if current_week > 1 else None
+    w1_start, w1_end = week_date_range(1)
     curr_start, curr_end = week_date_range(current_week)
     if is_partial:
         curr_label = f'W{current_week} ({curr_start.strftime("%b %-d")}-{latest_date.strftime("%-d")}, {curr_days}d partial)'
@@ -1312,7 +1321,7 @@ def build_workbook(subject_code, students, login, hits, seg, current_week, prev_
 
     seg_descriptions = {
         'S1': f'Never engaged: never logged in at all (or no login record) AND zero hits across W1 through W{current_week}.',
-        'S2': 'Pre-teaching ghosts: last login was before Mar 2 (i.e. logged in during pre-teaching but never returned) AND zero hits all weeks.',
+        'S2': f'Pre-teaching ghosts: last login was before {w1_start.strftime("%b %-d")} (i.e. logged in during pre-teaching but never returned) AND zero hits all weeks.',
         'S3': 'W1 early drop-offs: last login fell in W1 and they have not returned in the current login window.',
         'S4': f'Active then absent in W{current_week}: had hits in a previous week but zero in W{current_week} to date. Split into "Just Dropped" (W{current_week-1}>0) and "Long Silent" (W1-W{current_week-2} active, W{current_week-1}+W{current_week} zero).' if current_week >= 3 else f'Active then absent in W{current_week}.',
         'S5': f'Late arrivals + W{current_week-1} returners: zero hits in W{current_week-1} but appearing in W{current_week}.' if current_week > 1 else 'Late arrivals: appearing in W1.',
@@ -1349,7 +1358,7 @@ def build_workbook(subject_code, students, login, hits, seg, current_week, prev_
     notes = [f'Enrolled (after exclusions): {enrolled}', f'Login window: {login_window}', f'Teaching weeks: {week_descriptions}',
         f'Comparison pair: {prev_label} vs {curr_label}. Daily averages normalised by actual day count.',
         (f'PARTIAL WEEK WARNING: W{current_week} has {curr_days} days of data. S4 inflated by timing. S7 understated. S5 includes both true late arrivals and W{current_week-1} returners. Do NOT use S4 list for outreach until W{current_week} closes.' if is_partial else f'Full week W{current_week}: standard run.'),
-        f'Days-since thresholds: S2 ≥ {s2_threshold} days (last login on or before Mar 1); S3 in {s3_range[0]}-{s3_range[1]} days (last login Mar 2-8).',
+        f'Days-since thresholds: S2 ≥ {s2_threshold} days (last login on or before {(w1_start - timedelta(days=1)).strftime("%b %-d")}); S3 in {s3_range[0]}-{s3_range[1]} days (last login {w1_start.strftime("%b %-d")}-{w1_end.strftime("%-d")}).',
         f'S3 / S4 dual-eligible students: {s3_or_s4_eligible}.', f'Students in class list but missing from login report: {sum(1 for s in students if s not in login)}.', 'Leaderboard ranking: hits per enrolled student (weighted engagement).']
     for i, n in enumerate(notes):
         c = ws.cell(note_row+i, 1, n); ws.merge_cells(start_row=note_row+i, start_column=1, end_row=note_row+i, end_column=6)
@@ -1375,7 +1384,7 @@ def build_workbook(subject_code, students, login, hits, seg, current_week, prev_
 
     # S2
     ws, sids = make_seg_tab('S2','Pre-Teaching Ghosts')
-    write_tab_header(ws,'S2 — Pre-Teaching Ghosts',f'{len(sids)} students with zero hits all weeks AND last login pre-Mar 2 or NEVER',seg_descriptions['S2'],11,'S2')
+    write_tab_header(ws,'S2 — Pre-Teaching Ghosts',f'{len(sids)} students with zero hits all weeks AND last login pre-{w1_start.strftime("%b %-d")} or NEVER',seg_descriptions['S2'],11,'S2')
     write_col_headers(ws,['Surname','First Name','Student ID','Course','Disc. Class','Disc. Teacher','Email','Total Logins','Days Since','Last Login','Action Required'],row=5)
     rows = []
     for sid in sids:
@@ -1386,7 +1395,7 @@ def build_workbook(subject_code, students, login, hits, seg, current_week, prev_
 
     # S3
     ws, sids = make_seg_tab('S3','W1 Drop-Offs')
-    write_tab_header(ws,'S3 — W1 Early Drop-Offs',f'{len(sids)} students whose last login fell in W1 (Mar 2-8)',seg_descriptions['S3'],12,'S3')
+    write_tab_header(ws,'S3 — W1 Early Drop-Offs',f'{len(sids)} students whose last login fell in W1 ({w1_start.strftime("%b %-d")}-{w1_end.strftime("%-d")})',seg_descriptions['S3'],12,'S3')
     write_col_headers(ws,['Surname','First Name','Student ID','Course','Disc. Class','Disc. Teacher','Email','Total Logins','Days Since','Last Login','Risk Level','Action Required'],row=5)
     rows = []
     for sid in sids:
@@ -2044,6 +2053,25 @@ with st.expander('Instructions', expanded=False):
         'The current teaching week is auto-detected from the latest day with data.'
     )
 
+term_choice = st.selectbox(
+    'Term start date (Week 1, Day 1 reference point)',
+    options=list(TERM_OPTIONS.keys()) + ['Custom date'],
+    index=None,
+    placeholder='Select a term...',
+    key='term_choice',
+)
+
+term_start = None
+if term_choice == 'Custom date':
+    term_start = st.date_input('Custom term start date', value=None, key='term_custom_date')
+elif term_choice is not None:
+    term_start = TERM_OPTIONS[term_choice]
+
+if term_start:
+    st.caption(f'Week 1 will start on {term_start.strftime("%A, %-d %B %Y")}.')
+else:
+    st.caption('Pick a term (or a custom date) before generating a report.')
+
 col1, col2 = st.columns(2)
 with col1:
     classlist_file = st.file_uploader('Class list (.xls / .xlsx)', type=['xls', 'xlsx'], key='cl')
@@ -2057,11 +2085,13 @@ with col2:
 
 run_btn = st.button(
     'Generate report', type='primary',
-    disabled=not (classlist_file and login_file and usage_files),
+    disabled=not (term_start and classlist_file and login_file and usage_files),
 )
 
 if run_btn:
     try:
+        WEEK1_START = term_start  # drives detect_current_week / bucket_by_week / week_date_range
+
         with st.spinner('Loading class list...'):
             subject_code, students = load_classlist(classlist_file.getvalue())
         st.success(f'**{subject_code}** • {len(students)} enrolled (after exclusions)')
@@ -2082,7 +2112,7 @@ if run_btn:
         cap_latest = win_end if win_end else None
         current_week, days_in, latest = detect_current_week(merged, override_latest=cap_latest)
         if current_week is None:
-            st.error('No usage data found on or after Mar 2 2026. Cannot determine current week.')
+            st.error(f'No usage data found on or after {WEEK1_START.strftime("%d %b %Y")}. Cannot determine current week.')
             st.stop()
         is_partial = days_in < 7
         curr_days = days_in
