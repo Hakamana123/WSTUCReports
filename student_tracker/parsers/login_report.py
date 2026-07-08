@@ -3,9 +3,29 @@
 Two sections exist (students who logged in this period vs. those who didn't),
 each with the same logical columns but at slightly different column offsets.
 We locate each section by its header row and stitch them together.
+
+IMPORTANT: DAYS SINCE LAST LOGIN / LAST LOGIN DATE / TOTAL LOGINS are
+lifetime figures — they are NOT scoped to whatever date range was picked
+in the Blackboard filter when the report was run. Only which SECTION a
+student lands in (logged-in-this-period vs not) reflects the chosen
+window. This means:
+  - S1/S2 checks (which need a true lifetime "ever logged in" / "last
+    login before block start") work correctly from ANY single weekly
+    pull — no separate lifetime-range pull is needed.
+  - A per-week LOGIN COUNT is derived elsewhere (metrics.py) by taking
+    the difference between this week's TOTAL LOGINS snapshot and the
+    previous week's, across consecutive weekly uploads.
 """
 
+import re
+from datetime import date, datetime
+
 import pandas as pd
+
+DATE_WINDOW_RE = re.compile(
+    r"between\s+(\d{1,2}/\d{1,2}/\d{4})\s+to\s+(\d{1,2}/\d{1,2}/\d{4})",
+    re.IGNORECASE,
+)
 
 EXPECTED_COLS = [
     "SURNAME", "FIRST NAME", "STUDENT ID", "EMAIL",
@@ -80,3 +100,32 @@ def parse(path: str) -> pd.DataFrame:
     out["days_since_last_login"] = pd.to_numeric(out["days_since_last_login"], errors="coerce")
     out = out.drop_duplicates(subset=["student_code"], keep="first").reset_index(drop=True)
     return out
+
+
+def parse_window(path: str) -> tuple[date | None, date | None]:
+    """Find the report's 'between D/M/YYYY to D/M/YYYY' window text.
+
+    Scans the first ~60 rows / 20 cols, matching the pattern used by the
+    report's own descriptive text ('...students logged in between X to Y').
+    Returns (None, None) if not found.
+    """
+    raw = pd.read_excel(path, header=None, nrows=60)
+    for r in range(min(60, len(raw))):
+        for c in range(min(20, raw.shape[1])):
+            val = raw.iat[r, c]
+            if not isinstance(val, str):
+                continue
+            m = DATE_WINDOW_RE.search(val)
+            if m:
+                try:
+                    start = datetime.strptime(m.group(1), "%d/%m/%Y").date()
+                    end = datetime.strptime(m.group(2), "%d/%m/%Y").date()
+                    return start, end
+                except ValueError:
+                    continue
+    return None, None
+
+
+def parse_with_window(path: str) -> tuple[pd.DataFrame, date | None, date | None]:
+    """Convenience wrapper: returns (login df, window_start, window_end)."""
+    return parse(path), *parse_window(path)
