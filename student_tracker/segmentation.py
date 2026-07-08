@@ -1,29 +1,41 @@
 """Classify each student into one of the engagement segments.
 
-Segment definitions (as agreed with the user):
+Rebuilt for the two-signal (hours + login count) weekly model — Option 1
+from the design discussion: hours and login count are each checked
+independently for "active this week", and the fade/growth ratio (S6/S7)
+is measured on whichever of the two was the larger signal for that
+student last week. Forum interaction data does NOT feed classification;
+it's supplementary context shown alongside the segment, because forum
+activity is task-dependent and bursty (spikes when a discussion board
+task is due, zero otherwise) in a way that would corrupt week-over-week
+fade comparisons if blended in.
+
+Segment definitions:
   S1 - Never engaged: 0 lifetime logins (also catches students missing
        from the login report entirely)
   S2 - Pre-block ghost: logged in before block start, no login since
-  S3 - W1 ghost: had hits in block-week-1, none in any later week in data
-  S4 - Dropped this week: hits last week, none this week
-  S5 - Returning engager: no hits last week, hits this week
-  S6 - Fading engager: hits both weeks, this week < 50% of last week
-  S7 - True sustainer: hits both weeks, this week within 50% of last week
-       (this includes increases — a student more active than last week is
-       a sustainer, not a separate 'surging' category, by current definition)
-  S8 - Long-tail dropout: had hits at some point during the data window,
-       but zero in either of the last two weeks. Effectively only
-       meaningful for long blocks (e.g. 17-week prep subjects); will be
-       empty or near-empty for short discipline blocks.
+  S3 - W1 ghost: active (hours or logins) in block-week-1, inactive in
+       every later week present in the data
+  S4 - Dropped this week: active last week, inactive this week
+  S5 - Returning engager: inactive last week, active this week
+  S6 - Fading engager: active both weeks, this week's dominant-signal
+       value < fade_threshold * last week's dominant-signal value
+  S7 - True sustainer: active both weeks, not fading (includes
+       increases — a student more active than last week is a sustainer,
+       not a separate 'surging' category, by current definition)
+  S8 - Long-tail dropout: had activity (hours or logins) at some point
+       across the uploaded weeks, but inactive in both of the last two
+       weeks present. Mainly relevant for long blocks; usually empty for
+       short discipline blocks.
 
-Hits drive the comparison (per user preference); active days are reported
-as supplementary context but do not affect classification.
+'Active' in a given week = hours > 0 OR login count > 0.
 
 Edge cases:
-  - If fewer than 2 weeks of data, S4–S8 cannot be evaluated. Such students
-    are placed in 'Active (single week)' or 'Unclassified — no activity'.
-  - Students with login activity but zero hits anywhere in the data window
-    fall through to 'Unclassified' if they don't match S1/S2/S3.
+  - If fewer than 2 teaching weeks (block week >= 1) are in the uploaded
+    data, S4-S8 cannot be evaluated. Such students are placed in
+    'Active (single week)' or 'Unclassified — no activity'.
+  - Week 0 (pre-teaching baseline) is never itself classified against —
+    it exists only as the login-delta baseline.
 """
 
 from datetime import date
@@ -46,51 +58,68 @@ ALL_SEGMENTS = [
 ]
 
 
-def _safe_get(weekly_hits: pd.DataFrame, student_code: str,
-              week_key: tuple[int, int] | None) -> int:
-    if week_key is None or weekly_hits.empty:
-        return 0
-    if student_code not in weekly_hits.index:
-        return 0
-    if week_key not in weekly_hits.columns:
-        return 0
-    val = weekly_hits.loc[student_code, week_key]
+def _safe_get(wide: pd.DataFrame, student_code: str, week: int | None) -> float:
+    if week is None or wide.empty:
+        return 0.0
+    if student_code not in wide.index or week not in wide.columns:
+        return 0.0
+    val = wide.at[student_code, week]
+    if pd.isna(val):
+        return 0.0
     try:
-        return int(val)
+        return float(val)
     except (ValueError, TypeError):
-        return 0
+        return 0.0
+
+
+def _is_active(hours_wide, logins_wide, sid, week) -> bool:
+    return (_safe_get(hours_wide, sid, week) > 0) or (_safe_get(logins_wide, sid, week) > 0)
+
+
+def _dominant_metric_ratio(hours_wide, logins_wide, sid, this_week, last_week) -> float | None:
+    """Ratio (this_week / last_week) on whichever metric was larger last week.
+
+    Returns None if the dominant metric's last-week value is 0 (can't form
+    a ratio — caller should treat that as 'not fading', since S6/S7 is only
+    reached when we already know both weeks are active on the OR signal).
+    """
+    h_last = _safe_get(hours_wide, sid, last_week)
+    l_last = _safe_get(logins_wide, sid, last_week)
+    if h_last >= l_last:
+        last_val, this_val = h_last, _safe_get(hours_wide, sid, this_week)
+    else:
+        last_val, this_val = l_last, _safe_get(logins_wide, sid, this_week)
+    if last_val <= 0:
+        return None
+    return this_val / last_val
 
 
 def classify(
     summary: pd.DataFrame,
-    weekly_hits: pd.DataFrame,
+    hours_wide: pd.DataFrame,
+    logins_wide: pd.DataFrame,
     block_start_date: date,
-    weeks: list[tuple[int, int]],
+    weeks: list[int],
     fade_threshold: float = 0.5,
 ) -> pd.DataFrame:
     """Add a 'segment' column to the per-student summary DataFrame.
 
     Args:
         summary: per-student summary with student_code, total_logins,
-                 last_login_date columns.
-        weekly_hits: wide table from metrics.weekly_hits_table.
+                 last_login_date columns (lifetime, from latest snapshot).
+        hours_wide, logins_wide: wide tables (student_code index, block-week
+                 columns) from metrics.stack_weekly / build_login_tables.
         block_start_date: first day of the teaching block.
-        weeks: sorted list of (iso_year, iso_week) tuples present in data.
-        fade_threshold: ratio below which 'this week / last week' counts as
-                        fading. Default 0.5 (i.e., >50% drop = S6).
-
-    Returns:
-        A copy of summary with an added 'segment' column.
+        weeks: sorted list of block-relative week numbers present in data
+               (may include 0, the pre-teaching baseline).
+        fade_threshold: ratio below which 'this week / last week' on the
+                        dominant metric counts as fading. Default 0.5.
     """
-    this_week = weeks[-1] if weeks else None
-    last_week = weeks[-2] if len(weeks) >= 2 else None
-
-    bsd_cal = block_start_date.isocalendar()
-    block_w1_key = (bsd_cal[0], bsd_cal[1])
-    if block_w1_key not in weeks:
-        block_w1_key = None
-
-    later_than_w1 = [w for w in weeks if block_w1_key and w > block_w1_key]
+    teaching_weeks = [w for w in weeks if w >= 1]
+    this_week = teaching_weeks[-1] if teaching_weeks else None
+    last_week = teaching_weeks[-2] if len(teaching_weeks) >= 2 else None
+    w1_key = 1 if 1 in teaching_weeks else None
+    later_than_w1 = [w for w in teaching_weeks if w1_key and w > w1_key]
 
     segments: list[str] = []
     for _, row in summary.iterrows():
@@ -99,7 +128,7 @@ def classify(
         last_login = row.get("last_login_date")
 
         # S1 — never logged in (also covers students missing from the login
-        # report entirely; they get total_logins=0 / last_login=NaN after merge).
+        # report entirely).
         if total_logins == 0 or pd.isna(last_login):
             segments.append(SEG_S1)
             continue
@@ -112,48 +141,47 @@ def classify(
             segments.append(SEG_S2)
             continue
 
-        h_this = _safe_get(weekly_hits, sc, this_week)
-        h_last = _safe_get(weekly_hits, sc, last_week)
-        h_w1 = _safe_get(weekly_hits, sc, block_w1_key)
-
         # S3 — only meaningful if there are weeks after W1 in the data
-        if h_w1 > 0 and later_than_w1:
-            later_total = sum(_safe_get(weekly_hits, sc, w) for w in later_than_w1)
-            if later_total == 0:
+        if w1_key and _is_active(hours_wide, logins_wide, sc, w1_key) and later_than_w1:
+            if not any(_is_active(hours_wide, logins_wide, sc, w) for w in later_than_w1):
                 segments.append(SEG_S3)
                 continue
 
-        # Need at least 2 weeks for S4–S7
+        # Need at least 2 teaching weeks for S4-S7
         if last_week is None:
-            if h_this > 0:
+            if this_week and _is_active(hours_wide, logins_wide, sc, this_week):
                 segments.append(SEG_SINGLE_WEEK)
             else:
                 segments.append(SEG_UNCLASSIFIED)
             continue
 
+        active_last = _is_active(hours_wide, logins_wide, sc, last_week)
+        active_this = _is_active(hours_wide, logins_wide, sc, this_week)
+
         # S4
-        if h_last > 0 and h_this == 0:
+        if active_last and not active_this:
             segments.append(SEG_S4)
             continue
 
         # S5
-        if h_last == 0 and h_this > 0:
+        if not active_last and active_this:
             segments.append(SEG_S5)
             continue
 
         # S6 / S7
-        if h_last > 0 and h_this > 0:
-            if h_this < fade_threshold * h_last:
+        if active_last and active_this:
+            ratio = _dominant_metric_ratio(hours_wide, logins_wide, sc, this_week, last_week)
+            if ratio is not None and ratio < fade_threshold:
                 segments.append(SEG_S6)
             else:
                 segments.append(SEG_S7)
             continue
 
-        # S8 — Long-tail dropout: had activity sometime in the data window,
-        # but zero in both of the last two weeks. Mainly relevant for long
-        # blocks (e.g. 17-week prep subjects).
-        total_period_hits = int(row.get("total_hits", 0) or 0)
-        if total_period_hits > 0:
+        # S8 — Long-tail dropout: active at some point in the data window,
+        # inactive in both of the last two weeks.
+        total_hours = float(row.get("total_hours", 0) or 0)
+        total_period_logins = float(row.get("total_period_logins", 0) or 0)
+        if total_hours > 0 or total_period_logins > 0:
             segments.append(SEG_S8)
             continue
 
