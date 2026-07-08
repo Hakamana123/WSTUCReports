@@ -3,13 +3,10 @@
 # Edit thresholds here without touching the Python code. Changes take effect
 # on next app run.
 
-# Recency weighting half-life in days. A hit on the reference date carries
-# weight 1.0; a hit `half_life_days` ago carries weight 0.5; one twice that
-# many days ago carries 0.25; and so on.
-recency_half_life_days: 7
-
 # Threshold for S6 (Fading) vs S7 (Sustainer). A student is fading when
-# this_week_hits < fade_threshold * last_week_hits.
+# this week's value on their dominant signal (whichever of hours-in-subject
+# or login-count was larger last week) < fade_threshold * last week's value
+# on that same signal.
 fade_threshold: 0.5
 
 # Pattern (regex, case-insensitive) for column names in the Grade Centre
@@ -31,3 +28,9 @@ text_submitted_values:
 # Class list filtering — disabled. The class list from the university system
 # is treated as the authoritative enrolment source; anyone on it is a real
 # student. No prefix or surname exclusions are applied.
+
+# NOTE: recency_half_life_days was removed. It weighted daily hit counts
+# by recency, which doesn't translate meaningfully once the underlying data
+# is weekly totals (a "day" half-life is finer than the data itself now
+# resolves). It's replaced by weeks_since_last_active (see metrics.py),
+# a plain week-count rather than a decayed weight.
