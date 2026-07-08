@@ -1,16 +1,37 @@
 """Per-student metric computations.
 
-All metrics derive from:
-  - The Overall report's date section (per-student per-date hits)
-  - The Login report (last login date, total logins lifetime)
-  - The Grade Centre (submission and score)
+Rebuilt for weekly-snapshot inputs (replacing the old daily-hit-count
+feed, which depended on a report that's no longer reliably exportable).
 
-Weeks are ISO weeks, Monday–Sunday.
-Recency weighting uses exponential decay with a configurable half-life.
+Each reporting point now comes from THREE independently-pulled weekly
+exports, each narrowed to a single week in the Blackboard UI:
+  - Login Report        -> weekly login COUNT, via the delta between this
+                            week's and last week's cumulative TOTAL LOGINS
+                            snapshot (see parsers/login_report.py for why
+                            that field is safe to diff). Also the source
+                            of lifetime last_login_date / total_logins for
+                            S1/S2, taken from the most recent snapshot.
+  - Subject Activity Overview -> hours in subject that week (already
+                            window-scoped by the report itself).
+  - User Activity in Forums   -> forum accesses + messages that week
+                            (context only; does not drive segmentation).
+
+Everything is keyed by BLOCK-RELATIVE WEEK NUMBER (an int): the week
+before teaching starts is Week 0 (used only as the login-delta baseline,
+per the user's own numbering), the first teaching week is Week 1, etc.
+This matches block_week_number()'s existing definition below.
+
+Because inputs are weekly totals rather than daily hit counts, some of
+the old daily-precision metrics no longer exist in the same form:
+  - total_active_days (daily count)   -> weeks_active (weekly count)
+  - last_hit_date / days_since_last_hit (day precision) -> last_active_week
+    / weeks_since_last_active (week precision)
+  - recency-weighted hits (day half-life) -> dropped. A day-granularity
+    half-life doesn't mean much when the underlying data IS the week; see
+    README notes in report.py for what replaced it.
 """
 
-from datetime import date, timedelta
-import math
+from datetime import date
 import pandas as pd
 
 
@@ -47,100 +68,127 @@ def block_week_label(iso_year: int, iso_week: int, block_start_date: date) -> st
     return f"W{bw} (Mon {monday:%d %b})"
 
 
-def block_week_colname(iso_year: int, iso_week: int, block_start_date: date,
-                       suffix: str) -> str:
-    """Block-relative column name like 'W1_hits' or 'W0_active_days'."""
-    bw = block_week_number(iso_year, iso_week, block_start_date)
-    return f"W{bw}_{suffix}"
+def block_week_for_date(d: date, block_start_date: date) -> int:
+    """Convenience: block-relative week number directly from a date."""
+    yr, wk = iso_week_key(d)
+    return block_week_number(yr, wk, block_start_date)
 
 
-def weeks_in_data(date_hits: pd.DataFrame) -> list[tuple[int, int]]:
-    """Return sorted list of (iso_year, iso_week) tuples present in the data."""
-    if date_hits.empty:
-        return []
-    iso = date_hits["date"].dt.isocalendar()
-    pairs = list(zip(iso["year"].astype(int), iso["week"].astype(int)))
-    return sorted(set(pairs))
+# ---------------------------------------------------------------------
+# Stacking weekly snapshot uploads into wide (student_code x week) tables
+# ---------------------------------------------------------------------
 
+def stack_weekly(
+    snapshots: list[tuple[pd.DataFrame, date | None, date | None]],
+    value_col: str,
+    block_start_date: date,
+) -> pd.DataFrame:
+    """Combine several (df[student_code, value_col], window_start, window_end)
+    uploads — one per week — into one wide table: rows = student_code,
+    columns = block-relative week number, values = value_col.
 
-def weekly_hits_table(date_hits: pd.DataFrame) -> pd.DataFrame:
-    """Wide table: rows = student_code, columns = (iso_year, iso_week), values = total hits."""
-    if date_hits.empty:
-        return pd.DataFrame()
-    df = date_hits.copy()
-    iso = df["date"].dt.isocalendar()
-    df["iso_year"] = iso["year"].astype(int)
-    df["iso_week"] = iso["week"].astype(int)
-    pivot = df.groupby(["student_code", "iso_year", "iso_week"], as_index=False)["hits"].sum()
-    wide = pivot.pivot_table(
-        index="student_code",
-        columns=["iso_year", "iso_week"],
-        values="hits",
-        fill_value=0,
-    )
-    return wide
-
-
-def weekly_active_days_table(date_hits: pd.DataFrame) -> pd.DataFrame:
-    """Wide table: rows = student_code, cols = (iso_year, iso_week), values = active days."""
-    if date_hits.empty:
-        return pd.DataFrame()
-    df = date_hits.copy()
-    df = df[df["hits"] > 0]
-    iso = df["date"].dt.isocalendar()
-    df["iso_year"] = iso["year"].astype(int)
-    df["iso_week"] = iso["week"].astype(int)
-    counts = df.groupby(["student_code", "iso_year", "iso_week"])["date"].nunique().reset_index()
-    counts = counts.rename(columns={"date": "active_days"})
-    wide = counts.pivot_table(
-        index="student_code",
-        columns=["iso_year", "iso_week"],
-        values="active_days",
-        fill_value=0,
-    )
-    return wide
-
-
-def recency_weighted(date_hits: pd.DataFrame, reference_date: date,
-                     half_life_days: float = 7.0) -> pd.DataFrame:
-    """Per-student recency-weighted hits and active-days.
-
-    Weight for day X = 0.5 ** ((reference_date - X).days / half_life_days).
-    Returns DataFrame with columns: student_code, weighted_hits, weighted_active_days.
+    Snapshots with an undetectable window_start are skipped (with the
+    caller expected to have already warned the user in the UI).
     """
-    if date_hits.empty:
-        return pd.DataFrame(columns=["student_code", "weighted_hits", "weighted_active_days"])
+    frames = []
+    for df, window_start, _window_end in snapshots:
+        if window_start is None or df is None or df.empty:
+            continue
+        bw = block_week_for_date(window_start, block_start_date)
+        s = df.set_index("student_code")[value_col]
+        s = s.groupby(level=0).sum()  # guard against dup student rows
+        frames.append(s.rename(bw))
+    if not frames:
+        return pd.DataFrame()
+    wide = pd.concat(frames, axis=1)
+    # If two uploads land on the same block week (re-uploaded / duplicate),
+    # keep the last one rather than silently summing.
+    wide = wide.T.groupby(level=0).last().T
+    wide = wide.fillna(0)
+    return wide.sort_index(axis=1)
 
-    df = date_hits.copy()
-    df["days_ago"] = (pd.Timestamp(reference_date) - df["date"]).dt.days
-    df["weight"] = 0.5 ** (df["days_ago"] / half_life_days)
-    # Clamp negative days_ago (future dates) to weight 1.0
-    df.loc[df["days_ago"] < 0, "weight"] = 1.0
 
-    df["weighted_hits"] = df["hits"] * df["weight"]
-    df["was_active"] = (df["hits"] > 0).astype(int)
-    df["weighted_active_days"] = df["was_active"] * df["weight"]
+def build_login_tables(
+    login_snapshots: list[tuple[pd.DataFrame, date | None, date | None]],
+    block_start_date: date,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """From weekly Login Report uploads, build:
 
-    out = df.groupby("student_code").agg(
-        weighted_hits=("weighted_hits", "sum"),
-        weighted_active_days=("weighted_active_days", "sum"),
-    ).reset_index()
-    return out
+      cumulative_wide : student_code x block_week -> lifetime TOTAL LOGINS
+                         at the time of that snapshot
+      delta_wide       : student_code x block_week -> LOGIN COUNT during
+                         that specific week (this week's cumulative minus
+                         the previous available snapshot's cumulative).
+                         The earliest snapshot in the batch has no prior
+                         snapshot to diff against, so its delta is NaN
+                         (excluded from segmentation, not treated as 0).
+      latest_login_df  : the single login DataFrame from the
+                         highest-block-week snapshot — used for the
+                         lifetime last_login_date / total_logins / S1-S2
+                         checks, since it's the most current picture.
+
+    Students not present in a given week's file are treated as having no
+    new logins that snapshot (their cumulative total simply doesn't
+    advance) — forward-filled from their last known cumulative value so
+    the delta for surrounding weeks isn't corrupted by a one-week gap.
+    """
+    frames = []
+    latest_bw = None
+    latest_df = None
+    for df, window_start, _window_end in login_snapshots:
+        if window_start is None or df is None or df.empty:
+            continue
+        bw = block_week_for_date(window_start, block_start_date)
+        s = df.set_index("student_code")["total_logins"]
+        s = s.groupby(level=0).max()
+        frames.append(s.rename(bw))
+        if latest_bw is None or bw > latest_bw:
+            latest_bw = bw
+            latest_df = df
+
+    if not frames:
+        empty = pd.DataFrame()
+        return empty, empty, pd.DataFrame(columns=[
+            "student_code", "surname", "first_name", "email",
+            "days_since_last_login", "last_login_date", "total_logins",
+        ])
+
+    cumulative_wide = pd.concat(frames, axis=1)
+    cumulative_wide = cumulative_wide.T.groupby(level=0).last().T
+    cumulative_wide = cumulative_wide.sort_index(axis=1)
+    cumulative_wide = cumulative_wide.ffill(axis=1)
+
+    delta_wide = cumulative_wide.diff(axis=1)
+    # Clamp any negative deltas (shouldn't happen, but a Blackboard export
+    # glitch or a re-run with a shrunk window could produce one) to 0
+    # rather than let them silently corrupt the fade/growth comparison.
+    delta_wide = delta_wide.clip(lower=0)
+
+    return cumulative_wide, delta_wide, latest_df
+
+
+# ---------------------------------------------------------------------
+# Per-student summary
+# ---------------------------------------------------------------------
+
+def weeks_in_data(*wide_tables: pd.DataFrame) -> list[int]:
+    """Union of block-week columns present across one or more wide tables."""
+    weeks: set[int] = set()
+    for t in wide_tables:
+        if t is not None and not t.empty:
+            weeks |= set(int(c) for c in t.columns)
+    return sorted(weeks)
 
 
 def per_student_summary(
     class_list: pd.DataFrame,
-    date_hits: pd.DataFrame,
-    login: pd.DataFrame,
-    grade_summary: pd.DataFrame,
-    reference_date: date,
-    half_life_days: float = 7.0,
+    hours_wide: pd.DataFrame,
+    logins_delta_wide: pd.DataFrame,
+    forum_wide: pd.DataFrame,
+    latest_login_df: pd.DataFrame,
+    grade_summary: pd.DataFrame | None,
 ) -> pd.DataFrame:
-    """Build the master per-student table, restricted to enrolled students.
-
-    Returns DataFrame keyed by student_code with all per-student metrics
-    needed for the dashboard and the segmentation step.
-    """
+    """Build the master per-student table, restricted to enrolled students."""
     desired_cols = [
         "student_code", "first_name", "last_name", "preferred_name",
         "attend_type", "course", "course_type", "email_address",
@@ -149,42 +197,71 @@ def per_student_summary(
     base = class_list[available_cols].copy()
     base["student_code"] = base["student_code"].astype(str).str.strip()
 
-    # --- Login data (lifetime) ---
-    login_keep = login[[
+    # --- Lifetime login data (from the most recent weekly snapshot) ---
+    login_keep = latest_login_df[[
         "student_code", "last_login_date", "total_logins", "days_since_last_login",
-    ]].copy()
+    ]].copy() if not latest_login_df.empty else pd.DataFrame(
+        columns=["student_code", "last_login_date", "total_logins", "days_since_last_login"]
+    )
     login_keep["in_login_report"] = True
     base = base.merge(login_keep, on="student_code", how="left")
     base["in_login_report"] = base["in_login_report"].fillna(False)
     base["total_logins"] = base["total_logins"].fillna(0).astype(int)
 
-    # --- Total / weekly hits ---
-    if not date_hits.empty:
-        totals = date_hits.groupby("student_code")["hits"].sum().rename("total_hits")
-        base = base.merge(totals, on="student_code", how="left")
-        active = date_hits[date_hits["hits"] > 0].groupby("student_code")["date"].nunique().rename("total_active_days")
-        base = base.merge(active, on="student_code", how="left")
-        # Last hit date — derived from the Overall report. More reliable than
-        # the Login Report's last_login_date, which can be stale.
-        last_hit = date_hits[date_hits["hits"] > 0].groupby("student_code")["date"].max().rename("last_hit_date")
-        base = base.merge(last_hit, on="student_code", how="left")
-    else:
-        base["total_hits"] = 0
-        base["total_active_days"] = 0
-        base["last_hit_date"] = pd.NaT
-    base["total_hits"] = base["total_hits"].fillna(0).astype(int)
-    base["total_active_days"] = base["total_active_days"].fillna(0).astype(int)
-    base["last_hit_date"] = pd.to_datetime(base["last_hit_date"])
-    # days_since_last_hit relative to the reference date
-    base["days_since_last_hit"] = (
-        pd.Timestamp(reference_date) - base["last_hit_date"]
-    ).dt.days
+    # --- Weekly totals: hours, logins, forum interactions ---
+    def _row_totals(wide: pd.DataFrame, col_name: str):
+        if wide.empty:
+            base[col_name] = 0
+            return
+        totals = wide.sum(axis=1).rename(col_name)
+        base_local = base.merge(totals, left_on="student_code", right_index=True, how="left")
+        base_local[col_name] = base_local[col_name].fillna(0)
+        return base_local[col_name]
 
-    # --- Recency-weighted ---
-    rw = recency_weighted(date_hits, reference_date, half_life_days)
-    base = base.merge(rw, on="student_code", how="left")
-    base["weighted_hits"] = base["weighted_hits"].fillna(0.0).round(2)
-    base["weighted_active_days"] = base["weighted_active_days"].fillna(0.0).round(2)
+    base["total_hours"] = _row_totals(hours_wide, "total_hours")
+    base["total_hours"] = base["total_hours"].fillna(0).round(2)
+
+    if not logins_delta_wide.empty:
+        login_totals = logins_delta_wide.sum(axis=1, skipna=True).rename("total_period_logins")
+        base = base.merge(login_totals, left_on="student_code", right_index=True, how="left")
+        base["total_period_logins"] = base["total_period_logins"].fillna(0).astype(int)
+    else:
+        base["total_period_logins"] = 0
+
+    if not forum_wide.empty:
+        forum_totals = forum_wide.sum(axis=1).rename("total_forum_interactions")
+        base = base.merge(forum_totals, left_on="student_code", right_index=True, how="left")
+        base["total_forum_interactions"] = base["total_forum_interactions"].fillna(0).astype(int)
+    else:
+        base["total_forum_interactions"] = 0
+
+    # --- Weeks active / last active week (week-precision, not day-precision) ---
+    weeks = weeks_in_data(hours_wide, logins_delta_wide)
+    teaching_weeks = [w for w in weeks if w >= 1]
+
+    def _active_mask_for_week(sid, wk) -> bool:
+        h = hours_wide.at[sid, wk] if (not hours_wide.empty and sid in hours_wide.index and wk in hours_wide.columns) else 0
+        l = logins_delta_wide.at[sid, wk] if (not logins_delta_wide.empty and sid in logins_delta_wide.index and wk in logins_delta_wide.columns) else 0
+        h = 0 if pd.isna(h) else h
+        l = 0 if pd.isna(l) else l
+        return (h > 0) or (l > 0)
+
+    weeks_active_list = []
+    last_active_week_list = []
+    for sid in base["student_code"]:
+        active_weeks = [w for w in teaching_weeks if _active_mask_for_week(sid, w)]
+        weeks_active_list.append(len(active_weeks))
+        last_active_week_list.append(max(active_weeks) if active_weeks else pd.NA)
+    base["weeks_active"] = weeks_active_list
+    base["last_active_week"] = last_active_week_list
+
+    this_week = max(teaching_weeks) if teaching_weeks else None
+    if this_week is not None:
+        base["weeks_since_last_active"] = base["last_active_week"].apply(
+            lambda w: (this_week - w) if pd.notna(w) else pd.NA
+        )
+    else:
+        base["weeks_since_last_active"] = pd.NA
 
     # --- Grade Centre ---
     if grade_summary is not None and not grade_summary.empty:
@@ -200,90 +277,36 @@ def per_student_summary(
     return base
 
 
-def append_recent_week_averages(summary: pd.DataFrame,
-                                 weekly_hits: pd.DataFrame,
-                                 weeks: list[tuple[int, int]],
-                                 reference_date: date) -> pd.DataFrame:
-    """Add prior_week_daily_avg and this_week_daily_avg to the summary.
-
-    Helps interpret S4 (dropped) and S6 (fading) by showing the baseline
-    pace each student was at before the current week.
-
-    'this_week' = most recent ISO week with hits in the data.
-    'prior_week' = the ISO week before that.
-    Daily average is hits divided by 7 (full ISO week). For the current
-    week, if it's incomplete relative to reference_date, we divide by the
-    number of days elapsed within that week (1–7) so the average isn't
-    artificially low.
-    """
+def append_weekly_columns(
+    summary: pd.DataFrame,
+    hours_wide: pd.DataFrame,
+    logins_delta_wide: pd.DataFrame,
+    forum_wide: pd.DataFrame,
+    weeks: list[int],
+    block_start_date: date | None = None,
+) -> pd.DataFrame:
+    """Append per-week hours / logins / forum-interaction columns."""
     out = summary.copy()
-    this_week = weeks[-1] if weeks else None
-    prior_week = weeks[-2] if len(weeks) >= 2 else None
+    for wk in weeks:
+        label_prefix = f"W{wk}"
+        for wide, suffix in (
+            (hours_wide, "hours"), (logins_delta_wide, "logins"), (forum_wide, "forum"),
+        ):
+            label = f"{label_prefix}_{suffix}"
+            if not wide.empty and wk in wide.columns:
+                col = wide[wk].rename(label)
+                out = out.merge(col, left_on="student_code", right_index=True, how="left")
+            else:
+                out[label] = pd.NA
 
-    def daily_avg_for(week_key, denom):
-        if week_key is None or weekly_hits.empty or week_key not in weekly_hits.columns:
-            return pd.Series(0.0, index=out.index)
-        col = weekly_hits[week_key]
-        merged = out["student_code"].map(col).fillna(0)
-        return (merged / denom).round(2)
-
-    # Prior week: always 7 days
-    out["prior_week_hits"] = out["student_code"].map(
-        weekly_hits[prior_week] if (prior_week and not weekly_hits.empty
-                                     and prior_week in weekly_hits.columns)
-        else pd.Series(dtype=int)
-    ).fillna(0).astype(int) if prior_week else 0
-    out["prior_week_daily_avg"] = (out["prior_week_hits"] / 7.0).round(2)
-
-    # Current week: divide by days elapsed within the week
-    if this_week is not None:
-        this_monday = date.fromisocalendar(this_week[0], this_week[1], 1)
-        days_elapsed = max(1, min(7, (reference_date - this_monday).days + 1))
-        out["this_week_hits"] = out["student_code"].map(
-            weekly_hits[this_week] if (not weekly_hits.empty
-                                        and this_week in weekly_hits.columns)
-            else pd.Series(dtype=int)
-        ).fillna(0).astype(int)
-        out["this_week_daily_avg"] = (out["this_week_hits"] / days_elapsed).round(2)
-    else:
-        out["this_week_hits"] = 0
-        out["this_week_daily_avg"] = 0.0
-
-    return out
-
-
-def append_weekly_columns(summary: pd.DataFrame,
-                          weekly_hits: pd.DataFrame,
-                          weekly_active: pd.DataFrame,
-                          weeks: list[tuple[int, int]],
-                          block_start_date: date | None = None) -> pd.DataFrame:
-    """Append per-week hits and active-days columns to the per-student summary.
-
-    Column names use block-relative week numbers (W1 = block start week,
-    W0 = orientation, W-1 = earlier) when block_start_date is supplied;
-    otherwise fall back to ISO week numbering (W{NN}).
-    """
-    out = summary.copy()
-    for (yr, wk) in weeks:
-        if block_start_date is not None:
-            label = block_week_colname(yr, wk, block_start_date, "hits")
-            label2 = block_week_colname(yr, wk, block_start_date, "active_days")
-        else:
-            label = f"W{wk:02d}_hits"
-            label2 = f"W{wk:02d}_active_days"
-
-        if not weekly_hits.empty and (yr, wk) in weekly_hits.columns:
-            col = weekly_hits[(yr, wk)].rename(label)
-            out = out.merge(col, left_on="student_code", right_index=True, how="left")
-        else:
-            out[label] = 0
-        out[label] = out[label].fillna(0).astype(int)
-
-        if not weekly_active.empty and (yr, wk) in weekly_active.columns:
-            col2 = weekly_active[(yr, wk)].rename(label2)
-            out = out.merge(col2, left_on="student_code", right_index=True, how="left")
-        else:
-            out[label2] = 0
-        out[label2] = out[label2].fillna(0).astype(int)
-
+            if suffix == "logins" and wk == 0:
+                # Week 0 is the pre-teaching baseline snapshot — there's no
+                # prior week to diff against, so its "login count" is
+                # genuinely undefined, not zero. Leave as NaN rather than
+                # implying the student logged in 0 times that week.
+                continue
+            if suffix == "hours":
+                out[label] = out[label].fillna(0).round(2)
+            else:
+                out[label] = out[label].fillna(0).astype("Int64")
     return out
