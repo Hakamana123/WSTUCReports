@@ -162,7 +162,11 @@ with st.spinner("Parsing files…"):
         for f in login_files:
             df, w_start, w_end = p_login.parse_with_window(_save_upload(f))
             if w_start is None:
-                login_warnings.append(f.name)
+                login_warnings.append((f.name, "couldn't detect a date window"))
+            else:
+                span_warn = metrics.check_window_span(w_start, w_end)
+                if span_warn:
+                    login_warnings.append((f.name, span_warn))
             login_snapshots.append((df, w_start, w_end))
 
         hours_snapshots = []
@@ -170,17 +174,34 @@ with st.spinner("Parsing files…"):
         for f in hours_files:
             df, w_start, w_end = p_hours.parse_with_window(_save_upload(f))
             if w_start is None:
-                hours_warnings.append(f.name)
+                hours_warnings.append((f.name, "couldn't detect a date window"))
+            else:
+                span_warn = metrics.check_window_span(w_start, w_end)
+                if span_warn:
+                    hours_warnings.append((f.name, span_warn))
             hours_snapshots.append((df, w_start, w_end))
 
         forum_snapshots = []
         forum_warnings = []
         for f in (forum_files or []):
-            parsed = p_forum.parse(_save_upload(f))
+            # Forums data is optional context — a bad file here (wrong
+            # report type, mangled export) should warn and be skipped,
+            # not halt the entire run like a failure in the required
+            # class-list / login / hours files does.
+            try:
+                parsed = p_forum.parse(_save_upload(f))
+            except ValueError as fe:
+                forum_warnings.append((f.name, f"skipped — {fe}"))
+                continue
             totals = p_forum.per_student_totals(parsed)
-            if parsed["window_start"] is None:
-                forum_warnings.append(f.name)
-            forum_snapshots.append((totals, parsed["window_start"], parsed["window_end"]))
+            w_start, w_end = parsed["window_start"], parsed["window_end"]
+            if w_start is None:
+                forum_warnings.append((f.name, "couldn't detect a date window"))
+            else:
+                span_warn = metrics.check_window_span(w_start, w_end)
+                if span_warn:
+                    forum_warnings.append((f.name, span_warn))
+            forum_snapshots.append((totals, w_start, w_end))
 
         if grade_file:
             grade_parsed = p_grade.parse(_save_upload(grade_file))
@@ -189,9 +210,14 @@ with st.spinner("Parsing files…"):
             grade_summary = None
 
         scorm_tables = {}
+        scorm_warnings = []
         for f in (scorm_files or []):
+            # SCORM reports are optional too — same warn-and-skip policy.
             module_title = Path(f.name).stem.replace("_", " ")
-            scorm_tables[f.name] = p_scorm.parse(_save_upload(f), module_title=module_title)
+            try:
+                scorm_tables[f.name] = p_scorm.parse(_save_upload(f), module_title=module_title)
+            except Exception as se:
+                scorm_warnings.append((f.name, f"skipped — {se}"))
 
     except Exception as e:
         st.error(f"Failed to parse one of the files: {e}")
@@ -200,14 +226,10 @@ with st.spinner("Parsing files…"):
 
 for label, warn_list in (
     ("Login Report", login_warnings), ("Subject Activity Overview", hours_warnings),
-    ("User Activity in Forums", forum_warnings),
+    ("User Activity in Forums", forum_warnings), ("SCORM report", scorm_warnings),
 ):
-    if warn_list:
-        st.warning(
-            f"Couldn't detect a date window in: {', '.join(warn_list)} "
-            f"({label}). These files were skipped for week-tagging — "
-            f"check the export still has its date-range header/text intact."
-        )
+    for fname, reason in warn_list:
+        st.warning(f"**{label}** — `{fname}`: {reason}")
 
 # ------------------------------------------------------------------
 # Build weekly tables + classify
