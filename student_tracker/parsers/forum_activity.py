@@ -55,12 +55,22 @@ def _cells_by_idx(row) -> dict[int, str]:
     return out
 
 
+EXPECTED_SHEET_NAME = "Accesses by Forum"
+
+
 def _all_rows(path: str):
     tree = ET.parse(path)
     root = tree.getroot()
     ws = root.find("ss:Worksheet", NS)
     table = ws.find("ss:Table", NS)
     return table.findall("ss:Row", NS)
+
+
+def _sheet_name(path: str) -> str | None:
+    tree = ET.parse(path)
+    root = tree.getroot()
+    ws = root.find("ss:Worksheet", NS)
+    return ws.get(SS + "Name") if ws is not None else None
 
 
 def _extract_student_code(cell_value: str) -> str | None:
@@ -182,7 +192,22 @@ def parse(path: str) -> dict:
     not a reliable way to tell the two tables apart. If only one table
     cluster is found, it's treated as Access (the more commonly populated
     of the two) and 'messages' comes back empty.
+
+    Raises ValueError if the file's internal sheet name doesn't match a
+    User Activity in Forums export — most commonly caused by uploading a
+    Subject Activity Overview file (sheet name 'Course Activity Overview')
+    into the forums slot by mistake.
     """
+    sheet_name = _sheet_name(path)
+    if sheet_name and sheet_name.strip() != EXPECTED_SHEET_NAME:
+        raise ValueError(
+            f"this file's internal sheet is named '{sheet_name}', not "
+            f"'{EXPECTED_SHEET_NAME}' — it doesn't look like a User "
+            f"Activity in Forums export. If this came from the Subject "
+            f"Activity Overview report instead, upload it in that slot, "
+            f"not this one."
+        )
+
     rows = _all_rows(path)
     markers = _find_marker_rows(rows)
 
