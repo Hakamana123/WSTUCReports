@@ -177,11 +177,13 @@ def classify(
                 segments.append(SEG_S7)
             continue
 
-        # S8 — Long-tail dropout: active at some point in the data window,
-        # inactive in both of the last two weeks.
-        total_hours = float(row.get("total_hours", 0) or 0)
-        total_period_logins = float(row.get("total_period_logins", 0) or 0)
-        if total_hours > 0 or total_period_logins > 0:
+        # S8 — Long-tail dropout: active at some point during TEACHING
+        # weeks, inactive in both of the last two weeks. Deliberately
+        # excludes Week 0 (pre-teaching baseline) activity — a student
+        # who only showed up before teaching started and never during it
+        # is not a "dropout from teaching", and total_hours /
+        # total_period_logins would wrongly include their W0 numbers.
+        if any(_is_active(hours_wide, logins_wide, sc, w) for w in teaching_weeks):
             segments.append(SEG_S8)
             continue
 
