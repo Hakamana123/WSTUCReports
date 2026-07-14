@@ -44,12 +44,22 @@ def _cells_by_idx(row) -> dict[int, str]:
     return out
 
 
+EXPECTED_SHEET_NAME = "Course Activity Overview"
+
+
 def _all_rows(path: str):
     tree = ET.parse(path)
     root = tree.getroot()
     ws = root.find("ss:Worksheet", NS)
     table = ws.find("ss:Table", NS)
     return table.findall("ss:Row", NS)
+
+
+def _sheet_name(path: str) -> str | None:
+    tree = ET.parse(path)
+    root = tree.getroot()
+    ws = root.find("ss:Worksheet", NS)
+    return ws.get(SS + "Name") if ws is not None else None
 
 
 def _parse_short_date(s: str) -> date | None:
@@ -83,7 +93,22 @@ def parse(path: str) -> pd.DataFrame:
     Locates the 'Student Overview' per-student table by its header row
     (containing both 'Student ID' and a header with 'Hours' in it), then
     reads rows until a blank row / footer is hit.
+
+    Raises ValueError if the file's internal sheet name doesn't match a
+    Subject Activity Overview export — most commonly caused by uploading a
+    User Activity in Forums file (sheet name 'Accesses by Forum') into
+    this slot by mistake.
     """
+    sheet_name = _sheet_name(path)
+    if sheet_name and sheet_name.strip() != EXPECTED_SHEET_NAME:
+        raise ValueError(
+            f"this file's internal sheet is named '{sheet_name}', not "
+            f"'{EXPECTED_SHEET_NAME}' — it doesn't look like a Subject "
+            f"Activity Overview export. If this came from the User "
+            f"Activity in Forums report instead, upload it in that slot, "
+            f"not this one."
+        )
+
     rows = _all_rows(path)
 
     header_idx = None
