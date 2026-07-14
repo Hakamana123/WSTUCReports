@@ -73,6 +73,33 @@ def block_week_for_date(d: date, block_start_date: date) -> int:
     yr, wk = iso_week_key(d)
     return block_week_number(yr, wk, block_start_date)
 
+def check_window_span(
+    window_start: date | None, window_end: date | None, expected_days: int = 7, tolerance: int = 2
+) -> str | None:
+    """Return a warning string if a file's detected date window isn't close
+    to one week, or None if it looks fine.
+
+    A combined multi-week pull (e.g. someone narrows the Blackboard date
+    picker to 'Week 0 to Week 1' instead of exporting each week
+    separately) can't be split back into individual weeks after the fact
+    — the export already aggregated the data before we ever see it. The
+    best we can do is catch it loudly at upload time rather than let it
+    silently misattribute everything to whichever week window_start falls
+    into.
+    """
+    if window_start is None or window_end is None:
+        return None
+    span_days = (window_end - window_start).days + 1
+    if abs(span_days - expected_days) > tolerance:
+        return (
+            f"date range is {span_days} days ({window_start} to {window_end}), "
+            f"not ~{expected_days} — this looks like a multi-week export, not "
+            f"a single narrowed week. Re-export with the date picker narrowed "
+            f"to one week; a combined pull can't be split back into "
+            f"individual weeks after the fact."
+        )
+    return None
+
 
 # ---------------------------------------------------------------------
 # Stacking weekly snapshot uploads into wide (student_code x week) tables
@@ -209,17 +236,15 @@ def per_student_summary(
     base["total_logins"] = base["total_logins"].fillna(0).astype(int)
 
     # --- Weekly totals: hours, logins, forum interactions ---
-    def _row_totals(wide: pd.DataFrame, col_name: str):
+    def _row_totals(wide: pd.DataFrame, col_name: str) -> pd.Series:
         if wide.empty:
-            base[col_name] = 0
-            return
+            return pd.Series(0.0, index=base.index)
         totals = wide.sum(axis=1).rename(col_name)
         base_local = base.merge(totals, left_on="student_code", right_index=True, how="left")
-        base_local[col_name] = base_local[col_name].fillna(0)
-        return base_local[col_name]
+        return base_local[col_name].fillna(0)
 
     base["total_hours"] = _row_totals(hours_wide, "total_hours")
-    base["total_hours"] = base["total_hours"].fillna(0).round(2)
+    base["total_hours"] = base["total_hours"].round(2)
 
     if not logins_delta_wide.empty:
         login_totals = logins_delta_wide.sum(axis=1, skipna=True).rename("total_period_logins")
