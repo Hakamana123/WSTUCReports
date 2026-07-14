@@ -95,7 +95,16 @@ def parse(path: str) -> pd.DataFrame:
         "TOTAL LOGINS": "total_logins",
     })
     out["student_code"] = out["student_code"].astype(str).str.strip()
-    out["last_login_date"] = pd.to_datetime(out["last_login_date"], errors="coerce")
+    # Real date cells arrive from openpyxl as already-parsed datetime objects;
+    # only the 'NEVER' sentinel (and occasional blanks) are strings. Replacing
+    # those explicitly avoids pandas' noisy mixed-type format-inference
+    # warning — and matters more than cosmetics, since this file's dates
+    # aren't ambiguous DD/MM strings to begin with, so there's no format to
+    # get wrong, just a type to normalise.
+    raw_dates = out["last_login_date"]
+    non_date_mask = raw_dates.apply(lambda v: not isinstance(v, (pd.Timestamp, datetime, date)))
+    cleaned = raw_dates.mask(non_date_mask)
+    out["last_login_date"] = pd.to_datetime(cleaned, errors="coerce")
     out["total_logins"] = pd.to_numeric(out["total_logins"], errors="coerce").fillna(0).astype(int)
     out["days_since_last_login"] = pd.to_numeric(out["days_since_last_login"], errors="coerce")
     out = out.drop_duplicates(subset=["student_code"], keep="first").reset_index(drop=True)
