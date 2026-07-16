@@ -87,6 +87,7 @@ def parse_classlist(file) -> pd.DataFrame:
             all_rows.append(
                 {
                     "First Name": get_val("first_name"),
+                    "Preferred Name": get_val("preferred_name"),
                     "Last Name": get_val("last_name"),
                     "Student ID": student_id,
                     "Course Code": course_val,
@@ -177,6 +178,7 @@ if discipline_files and gedu_files:
         output = pd.DataFrame(
             {
                 "First Name": merged["First Name_GEDU"],
+                "Preferred Name": merged["Preferred Name_GEDU"],
                 "Last Name": merged["Last Name_GEDU"],
                 "Student ID": merged["Student ID"],
                 "Course Code": merged["Course Code_GEDU"],
