@@ -295,11 +295,21 @@ def parse_usage_file(file_bytes):
     return data
 
 def merge_usage_files(usage_file_list):
+    """
+    Merge day-records from multiple usage exports. When the same date appears in
+    more than one file (exports commonly overlap at their boundary day), keep the
+    version with the greater total hits. Blackboard hit counts for a given day only
+    accumulate over time, so the richer record is always the fresher export - this
+    makes the merge independent of upload order. (Previously last-file-won, which
+    silently zeroed out a boundary day if files were uploaded in the "wrong" order.)
+    """
     merged = {}
     for file_bytes in usage_file_list:
         single = parse_usage_file(file_bytes)
         for date_key, student_hits in single.items():
-            merged[date_key] = student_hits
+            existing = merged.get(date_key)
+            if existing is None or sum(student_hits.values()) >= sum(existing.values()):
+                merged[date_key] = student_hits
     return merged
 
 # ===========================================================================
@@ -499,14 +509,31 @@ def detect_current_week(merged_usage, override_latest=None):
     days_in = (latest - week_start).days + 1
     return week_num, days_in, latest
 
-def bucket_by_week(merged_usage, students, max_week, max_date=None):
-    hits = {sid: {f'w{i}': 0 for i in range(1, max_week + 1)} for sid in students}
+def compute_min_week(merged_usage, floor_week=-8):
+    """
+    Scan merged usage data for the earliest week number (relative to WEEK1_START)
+    that has genuine (non-zero) activity, so pre-teaching weeks (W0, W-1, ...) can be
+    bucketed alongside teaching weeks instead of being silently discarded.
+    floor_week caps how far back this can reach, as a guard against stray/unrelated
+    historical rows. Returns 1 if no pre-teaching activity is found.
+    """
+    min_week = 1
+    for (y, m, d), student_hits in merged_usage.items():
+        if not any(v > 0 for v in student_hits.values()):
+            continue
+        dt = date(y, m, d)
+        week_num = ((dt - WEEK1_START).days // 7) + 1
+        if week_num < min_week:
+            min_week = week_num
+    return max(min_week, floor_week)
+
+def bucket_by_week(merged_usage, students, max_week, max_date=None, min_week=1):
+    hits = {sid: {f'w{i}': 0 for i in range(min_week, max_week + 1)} for sid in students}
     for (y, m, d), student_hits in merged_usage.items():
         dt = date(y, m, d)
-        if dt < WEEK1_START: continue
         if max_date and dt > max_date: continue
         week_num = ((dt - WEEK1_START).days // 7) + 1
-        if week_num > max_week: continue
+        if week_num > max_week or week_num < min_week: continue
         wkey = f'w{week_num}'
         for sid, h in student_hits.items():
             if sid in hits: hits[sid][wkey] += h
@@ -519,9 +546,10 @@ def week_date_range(week_num):
 # ===========================================================================
 # SEGMENTATION
 # ===========================================================================
-def classify(students, login, hits, current_week, prev_days, curr_days):
+def classify(students, login, hits, current_week, prev_days, curr_days, min_week=1):
     seg = {}
-    week_keys = [f'w{i}' for i in range(1, current_week + 1)]
+    week_keys = [f'w{i}' for i in range(1, current_week + 1)]   # teaching weeks only (W1..current)
+    pre_keys = [f'w{i}' for i in range(min_week, 1)]            # pre-teaching weeks (W0, W-1, ...); empty if min_week >= 1
     curr_key = f'w{current_week}'
     prev_key = f'w{current_week - 1}' if current_week > 1 else None
     s2_threshold = (current_week - 1) * 7 + curr_days
@@ -529,13 +557,18 @@ def classify(students, login, hits, current_week, prev_days, curr_days):
     s3_high = s2_threshold - 1
     for sid in students:
         h = hits[sid]; l = login.get(sid)
-        zero_usage = all(h[k] == 0 for k in week_keys)
+        zero_teaching_usage = all(h.get(k, 0) == 0 for k in week_keys)
+        had_pre_teaching_hits = any(h.get(k, 0) > 0 for k in pre_keys)
         days_since = None; in_window = False; never_flag = False
         if l is not None:
             days_since = l['days_since']; in_window = l['in_window']; never_flag = l['never']
-        if zero_usage and (never_flag or l is None): seg[sid] = 'S1'; continue
-        if zero_usage and days_since is not None and days_since >= s2_threshold: seg[sid] = 'S2'; continue
-        if zero_usage: seg[sid] = 'S2'; continue
+        # Direct usage-file evidence takes priority over login-derived inference: a student
+        # who was active pre-teaching and silent since teaching started is a pre-teaching
+        # ghost regardless of what the login report's days-since says.
+        if zero_teaching_usage and had_pre_teaching_hits: seg[sid] = 'S2'; continue
+        if zero_teaching_usage and (never_flag or l is None): seg[sid] = 'S1'; continue
+        if zero_teaching_usage and days_since is not None and days_since >= s2_threshold: seg[sid] = 'S2'; continue
+        if zero_teaching_usage: seg[sid] = 'S2'; continue
         if (days_since is not None and s3_low <= days_since <= s3_high and not in_window): seg[sid] = 'S3'; continue
         if h[curr_key] == 0:
             if any(h[k] > 0 for k in week_keys[:-1]): seg[sid] = 'S4'; continue
@@ -544,7 +577,13 @@ def classify(students, login, hits, current_week, prev_days, curr_days):
             if prev == 0 and curr > 0: seg[sid] = 'S5'; continue
             if prev > 0 and curr > 0:
                 seg[sid] = 'S6' if (curr / curr_days) < (prev / prev_days) * 0.5 else 'S7'; continue
-        seg[sid] = 'S1'
+        else:
+            # Week 1: no prior teaching week to compare against. Reaching this point means
+            # zero_teaching_usage was False (i.e. h[curr_key] > 0) - a late arrival, not
+            # "never engaged". This branch was previously missing, which sent active W1
+            # students straight to S1.
+            seg[sid] = 'S5'; continue
+        seg[sid] = 'S1'  # defensive fallback; should be unreachable given the branches above
     return seg, s2_threshold, (s3_low, s3_high)
 
 # ===========================================================================
@@ -1458,13 +1497,17 @@ def _write_unsatisfactory_sheet(wb, gc_data, gc_labels, students, seg, current_w
 # MAIN ENGAGEMENT WORKBOOK
 # ===========================================================================
 def build_workbook(subject_code, students, login, hits, seg, current_week, prev_days, curr_days,
-                   is_partial, latest_date, login_window, s2_threshold, s3_range):
+                   is_partial, latest_date, login_window, s2_threshold, s3_range, min_week=1):
     wb = Workbook(); wb.remove(wb.active)
     enrolled = len(students)
     counts = {f'S{i}': 0 for i in range(1, 8)}
     for s in seg.values(): counts[s] = counts.get(s, 0) + 1
-    week_keys = [f'w{i}' for i in range(1, current_week + 1)]
+    week_keys = [f'w{i}' for i in range(1, current_week + 1)]      # teaching weeks only (used for totals/rankings/trend logic)
     week_labels = [f'W{i}' for i in range(1, current_week + 1)]
+    pre_week_keys = [f'w{i}' for i in range(min_week, 1)]          # pre-teaching weeks, e.g. W0, W-1 (display only)
+    pre_week_labels = [f'W{i}' for i in range(min_week, 1)]
+    all_week_keys = pre_week_keys + week_keys                       # full timeline for weekly-breakdown display columns
+    all_week_labels = pre_week_labels + week_labels
     curr_key = f'w{current_week}'
     prev_key = f'w{current_week - 1}' if current_week > 1 else None
     w1_start, w1_end = week_date_range(1)
@@ -1481,8 +1524,8 @@ def build_workbook(subject_code, students, login, hits, seg, current_week, prev_
     week_descriptions = ', '.join(f'W{i}={week_date_range(i)[0].strftime("%b %-d")}-{week_date_range(i)[1].strftime("%-d")}' for i in range(1, current_week + 1))
 
     seg_descriptions = {
-        'S1': f'Never engaged: never logged in at all (or no login record) AND zero hits across W1 through W{current_week}.',
-        'S2': f'Pre-teaching ghosts: last login was before {w1_start.strftime("%b %-d")} (i.e. logged in during pre-teaching but never returned) AND zero hits all weeks.',
+        'S1': f'Never engaged: never logged in at all (or no login record) AND zero hits across pre-teaching and W1 through W{current_week}.',
+        'S2': f'Pre-teaching ghosts: zero hits across teaching weeks (W1+) AND either had usage-file hits before {w1_start.strftime("%b %-d")} (direct evidence) or a last login before {w1_start.strftime("%b %-d")} per the login report.',
         'S3': 'W1 early drop-offs: last login fell in W1 and they have not returned in the current login window.',
         'S4': f'Active then absent in W{current_week}: had hits in a previous week but zero in W{current_week} to date. Split into "Just Dropped" (W{current_week-1}>0) and "Long Silent" (W1-W{current_week-2} active, W{current_week-1}+W{current_week} zero).' if current_week >= 3 else f'Active then absent in W{current_week}.',
         'S5': f'Late arrivals + W{current_week-1} returners: zero hits in W{current_week-1} but appearing in W{current_week}.' if current_week > 1 else 'Late arrivals: appearing in W1.',
@@ -1515,17 +1558,25 @@ def build_workbook(subject_code, students, login, hits, seg, current_week, prev_
         s3e = (ds is not None and s3_range[0] <= ds <= s3_range[1] and not iw)
         s4e = (h[curr_key] == 0 and any(h[k] > 0 for k in week_keys[:-1]))
         if s3e and s4e: s3_or_s4_eligible += 1
+    pre_week_descriptions = ', '.join(f'W{i}={week_date_range(i)[0].strftime("%b %-d")}-{week_date_range(i)[1].strftime("%-d")}' for i in range(min_week, 1))
     note_row = total_row + 2
-    notes = [f'Enrolled (after exclusions): {enrolled}', f'Login window: {login_window}', f'Teaching weeks: {week_descriptions}',
+    partial_warning_text = (
+        f'PARTIAL WEEK WARNING: W{current_week} has {curr_days} days of data. S4 inflated by timing. S7 understated. S5 includes both true late arrivals and W{current_week-1} returners. Do NOT use S4 list for outreach until W{current_week} closes.'
+        if is_partial else f'Full week W{current_week}: standard run.'
+    )
+    notes = [f'Enrolled (after exclusions): {enrolled}', f'Login window: {login_window}', f'Teaching weeks: {week_descriptions}'] + (
+        [f'Pre-teaching weeks (usage data shown for context; not counted in teaching-week totals or rankings): {pre_week_descriptions}'] if pre_week_keys else []
+    ) + [
         f'Comparison pair: {prev_label} vs {curr_label}. Daily averages normalised by actual day count.',
-        (f'PARTIAL WEEK WARNING: W{current_week} has {curr_days} days of data. S4 inflated by timing. S7 understated. S5 includes both true late arrivals and W{current_week-1} returners. Do NOT use S4 list for outreach until W{current_week} closes.' if is_partial else f'Full week W{current_week}: standard run.'),
+        partial_warning_text,
         f'Days-since thresholds: S2 ≥ {s2_threshold} days (last login on or before {(w1_start - timedelta(days=1)).strftime("%b %-d")}); S3 in {s3_range[0]}-{s3_range[1]} days (last login {w1_start.strftime("%b %-d")}-{w1_end.strftime("%-d")}).',
-        f'S3 / S4 dual-eligible students: {s3_or_s4_eligible}.', f'Students in class list but missing from login report: {sum(1 for s in students if s not in login)}.', 'Leaderboard ranking: hits per enrolled student (weighted engagement).']
+        f'S3 / S4 dual-eligible students: {s3_or_s4_eligible}.', f'Students in class list but missing from login report: {sum(1 for s in students if s not in login)}.', 'Leaderboard ranking: hits per enrolled student (weighted engagement, teaching weeks only).']
     for i, n in enumerate(notes):
+        is_warning = (n == partial_warning_text)
         c = ws.cell(note_row+i, 1, n); ws.merge_cells(start_row=note_row+i, start_column=1, end_row=note_row+i, end_column=6)
-        c.font = Font(name='Arial', size=9, italic=(i==4), color=(RED if i==4 else '2C3E50'), bold=(i==4))
+        c.font = Font(name='Arial', size=9, italic=is_warning, color=(RED if is_warning else '2C3E50'), bold=is_warning)
         c.alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
-        ws.row_dimensions[note_row+i].height = 32 if i==4 else 16
+        ws.row_dimensions[note_row+i].height = 32 if is_warning else 16
     autosize(ws, [10,28,10,14,18,70]); ws.freeze_panes = 'A6'
 
     def make_seg_tab(code, label):
@@ -1545,14 +1596,20 @@ def build_workbook(subject_code, students, login, hits, seg, current_week, prev_
 
     # S2
     ws, sids = make_seg_tab('S2','Pre-Teaching Ghosts')
-    write_tab_header(ws,'S2 — Pre-Teaching Ghosts',f'{len(sids)} students with zero hits all weeks AND last login pre-{w1_start.strftime("%b %-d")} or NEVER',seg_descriptions['S2'],11,'S2')
-    write_col_headers(ws,['Surname','First Name','Student ID','Course','Disc. Class','Disc. Teacher','Email','Total Logins','Days Since','Last Login','Action Required'],row=5)
+    write_tab_header(ws,'S2 — Pre-Teaching Ghosts',f'{len(sids)} students with zero hits across teaching weeks AND (pre-teaching usage-file activity OR last login pre-{w1_start.strftime("%b %-d")} OR NEVER)',seg_descriptions['S2'],12,'S2')
+    write_col_headers(ws,['Surname','First Name','Student ID','Course','Disc. Class','Disc. Teacher','Email','Pre-Teaching Hits','Total Logins','Days Since','Last Login','Action Required'],row=5)
     rows = []
     for sid in sids:
-        st = students[sid]; days, last_str, total = fmt_login(login.get(sid))
-        action = 'Single login only — likely orientation visit; escalate' if total == 1 else 'Pre-teaching login then disengaged — urgent outreach'
-        rows.append([st['last'],st['first'],sid,st['course'],st.get('discipline_class',''),st.get('discipline_teacher',''),st['email'],total,days,last_str,action])
-    write_data_rows(ws, rows, start_row=6); autosize(ws,[22,18,12,10,10,18,38,12,12,14,50]); ws.freeze_panes = 'A6'
+        st = students[sid]; h = hits[sid]; days, last_str, total = fmt_login(login.get(sid))
+        pre_hits = sum(h.get(k, 0) for k in pre_week_keys)
+        if pre_hits > 0:
+            action = 'Active pre-teaching, silent since teaching started — urgent outreach'
+        elif total == 1:
+            action = 'Single login only — likely orientation visit; escalate'
+        else:
+            action = 'Pre-teaching login then disengaged — urgent outreach'
+        rows.append([st['last'],st['first'],sid,st['course'],st.get('discipline_class',''),st.get('discipline_teacher',''),st['email'],pre_hits,total,days,last_str,action])
+    write_data_rows(ws, rows, start_row=6); autosize(ws,[22,18,12,10,10,18,38,14,12,12,14,50]); ws.freeze_panes = 'A6'
 
     # S3
     ws, sids = make_seg_tab('S3','W1 Drop-Offs')
@@ -1574,8 +1631,8 @@ def build_workbook(subject_code, students, login, hits, seg, current_week, prev_
             if h[prev_key] > 0 and h[curr_key] == 0: just_dropped.append(sid)
             else: long_silent.append(sid)
     else: long_silent = list(sids)
-    write_tab_header(ws,f'S4 — Active Then Absent in W{current_week}',f'{len(sids)} total  •  Just Dropped: {len(just_dropped)}  •  Long Silent: {len(long_silent)}',seg_descriptions['S4'],current_week+9,'S4')
-    headers_s4 = ['Surname','First Name','Student ID','Course','Disc. Class','Disc. Teacher','Email'] + week_labels[:-1] + ['Group','Priority']
+    headers_s4 = ['Surname','First Name','Student ID','Course','Disc. Class','Disc. Teacher','Email'] + pre_week_labels + week_labels[:-1] + ['Group','Priority']
+    write_tab_header(ws,f'S4 — Active Then Absent in W{current_week}',f'{len(sids)} total  •  Just Dropped: {len(just_dropped)}  •  Long Silent: {len(long_silent)}',seg_descriptions['S4'],len(headers_s4),'S4')
     write_col_headers(ws, headers_s4, row=5)
     def priority_for(h, group):
         if group == 'Just Dropped': basis = h[prev_key]
@@ -1591,7 +1648,7 @@ def build_workbook(subject_code, students, login, hits, seg, current_week, prev_
         for sid in sid_list:
             st = students[sid]; h = hits[sid]
             row = [st['last'],st['first'],sid,st['course'],st.get('discipline_class',''),st.get('discipline_teacher',''),st['email']]
-            row += [h[k] for k in week_keys[:-1]] + [group, priority_for(h, group)]
+            row += [h.get(k, 0) for k in pre_week_keys] + [h[k] for k in week_keys[:-1]] + [group, priority_for(h, group)]
             out.append(row)
         pri_order = {'High':0,'Medium':1,'Standard':2}
         def sort_key(r):
@@ -1613,7 +1670,7 @@ def build_workbook(subject_code, students, login, hits, seg, current_week, prev_
         c.font = Font(name='Arial',size=10,bold=True,color=WHITE); c.fill = PatternFill('solid',start_color=PURPLE); c.alignment = Alignment(horizontal='left',vertical='center',indent=1)
         ws.row_dimensions[current_row].height = 22; current_row += 1
         write_data_rows(ws, ls_rows, start_row=current_row)
-    autosize(ws,[22,18,12,10,10,18,38]+[8]*(current_week-1)+[14,12]); ws.freeze_panes = 'A6'
+    autosize(ws,[22,18,12,10,10,18,38]+[8]*len(pre_week_labels)+[8]*(current_week-1)+[14,12]); ws.freeze_panes = 'A6'
 
     # S5
     ws, sids = make_seg_tab('S5','Late Arrivals')
@@ -1633,24 +1690,24 @@ def build_workbook(subject_code, students, login, hits, seg, current_week, prev_
 
     # S6
     ws, sids = make_seg_tab('S6','Fading Engagers')
-    write_tab_header(ws,'S6 — Fading Engagers',f'{len(sids)} students whose daily-average dropped 50%+ from W{current_week-1} to W{current_week}',seg_descriptions['S6'],current_week+9,'S6')
-    headers_s6 = ['Surname','First Name','Student ID','Course','Disc. Class','Disc. Teacher','Email'] + week_labels + [f'W{current_week-1} Daily',f'W{current_week} Daily']
+    headers_s6 = ['Surname','First Name','Student ID','Course','Disc. Class','Disc. Teacher','Email'] + all_week_labels + [f'W{current_week-1} Daily',f'W{current_week} Daily']
+    write_tab_header(ws,'S6 — Fading Engagers',f'{len(sids)} students whose daily-average dropped 50%+ from W{current_week-1} to W{current_week}',seg_descriptions['S6'],len(headers_s6),'S6')
     write_col_headers(ws, headers_s6, row=5)
     rows = []
     for sid in sids:
         st = students[sid]; h = hits[sid]
         row = [st['last'],st['first'],sid,st['course'],st.get('discipline_class',''),st.get('discipline_teacher',''),st['email']]
-        row += [h[k] for k in week_keys] + [round(h[prev_key]/prev_days,1), round(h[curr_key]/curr_days,1)]
+        row += [h.get(k, 0) for k in all_week_keys] + [round(h[prev_key]/prev_days,1), round(h[curr_key]/curr_days,1)]
         rows.append(row)
     rows.sort(key=lambda r: -(r[-2]-r[-1])); write_data_rows(ws, rows, start_row=6)
-    autosize(ws,[22,18,12,10,10,18,38]+[8]*current_week+[11,11]); ws.freeze_panes = 'A6'
+    autosize(ws,[22,18,12,10,10,18,38]+[8]*len(all_week_labels)+[11,11]); ws.freeze_panes = 'A6'
 
     # S7
     ws, sids = make_seg_tab('S7','Sustained Participants')
+    headers_s7 = ['Surname','First Name','Student ID','Course','Disc. Class','Disc. Teacher','Email'] + all_week_labels + [f'W{current_week-1} Daily',f'W{current_week} Daily','Trend']
     write_tab_header(ws,'S7 — Sustained Participants',
         (f'{len(sids)} students maintaining engagement through W{current_week} (UNDERSTATED — partial week)' if is_partial else f'{len(sids)} students maintaining engagement through W{current_week}'),
-        seg_descriptions['S7'],current_week+10,'S7')
-    headers_s7 = ['Surname','First Name','Student ID','Course','Disc. Class','Disc. Teacher','Email'] + week_labels + [f'W{current_week-1} Daily',f'W{current_week} Daily','Trend']
+        seg_descriptions['S7'],len(headers_s7),'S7')
     write_col_headers(ws, headers_s7, row=5)
     rows = []
     for sid in sids:
@@ -1658,49 +1715,49 @@ def build_workbook(subject_code, students, login, hits, seg, current_week, prev_
         prev_avg = h[prev_key]/prev_days; curr_avg = h[curr_key]/curr_days
         trend = 'Growing' if curr_avg > prev_avg*1.1 else ('Stable' if curr_avg >= prev_avg*0.85 else 'Slight Dip')
         row = [st['last'],st['first'],sid,st['course'],st.get('discipline_class',''),st.get('discipline_teacher',''),st['email']]
-        row += [h[k] for k in week_keys] + [round(prev_avg,1), round(curr_avg,1), trend]
+        row += [h.get(k, 0) for k in all_week_keys] + [round(prev_avg,1), round(curr_avg,1), trend]
         rows.append(row)
     rows.sort(key=lambda r: -r[-2]); write_data_rows(ws, rows, start_row=6)
-    autosize(ws,[22,18,12,10,10,18,38]+[8]*current_week+[11,11,12]); ws.freeze_panes = 'A6'
+    autosize(ws,[22,18,12,10,10,18,38]+[8]*len(all_week_labels)+[11,11,12]); ws.freeze_panes = 'A6'
 
     # Program Leaderboard
     ws = wb.create_sheet('Program Leaderboard')
-    write_tab_header(ws,'Program Leaderboard','Ranked by hits per enrolled (weighted engagement)','Programs ordered by total hits divided by enrolled count. Gold/silver/bronze top 3.',6+current_week)
-    headers_pl = ['Rank','Course','Enrolled','Active','Active Rate %','Hits / Enrolled','Total Hits'] + week_labels
+    headers_pl = ['Rank','Course','Enrolled','Active','Active Rate %','Hits / Enrolled','Total Hits'] + all_week_labels
+    write_tab_header(ws,'Program Leaderboard','Ranked by hits per enrolled (weighted engagement, teaching weeks only)','Programs ordered by total teaching-week hits divided by enrolled count. Pre-teaching weeks (if any) are shown for context but excluded from the ranking. Gold/silver/bronze top 3.',len(headers_pl))
     write_col_headers(ws, headers_pl, row=5)
     prog = {}
     for sid, st in students.items():
         course = st['course'] or 'UNKNOWN'; h = hits[sid]
-        if course not in prog: prog[course] = {'enr':0,'act':0,'tot':0,**{k:0 for k in week_keys}}
+        if course not in prog: prog[course] = {'enr':0,'act':0,'tot':0,**{k:0 for k in all_week_keys}}
         prog[course]['enr'] += 1; total = sum(h[k] for k in week_keys)
         if total > 0: prog[course]['act'] += 1
         prog[course]['tot'] += total
-        for k in week_keys: prog[course][k] += h[k]
+        for k in all_week_keys: prog[course][k] += h.get(k, 0)
     plist = sorted(prog.items(), key=lambda kv: -(kv[1]['tot']/max(kv[1]['enr'],1)))
     rows = []
     for i, (course, p) in enumerate(plist, 1):
-        row = [i,course,p['enr'],p['act'],round(100*p['act']/max(p['enr'],1),1),round(p['tot']/max(p['enr'],1),1),p['tot']] + [p[k] for k in week_keys]
+        row = [i,course,p['enr'],p['act'],round(100*p['act']/max(p['enr'],1),1),round(p['tot']/max(p['enr'],1),1),p['tot']] + [p[k] for k in all_week_keys]
         rows.append(row)
     write_data_rows(ws, rows, start_row=6)
     for ri in range(6,6+len(rows)): ws.cell(ri,6).font = Font(name='Arial',size=10,bold=True)
     medals = ['FFD700','C0C0C0','CD7F32']
     for i in range(min(3,len(rows))):
         for ci in range(1,len(headers_pl)+1): ws.cell(6+i,ci).fill = PatternFill('solid',start_color=medals[i])
-    autosize(ws,[6,12,10,10,12,14,12]+[10]*current_week); ws.freeze_panes = 'A6'
+    autosize(ws,[6,12,10,10,12,14,12]+[10]*len(all_week_labels)); ws.freeze_panes = 'A6'
 
     # Top 20
     ws = wb.create_sheet('Top 20 Individual')
-    write_tab_header(ws,'Top 20 Individual Engagement',f'Ranked by total hits across W1-W{current_week}','Top 20 students by total hits with per-week breakdown.',8+current_week)
-    headers_t20 = ['Rank','Surname','First Name','Student ID','Course','Disc. Class','Disc. Teacher','Total'] + week_labels
+    headers_t20 = ['Rank','Surname','First Name','Student ID','Course','Disc. Class','Disc. Teacher','Total'] + all_week_labels
+    write_tab_header(ws,'Top 20 Individual Engagement',f'Ranked by total teaching-week hits across W1-W{current_week}','Top 20 students by total teaching-week hits, with pre-teaching weeks shown for context in the breakdown.',len(headers_t20))
     write_col_headers(ws, headers_t20, row=5)
     ranked = sorted(students.keys(), key=lambda s: -sum(hits[s][k] for k in week_keys))[:20]
     rows = []
     for i, sid in enumerate(ranked, 1):
         st = students[sid]; h = hits[sid]
-        row = [i,st['last'],st['first'],sid,st['course'],st.get('discipline_class',''),st.get('discipline_teacher',''),sum(h[k] for k in week_keys)] + [h[k] for k in week_keys]
+        row = [i,st['last'],st['first'],sid,st['course'],st.get('discipline_class',''),st.get('discipline_teacher',''),sum(h[k] for k in week_keys)] + [h.get(k, 0) for k in all_week_keys]
         rows.append(row)
     write_data_rows(ws, rows, start_row=6)
-    autosize(ws,[6,22,18,12,10,10,18,10]+[8]*current_week); ws.freeze_panes = 'A6'
+    autosize(ws,[6,22,18,12,10,10,18,10]+[8]*len(all_week_labels)); ws.freeze_panes = 'A6'
     return wb, counts
 
 # ===========================================================================
@@ -1709,9 +1766,13 @@ def build_workbook(subject_code, students, login, hits, seg, current_week, prev_
 def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, login, hits, seg,
                           current_week, prev_days, curr_days, is_partial, latest_date, login_window,
                           gc_data=None, gc_labels=None, extra_summary_cols=None,
-                          show_program_col_in_index=False):
-    week_keys = [f'w{i}' for i in range(1, current_week + 1)]
+                          show_program_col_in_index=False, min_week=1):
+    week_keys = [f'w{i}' for i in range(1, current_week + 1)]      # teaching weeks only
     week_labels = [f'W{i}' for i in range(1, current_week + 1)]
+    pre_week_keys = [f'w{i}' for i in range(min_week, 1)]           # pre-teaching weeks (display only)
+    pre_week_labels = [f'W{i}' for i in range(min_week, 1)]
+    all_week_keys = pre_week_keys + week_keys
+    all_week_labels = pre_week_labels + week_labels
     curr_key = f'w{current_week}'
     prev_key = f'w{current_week - 1}' if current_week > 1 else None
     seg_codes = [f'S{i}' for i in range(1, 8)]
@@ -1827,7 +1888,7 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
     base_headers = (
         ['Segment', 'Surname', 'First Name', 'Student ID', 'Course',
          'Disc. Subject', 'Disc. Class', 'Disc. Teacher', 'Email']
-        + week_labels + ['Total Hits']
+        + all_week_labels + ['Total Hits']
     )
     if prev_key:
         base_headers += [f'W{current_week-1} Daily', f'W{current_week} Daily']
@@ -1875,7 +1936,7 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
                 st.get('discipline_subject', ''), st.get('discipline_class', ''),
                 st.get('discipline_teacher', ''), st['email'],
             ]
-            row += [h[k] for k in week_keys] + [total_hits]
+            row += [h.get(k, 0) for k in all_week_keys] + [total_hits]
             if prev_key:
                 row += [
                     round(h[prev_key] / prev_days, 1) if prev_days else 0,
@@ -1923,7 +1984,7 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
                     else:
                         cell.fill = sat_fill;           cell.font = sat_font
 
-        widths = [8, 22, 18, 12, 10, 24, 10, 18, 38] + [8] * current_week + [10]
+        widths = [8, 22, 18, 12, 10, 24, 10, 18, 38] + [8] * len(all_week_labels) + [10]
         if prev_key:
             widths += [11, 11]
         widths += [12, 14, 12]
@@ -1932,10 +1993,10 @@ def _build_grouped_report(wb, title_prefix, groups, group_label_col, students, l
         autosize(ws_g, widths)
         ws_g.freeze_panes = 'A6'
 
-        # Column grouping: collapse weekly hit columns (W1…Wn) by default
-        # Fixed cols: 1-9 (Segment … Email), then W1=10 … Wn=9+current_week
+        # Column grouping: collapse weekly hit columns (pre-teaching + W1…Wn) by default
+        # Fixed cols: 1-9 (Segment … Email), then weeks = 10 … 9+len(all_week_labels)
         week_col_start = 10
-        week_col_end   = 9 + current_week
+        week_col_end   = 9 + len(all_week_labels)
         for col_idx in range(week_col_start, week_col_end + 1):
             col_letter = get_column_letter(col_idx)
             ws_g.column_dimensions[col_letter].outline_level = 1
@@ -2119,7 +2180,7 @@ def _write_program_leaderboard_sheet(wb, title_prefix, groups, students, seg,
 
 def build_program_workbook(subject_code, students, login, hits, seg, current_week,
                            prev_days, curr_days, is_partial, latest_date, login_window,
-                           gc_data=None, gc_labels=None):
+                           gc_data=None, gc_labels=None, min_week=1):
     wb = Workbook(); wb.remove(wb.active)
     programs = {}
     for sid, st in students.items():
@@ -2132,7 +2193,7 @@ def build_program_workbook(subject_code, students, login, hits, seg, current_wee
         students, login, hits, seg, current_week, prev_days, curr_days,
         is_partial, latest_date, login_window,
         gc_data=gc_data, gc_labels=gc_labels,
-        show_program_col_in_index=False,
+        show_program_col_in_index=False, min_week=min_week,
     )
 
     reserved = {'Summary', 'Assessment Detail', 'Class Index'}
@@ -2183,7 +2244,7 @@ def build_program_workbook(subject_code, students, login, hits, seg, current_wee
 
 def build_class_workbook(subject_code, students, login, hits, seg, current_week,
                          prev_days, curr_days, is_partial, latest_date, login_window,
-                         gc_data=None, gc_labels=None):
+                         gc_data=None, gc_labels=None, min_week=1):
     wb = Workbook(); wb.remove(wb.active)
     classes = {}
     for sid, st in students.items():
@@ -2203,6 +2264,7 @@ def build_class_workbook(subject_code, students, login, hits, seg, current_week,
         gc_data=gc_data, gc_labels=gc_labels,
         extra_summary_cols=[('Teacher', lambda info: info.get('teacher', ''))],
         show_program_col_in_index=True,   # <-- Program column in Class Index only
+        min_week=min_week,
     )
 
 
@@ -2299,12 +2361,18 @@ if run_btn:
         if current_week == 1:
             st.warning('W1 is the only week with data. S5/S6/S7 will be empty (no comparison week available).')
 
+        min_week = compute_min_week(merged)
+        if min_week < 1:
+            pre_start, _ = week_date_range(min_week)
+            _, pre_end = week_date_range(0)
+            st.info(f'Pre-teaching usage detected: W{min_week} to W0 ({pre_start.strftime("%b %-d")}-{pre_end.strftime("%b %-d")}). Bucketed as extra week columns and used directly in segmentation.')
+
         with st.spinner('Computing weekly hits...'):
-            hits = bucket_by_week(merged, students, current_week, max_date=latest)
+            hits = bucket_by_week(merged, students, current_week, max_date=latest, min_week=min_week)
 
         with st.spinner('Classifying students...'):
             seg, s2_thresh, s3_rng = classify(
-                students, login, hits, current_week, prev_days, curr_days
+                students, login, hits, current_week, prev_days, curr_days, min_week=min_week
             )
 
         counts = {f'S{i}': 0 for i in range(1, 8)}
@@ -2337,7 +2405,7 @@ if run_btn:
             wb, _ = build_workbook(
                 subject_code, students, login, hits, seg,
                 current_week, prev_days, curr_days, is_partial, latest,
-                login_window_str, s2_thresh, s3_rng,
+                login_window_str, s2_thresh, s3_rng, min_week=min_week,
             )
             buf = io.BytesIO(); wb.save(buf); buf.seek(0)
 
@@ -2367,7 +2435,7 @@ if run_btn:
                 wb_prog = build_program_workbook(
                     subject_code, students, login, hits, seg,
                     current_week, prev_days, curr_days, is_partial, latest,
-                    login_window_str, gc_data=gc_data, gc_labels=gc_labels,
+                    login_window_str, gc_data=gc_data, gc_labels=gc_labels, min_week=min_week,
                 )
                 buf_prog = io.BytesIO(); wb_prog.save(buf_prog); buf_prog.seek(0)
             prog_filename = f'{subject_code}_Program_Report_W{current_week}_{date_str}{suffix}.xlsx'
@@ -2383,7 +2451,7 @@ if run_btn:
                     wb_class = build_class_workbook(
                         subject_code, students, login, hits, seg,
                         current_week, prev_days, curr_days, is_partial, latest,
-                        login_window_str, gc_data=gc_data, gc_labels=gc_labels,
+                        login_window_str, gc_data=gc_data, gc_labels=gc_labels, min_week=min_week,
                     )
                     buf_class = io.BytesIO(); wb_class.save(buf_class); buf_class.seek(0)
                 class_filename = f'{subject_code}_Class_Report_W{current_week}_{date_str}{suffix}.xlsx'
