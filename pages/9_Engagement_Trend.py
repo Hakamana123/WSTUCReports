@@ -15,7 +15,7 @@ To add this as a page: place this file in your app's `pages/` folder
 (Streamlit auto-discovers it; rename with a number prefix to control its
 position in the sidebar, e.g. `2_Engagement_Trend.py`).
 
-Requires: streamlit, pandas, matplotlib, openpyxl
+Requires: streamlit, pandas, openpyxl (altair ships bundled with streamlit - no extra install needed)
 """
 import io
 import re
@@ -24,7 +24,7 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 from openpyxl import load_workbook
-import matplotlib.pyplot as plt
+import altair as alt
 
 st.set_page_config(page_title='Engagement Trend', page_icon='📈', layout='wide')
 st.title('Engagement Trend')
@@ -147,18 +147,39 @@ sub_df['blue'] = sub_df['S5'] + sub_df['S7']
 for c in ['red', 'green', 'blue']:
     sub_df[c + '_pct'] = 100 * sub_df[c] / sub_df['enrolled']
 
-fig, ax = plt.subplots(figsize=(10, 4.5))
-x = sub_df['snapshot_label']
-ax.bar(x, sub_df['red_pct'], color='#e34948', label='S1+S2+S3 (never engaged / ghosts / drop-offs)')
-ax.bar(x, sub_df['green_pct'], bottom=sub_df['red_pct'], color='#008300', label='S4+S6 (active then absent / fading)')
-ax.bar(x, sub_df['blue_pct'], bottom=sub_df['red_pct'] + sub_df['green_pct'], color='#2a78d6', label='S5+S7 (late arrivals / sustained)')
-ax.plot(x, sub_df['red_pct'], color='black', marker='o', linewidth=2, label='S1+S2+S3 trend')
-ax.set_ylim(0, 100)
-ax.set_ylabel('% of enrolled')
-ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.2), ncol=2, fontsize=9)
-plt.xticks(rotation=30, ha='right')
-fig.tight_layout()
-st.pyplot(fig)
+bucket_labels = {
+    'red_pct': 'S1+S2+S3 (never engaged / ghosts / drop-offs)',
+    'green_pct': 'S4+S6 (active then absent / fading)',
+    'blue_pct': 'S5+S7 (late arrivals / sustained)',
+}
+snapshot_order = list(sub_df['snapshot_label'])
+
+plot_df = sub_df.melt(
+    id_vars=['snapshot_label'],
+    value_vars=list(bucket_labels.keys()),
+    var_name='bucket', value_name='pct',
+)
+plot_df['bucket'] = plot_df['bucket'].map(bucket_labels)
+order_map = {v: i for i, v in enumerate(bucket_labels.values())}
+plot_df['bucket_order'] = plot_df['bucket'].map(order_map)
+
+color_scale = alt.Scale(domain=list(bucket_labels.values()), range=['#e34948', '#008300', '#2a78d6'])
+
+bar = alt.Chart(plot_df).mark_bar().encode(
+    x=alt.X('snapshot_label:N', sort=snapshot_order, title=None),
+    y=alt.Y('pct:Q', stack='zero', title='% of enrolled', scale=alt.Scale(domain=[0, 100])),
+    color=alt.Color('bucket:N', scale=color_scale, title=None),
+    order='bucket_order:Q',
+    tooltip=[alt.Tooltip('snapshot_label:N', title='Snapshot'), alt.Tooltip('bucket:N', title='Segment'), alt.Tooltip('pct:Q', title='%', format='.1f')],
+)
+
+line = alt.Chart(sub_df).mark_line(point=alt.OverlayMarkDef(color='black'), color='black').encode(
+    x=alt.X('snapshot_label:N', sort=snapshot_order),
+    y=alt.Y('red_pct:Q'),
+    tooltip=[alt.Tooltip('snapshot_label:N', title='Snapshot'), alt.Tooltip('red_pct:Q', title='S1+S2+S3 %', format='.1f')],
+)
+
+st.altair_chart((bar + line).properties(height=420), use_container_width=True)
 
 st.dataframe(
     sub_df[['snapshot_label', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'enrolled']],
