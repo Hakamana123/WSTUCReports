@@ -1,0 +1,11 @@
+# Real student data — de-identified or not, this shouldn't enter git history.
+sample_data/
+output/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# OS
+.DS_Store
