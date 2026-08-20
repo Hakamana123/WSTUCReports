@@ -18,6 +18,7 @@ open), or "low" (classification itself is an inference, not yet confirmed)
 from __future__ import annotations
 
 import io
+from datetime import date
 
 import pandas as pd
 import streamlit as st
@@ -53,7 +54,63 @@ SHORT_LABELS = {
     "exception_partial_registration_unverified": "Partial reg. unverified",
 }
 
-uploaded = st.sidebar.file_uploader(
+# Same term calendar as 1_Engagement_Report.py, for consistency across pages.
+TERM_OPTIONS = {
+    "Autumn 2026": date(2026, 3, 2),
+    "Spring 2026": date(2026, 7, 20),
+    "Summer 2026": date(2026, 11, 23),
+    "Autumn 2027": date(2027, 3, 1),
+    "Spring 2027": date(2027, 7, 19),
+}
+DAYS_PER_BLOCK = 28  # 4-week blocks, per the course-specific/block subject model
+
+with st.expander("Instructions", expanded=False):
+    st.markdown(
+        "Upload a **Progression Outcomes roster** (.xlsx) — the 'Autumn for "
+        "Spring Progression Outcomes' or ALA-style export with Calculated "
+        "Standing and Spring Block 1-4 registration columns.  \n"
+        "Picking a **term start date** shows which Spring block is likely "
+        "running today, assuming back-to-back 4-week blocks — this is "
+        "informational only for now (not Grant-confirmed), and isn't yet "
+        "wired into the bucketing logic below."
+    )
+
+term_choice = st.selectbox(
+    "Term start date (Spring Block 1, Week 1 reference point)",
+    options=list(TERM_OPTIONS.keys()) + ["Custom date"],
+    index=None,
+    placeholder="Select a term...",
+    key="term_choice",
+)
+
+term_start = None
+if term_choice == "Custom date":
+    term_start = st.date_input("Custom term start date", value=None, key="term_custom_date")
+elif term_choice is not None:
+    term_start = TERM_OPTIONS[term_choice]
+
+if term_start:
+    days_elapsed = (date.today() - term_start).days
+    if days_elapsed < 0:
+        # %-d is Unix-only (breaks on Windows) - build the date string without it.
+        formatted_date = f"{term_start:%A}, {term_start.day} {term_start:%B %Y}"
+        st.caption(f"Term hasn't started yet — Block 1 begins {formatted_date}.")
+    elif days_elapsed >= 4 * DAYS_PER_BLOCK:
+        st.caption(
+            f"{days_elapsed} days into term — past the assumed 4-block window "
+            "(16 weeks). Likely exam period or between semesters."
+        )
+    else:
+        current_block = days_elapsed // DAYS_PER_BLOCK + 1
+        st.caption(
+            f"{days_elapsed} days into term → assuming back-to-back 4-week "
+            f"blocks, that's roughly **Spring Block {current_block}** today "
+            "(not Grant-confirmed - informational only)."
+        )
+else:
+    st.caption("Pick a term (or a custom date) to see which Spring block is likely running today.")
+
+uploaded = st.file_uploader(
     "Roster (.xlsx) — Progression Outcomes export",
     type=["xlsx"],
     help="The 'Autumn for Spring Progression Outcomes' or ALA-style export with "
@@ -64,7 +121,12 @@ if not uploaded:
     st.info("Upload a Progression Outcomes roster (.xlsx) to run the bucketing pass.")
     st.stop()
 
-df = load_roster(io.BytesIO(uploaded.getvalue()))
+try:
+    df = load_roster(io.BytesIO(uploaded.getvalue()))
+except ValueError as e:
+    st.error(f"Couldn't read this roster: {e}")
+    st.stop()
+
 records = to_student_records(df)
 results = bucket_all(records)
 

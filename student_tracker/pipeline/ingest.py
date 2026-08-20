@@ -19,6 +19,16 @@ PREP_COL = "Spring"
 # UPP program codes, confirmed 2026-08-06. Diplomas are 7188-7198.
 UPP_PROGRAM_CODES = {9031, 9034}
 
+# Canonical (post-rename) columns that must be present - everything
+# downstream (bucketing, pattern comparison) depends on these. Student
+# name isn't here: to_student_records already treats it as optional
+# (falls back to None), which is fine since it's used for display only,
+# never classification.
+REQUIRED_COLUMNS = [
+    "student_id", "program", "calculated_standing", "commencement_period",
+    "block_1", "block_2", "block_3", "block_4",
+]
+
 
 @dataclass
 class StudentRecord:
@@ -73,12 +83,25 @@ def load_roster(path: str, sheet_name: Optional[str] = None) -> pd.DataFrame:
         "Spring Block 4": "block_4",
         "Spring": "prep",
     }
+    original_columns = list(df.columns)
     df = df.rename(columns=rename_map)
 
     # Not every export will carry every column (e.g. the ALA export also
     # has Academic Period / Part Term / GPA Outcome Message / etc. — those
     # pass through untouched rather than being dropped, in case a later
-    # stage wants them).
+    # stage wants them). But the columns everything downstream depends on
+    # must be present - silently falling back to None (e.g. "Student ID"
+    # column missing → every student_id becomes the string "None") is a
+    # silent-data-corruption bug, not graceful degradation, so fail loudly
+    # here instead.
+    missing = [col for col in REQUIRED_COLUMNS if col not in df.columns]
+    if missing:
+        raise ValueError(
+            "Roster is missing expected column(s) after normalization: "
+            f"{missing}. This file's actual headers are: {original_columns}. "
+            "If this is a new/different export format, add its real header "
+            "name(s) to rename_map in ingest.py."
+        )
     return df
 
 
