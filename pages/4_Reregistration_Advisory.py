@@ -27,6 +27,7 @@ from student_tracker.pipeline.ingest import load_roster, to_student_records
 from student_tracker.pipeline.bucketing import bucket_all
 from student_tracker.pipeline.report_builder import build_advisory_report
 from student_tracker.pipeline.stages import STAGES, stage5_ce_only
+from student_tracker.pipeline.glossary import glossary_dataframe
 
 st.set_page_config(page_title="Reregistration Advisory", layout="wide")
 
@@ -343,9 +344,22 @@ if confidence_filter:
 st.dataframe(filtered_df, use_container_width=True, hide_index=True)
 st.caption(f"Showing {len(filtered_df):,} of {len(advisory_df):,} students.")
 
+with st.expander("Glossary", expanded=False):
+    st.caption(
+        "What every column, confidence tier, on-pattern value, and bucket "
+        "name in this report actually means. Also included as its own tab "
+        "in the downloaded Excel file below."
+    )
+    st.dataframe(glossary_dataframe(), use_container_width=True, hide_index=True)
+
+excel_buffer = io.BytesIO()
+with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
+    advisory_df.to_excel(writer, sheet_name="Advisory Report", index=False)
+    glossary_dataframe().to_excel(writer, sheet_name="Glossary", index=False)
+
 st.download_button(
-    "Download advisory report (CSV)",
-    advisory_df.to_csv(index=False).encode("utf-8"),
-    "reregistration_advisory_report.csv",
-    "text/csv",
+    "Download advisory report (Excel, with Glossary tab)",
+    excel_buffer.getvalue(),
+    "reregistration_advisory_report.xlsx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
