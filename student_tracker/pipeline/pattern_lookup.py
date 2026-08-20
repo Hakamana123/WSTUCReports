@@ -94,7 +94,7 @@ def _normalize_session(commencement_period: str) -> tuple[Optional[str], Optiona
         return None, (
             f"Block {block} commencement — unconfirmed whether this follows a "
             "shifted version of the Block 1 pattern or a different one "
-            "entirely (Grant question #1)."
+            "entirely."
         )
 
     return f"{year} {_SEASON_ABBR[season]}", None
@@ -113,7 +113,8 @@ def lookup_pattern(program: int, commencement_period: Optional[str]) -> PatternO
             commencement_period="",
             resolved=False,
             unresolved_reason="No commencement period on record for this student "
-                               "(Grant question: how should these be handled?).",
+                               "- how these should be handled is still an open "
+                               "question.",
         )
 
     session, reason = _normalize_session(commencement_period)
@@ -129,7 +130,7 @@ def lookup_pattern(program: int, commencement_period: Optional[str]) -> PatternO
             resolved=False,
             unresolved_reason=f"{session} exists in the reference table but uses a "
                                "dual-bracket '+'-joined pattern that isn't understood "
-                               "yet (Grant question #1).",
+                               "yet.",
         )
 
     if program in _UNCONFIRMED_ORDER_PROGRAMS:
@@ -137,8 +138,7 @@ def lookup_pattern(program: int, commencement_period: Optional[str]) -> PatternO
             program=program, commencement_period=commencement_period,
             resolved=False,
             unresolved_reason=f"Program {program} has an 8-position reference pattern "
-                               "but the Prep/Subject ordering isn't confirmed "
-                               "(Grant question #1).",
+                               "but the Prep/Subject ordering isn't confirmed yet.",
         )
 
     positions = _PATTERN_TABLE.get(session, {}).get(str(program))
@@ -147,7 +147,7 @@ def lookup_pattern(program: int, commencement_period: Optional[str]) -> PatternO
             program=program, commencement_period=commencement_period,
             resolved=False,
             unresolved_reason=f"No reference table row for program {program} in "
-                               f"session {session} (Grant question #1).",
+                               f"session {session} yet.",
         )
 
     return PatternOfStudy(

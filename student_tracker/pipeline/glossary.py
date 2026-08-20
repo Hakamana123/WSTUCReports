@@ -44,15 +44,14 @@ COLUMN_GLOSSARY: list[tuple[str, str]] = [
 
 CONFIDENCE_GLOSSARY: list[tuple[str, str]] = [
     ("High", "Both what's going on with this student's registration, AND what "
-             "to do about it, have been confirmed directly with Grant. Safe to "
-             "act on."),
+             "to do about it, have been confirmed. Safe to act on."),
     ("Medium", "We've confirmed what's actually going on with this student "
                "(e.g. they really are over a credit cap, or really are "
                "registered for the wrong subjects) - but we haven't yet "
                "confirmed what to do about it. Needs a decision before advising "
                "the student."),
     ("Low", "Even the classification itself is our best guess from the data, "
-            "not yet confirmed with Grant at all. Treat as a starting point for "
+            "not yet confirmed at all. Treat as a starting point for "
             "discussion, not a finished rule."),
 ]
 
@@ -91,8 +90,17 @@ BUCKET_GLOSSARY: list[tuple[str, str]] = [
      "Partially registered, same 'can't check' issue as "
      "exception_full_registration_unverified."),
     ("zero_registration_unclear",
-     "Good Standing, but hasn't registered for anything next semester. Not "
-     "clear if that's a real problem or just early/normal timing."),
+     "Good Standing, but hasn't registered for anything next semester, and no "
+     "term start date was picked - so it's not clear if that's a real problem "
+     "or just early/normal timing. Pick a term start date to resolve this into "
+     "one of the two buckets below."),
+    ("zero_registration_too_early",
+     "Good Standing, hasn't registered yet - but the term hasn't started, so "
+     "this is fully expected. No action needed."),
+    ("zero_registration_overdue",
+     "Good Standing, hasn't registered, and at least one block they should "
+     "already be registered for has started - confirmed overdue, though what "
+     "to actually do about it isn't confirmed yet."),
     ("success_coach_outreach",
      "A returning (continuing) student whose standing has dropped below Good "
      "Standing. Likely candidate for coach outreach, pending confirmation of "

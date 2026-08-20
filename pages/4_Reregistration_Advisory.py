@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import io
 from datetime import date
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -28,22 +29,36 @@ from student_tracker.pipeline.bucketing import bucket_all
 from student_tracker.pipeline.report_builder import build_advisory_report
 from student_tracker.pipeline.stages import STAGES, stage5_ce_only
 from student_tracker.pipeline.glossary import glossary_dataframe
+from student_tracker.pipeline.timing import blocks_due as compute_blocks_due, DAYS_PER_BLOCK
 
 st.set_page_config(page_title="Reregistration Advisory", layout="wide")
+
+_TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "pattern_of_study_template.xlsx"
+if _TEMPLATE_PATH.exists():
+    st.sidebar.download_button(
+        "Download Pattern of Study template",
+        _TEMPLATE_PATH.read_bytes(),
+        _TEMPLATE_PATH.name,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        help="For proposing new/updated pattern-of-study reference data - "
+             "not yet wired into an upload feature on this page.",
+    )
 
 st.title("Reregistration Advisory")
 st.caption(
     "Sorts students into advisory buckets from progression standing and Spring "
     "registration completeness. This is a skeleton, not a finished tool — "
-    "medium/low confidence buckets below are starting points for the Grant "
-    "conversation, not confirmed rules."
+    "medium/low confidence buckets below are starting points for discussion, "
+    "not confirmed rules."
 )
 
 SHORT_LABELS = {
     "on_pattern_continuing": "On pattern",
     "off_pattern_partial": "Partial",
     "success_coach_outreach": "Coach outreach",
-    "zero_registration_unclear": "Zero reg.",
+    "zero_registration_unclear": "Zero reg. (unclear)",
+    "zero_registration_too_early": "Zero reg. (too early)",
+    "zero_registration_overdue": "Zero reg. (overdue)",
     "exception_manual_review": "Manual review",
     "reapply_next_semester": "Reapply",
     "exception_exclusion_still_registered": "Excl. anomaly",
@@ -64,7 +79,6 @@ TERM_OPTIONS = {
     "Autumn 2027": date(2027, 3, 1),
     "Spring 2027": date(2027, 7, 19),
 }
-DAYS_PER_BLOCK = 28  # 4-week blocks, per the course-specific/block subject model
 
 with st.expander("Instructions", expanded=False):
     st.markdown(
@@ -72,9 +86,12 @@ with st.expander("Instructions", expanded=False):
         "Spring Progression Outcomes' or ALA-style export with Calculated "
         "Standing and Spring Block 1-4 registration columns.  \n"
         "Picking a **term start date** shows which Spring block is likely "
-        "running today, assuming back-to-back 4-week blocks — this is "
-        "informational only for now (not Grant-confirmed), and isn't yet "
-        "wired into the bucketing logic below."
+        "running today, assuming back-to-back 4-week blocks (not yet "
+        "formally confirmed) - and feeds into the bucketing below: a Good "
+        "Standing student with zero registration is only flagged as "
+        "*overdue* once we know a block they should've registered for has "
+        "already started, rather than staying an unclear timing question. "
+        "Skip this and that case just stays classified as unclear, as before."
     )
 
 with st.expander("Stage coverage (Modular Re-registration Timeline)", expanded=False):
@@ -119,7 +136,9 @@ with st.expander("Stage coverage (Modular Re-registration Timeline)", expanded=F
     )
 
 term_choice = st.selectbox(
-    "Term start date (Spring Block 1, Week 1 reference point)",
+    "Which term's Block 1 already started? (used as the Week 1 reference "
+    "point - the block you're actually in today is calculated from this, "
+    "not assumed to be Block 1)",
     options=list(TERM_OPTIONS.keys()) + ["Custom date"],
     index=None,
     placeholder="Select a term...",
@@ -132,26 +151,40 @@ if term_choice == "Custom date":
 elif term_choice is not None:
     term_start = TERM_OPTIONS[term_choice]
 
+blocks_due_value = compute_blocks_due(term_start)
+
 if term_start:
     days_elapsed = (date.today() - term_start).days
     if days_elapsed < 0:
         # %-d is Unix-only (breaks on Windows) - build the date string without it.
         formatted_date = f"{term_start:%A}, {term_start.day} {term_start:%B %Y}"
-        st.caption(f"Term hasn't started yet — Block 1 begins {formatted_date}.")
+        st.caption(
+            f"Term hasn't started yet — Block 1 begins {formatted_date}. Zero "
+            "registration is treated as fully expected until then, not overdue."
+        )
     elif days_elapsed >= 4 * DAYS_PER_BLOCK:
         st.caption(
             f"{days_elapsed} days into term — past the assumed 4-block window "
-            "(16 weeks). Likely exam period or between semesters."
+            "(16 weeks). Likely exam period or between semesters. All 4 blocks "
+            "are treated as due."
         )
     else:
         current_block = days_elapsed // DAYS_PER_BLOCK + 1
         st.caption(
             f"{days_elapsed} days into term → assuming back-to-back 4-week "
-            f"blocks, that's roughly **Spring Block {current_block}** today "
-            "(not Grant-confirmed - informational only)."
+            f"blocks, that's roughly **Spring Block {current_block}** today. "
+            f"Blocks 1-{current_block} are now treated as due below - a Good "
+            "Standing student with zero registration is flagged as overdue "
+            "rather than an unclear timing artifact. (The 4-week-block "
+            "assumption itself is still not formally confirmed.)"
         )
 else:
-    st.caption("Pick a term (or a custom date) to see which Spring block is likely running today.")
+    st.caption(
+        "Pick a term (or a custom date) to distinguish overdue zero-"
+        "registration from students who simply haven't reached that point "
+        "yet - without it, zero registration stays classified as unclear "
+        "either way."
+    )
 
 uploaded = st.file_uploader(
     "Roster (.xlsx) — Progression Outcomes export",
@@ -171,7 +204,7 @@ except ValueError as e:
     st.stop()
 
 records = to_student_records(df)
-results = bucket_all(records)
+results = bucket_all(records, blocks_due_value)
 
 result_by_id = {r.student_id: r for r in results}
 rows = [
@@ -216,10 +249,10 @@ m5.metric("Programs represented", programs_represented)
 # --- Bucket breakdown ---
 st.subheader("Buckets")
 st.caption(
-    "High = classification and the resulting action are both confirmed by Grant — "
+    "High = classification and the resulting action are both confirmed — "
     "safe to act on. Medium = classification confirmed, but what to do about it is "
     "still open — see the open question. Low = the classification itself is an "
-    "inference from the data, not yet confirmed by Grant at all."
+    "inference from the data, not yet confirmed at all."
 )
 
 bucket_summary = (
@@ -260,7 +293,7 @@ st.dataframe(
         "count": st.column_config.NumberColumn("Count"),
         "% of total": st.column_config.NumberColumn("% of total", format="%.1f%%"),
         "rationale": st.column_config.TextColumn("Rationale (representative)", width="large"),
-        "grant_question": st.column_config.TextColumn("Open question for Grant", width="large"),
+        "grant_question": st.column_config.TextColumn("Open question / to be confirmed", width="large"),
     },
 )
 
@@ -290,13 +323,13 @@ st.caption(
     "On pattern: Y/Partial/N compares actual Spring Block 1-2 registration "
     "against the pattern's expected subjects (only checkable for diploma "
     "programs commencing '26 - Autumn Block 1' — the position-5/6-to-Spring "
-    "mapping is empirically validated, not Grant-confirmed; see "
+    "mapping is empirically validated, not yet formally confirmed; see "
     "report_builder.py). Unknown = pattern can't be resolved yet for this "
     "student — see Reason. Advice is only populated for high-confidence "
-    "buckets; everything else is flagged for advisor review pending Grant."
+    "buckets; everything else is flagged for advisor review pending confirmation."
 )
 
-advisory_rows = build_advisory_report(records)
+advisory_rows = build_advisory_report(records, blocks_due_value)
 
 stage5_only = st.checkbox(
     "Scope to AUT/SPR Stage 5 (Conditional Enrolment only, per the "

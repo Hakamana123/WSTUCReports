@@ -67,6 +67,24 @@ count-only versions of both had the identical blind spot:
     GS/AR/CE/EX standings exist in the data - kept as a defensive
     fallback for an unexpected future standing value, not a real bucket
     today.
+
+2026-08-21: added an optional blocks_due parameter (student_tracker.
+pipeline.timing.blocks_due) - how many of the 4 Spring blocks should
+already be registered for, given a term start date picked in the UI.
+None (no date picked) leaves every branch's behavior exactly as before.
+Currently only refines the GS/zero-registration case, since that
+bucket's entire open question was literally "is this a timing artifact
+or not" - directly answerable now. zero_registration_unclear (blocks_due
+unknown) splits into zero_registration_too_early/high (term hasn't
+started, zero registration is fully expected) or
+zero_registration_overdue/medium (confirmed overdue, action still open)
+once a date is available. Deliberately NOT extended to the subject-
+verification buckets (_pattern_verified_bucket) yet: the pattern data
+only covers Spring Block 1-2 for diplomas regardless of what day it is
+(see pattern_lookup.py), so knowing "which block we're in" doesn't
+unlock any new comparison there - it would only relabel gaps that
+already can't be checked, which isn't the same kind of confirmed
+refinement as the zero-registration case.
 """
 
 from __future__ import annotations
@@ -141,7 +159,9 @@ def _pattern_verified_bucket(
             sid, bucket, "low",
             f"Standing={standing}, {reg_desc} registered, but the pattern "
             f"can't be resolved to verify subject match: {comparison.reason}",
-            grant_question="Same pattern-resolution gaps as Grant question #1.",
+            grant_question="Same pattern-resolution gap noted elsewhere - "
+                            "which commencement/program combinations the "
+                            "pattern data covers is still being extended.",
         )
 
     if comparison.status == "Y":
@@ -188,7 +208,16 @@ def _pattern_verified_bucket(
     )
 
 
-def bucket_student(record: StudentRecord, current_period: Optional[str]) -> BucketResult:
+def bucket_student(
+    record: StudentRecord, current_period: Optional[str], blocks_due: Optional[int] = None
+) -> BucketResult:
+    """blocks_due (student_tracker.pipeline.timing.blocks_due) is None
+    unless a term start date was picked in the UI - when it's None,
+    behavior is identical to before this parameter existed. When it's
+    known, it currently only refines the zero-registration case (see
+    below) - see the 2026-08-21 timing note in the module docstring for
+    why it doesn't also change the subject-verification buckets.
+    """
     sid = record.student_id
 
     # --- Exception: no commencement period on record ---
@@ -231,11 +260,10 @@ def bucket_student(record: StudentRecord, current_period: Optional[str]) -> Buck
                 f"Conditional Enrolment standing but registered for {credit_load}cp "
                 f"({blocks_filled} block subject(s)"
                 f"{' + a prep subject' if record.prep_registration else ''}) — over "
-                f"the {CE_CREDIT_CAP}cp CE load cap (confirmed by Grant and "
-                f"independently by Josiah reviewing the policy).",
+                f"the {CE_CREDIT_CAP}cp CE load cap (confirmed).",
                 grant_question="What's the fix when a CE student is over the "
                                 "cap — withdrawing the excess block(s), or "
-                                "something else (Grant question #5)?",
+                                "something else?",
             )
 
     # --- Good Standing, fully registered: verify it's actually the right
@@ -245,14 +273,37 @@ def bucket_student(record: StudentRecord, current_period: Optional[str]) -> Buck
     if standing == "GS" and blocks_filled == 4:
         return _pattern_verified_bucket(sid, standing, record, blocks_filled, partial=False)
 
-    # --- Good Standing, zero registration: doesn't fit any confirmed rule ---
+    # --- Good Standing, zero registration: whether this is meaningful or
+    #     just a timing artifact is directly answerable once we know how
+    #     many blocks should already be registered for (blocks_due). Falls
+    #     back to the original "unclear" bucket, unchanged, when no term
+    #     date was picked (blocks_due is None). ---
     if standing == "GS" and blocks_filled == 0:
+        if blocks_due is None:
+            return BucketResult(
+                sid, "zero_registration_unclear", "low",
+                "Good Standing but nothing registered for Spring — spans all "
+                "standings in the sample data (~14% of the file), cause unclear.",
+                grant_question="Is zero registration meaningful, or a timing "
+                                "artifact of when the extract is pulled? (Pick "
+                                "a term start date to answer this directly.)",
+            )
+        if blocks_due == 0:
+            return BucketResult(
+                sid, "zero_registration_too_early", "high",
+                "Good Standing, nothing registered for Spring yet - but the "
+                "Spring term hasn't started, so zero registration is fully "
+                "expected. No action needed.",
+            )
         return BucketResult(
-            sid, "zero_registration_unclear", "low",
-            "Good Standing but nothing registered for Spring — spans all "
-            "standings in the sample data (~14% of the file), cause unclear.",
-            grant_question="Is zero registration meaningful, or a timing "
-                            "artifact of when the extract is pulled?",
+            sid, "zero_registration_overdue", "medium",
+            f"Good Standing but nothing registered for Spring, and Block "
+            f"{blocks_due} should already be underway — this is confirmed "
+            f"overdue, not just a timing artifact.",
+            grant_question="What's the right response to a Good Standing "
+                            "student with confirmed-overdue zero registration "
+                            "— automatic reminder, advisor outreach, "
+                            "something else?",
         )
 
     # --- At risk / conditional / excluded, commencing, nothing registered:
@@ -278,7 +329,7 @@ def bucket_student(record: StudentRecord, current_period: Optional[str]) -> Buck
             "intake) — approximates the 'continuing, was fine before' "
             "success-coach case from the meeting.",
             grant_question="Confirm this rule and the full named bucket "
-                            "list Grant actually uses.",
+                            "list actually used in practice.",
         )
 
     # --- Partial registration (1-3 of 4 blocks): verify subject content
@@ -309,6 +360,8 @@ def bucket_student(record: StudentRecord, current_period: Optional[str]) -> Buck
     )
 
 
-def bucket_all(records: list[StudentRecord]) -> list[BucketResult]:
+def bucket_all(
+    records: list[StudentRecord], blocks_due: Optional[int] = None
+) -> list[BucketResult]:
     current_period = _infer_current_period(records)
-    return [bucket_student(r, current_period) for r in records]
+    return [bucket_student(r, current_period, blocks_due) for r in records]

@@ -86,6 +86,12 @@ def build_advisory_row(record: StudentRecord, bucket_result: BucketResult) -> Ad
     )
 
 
-def build_advisory_report(records: list[StudentRecord]) -> list[AdvisoryRow]:
-    bucket_results = bucket_all(records)
+def build_advisory_report(
+    records: list[StudentRecord], blocks_due: Optional[int] = None
+) -> list[AdvisoryRow]:
+    """blocks_due (student_tracker.pipeline.timing.blocks_due): passed
+    straight through to bucket_all - None (no term date picked) leaves
+    every bucket's behavior unchanged from before this parameter existed.
+    """
+    bucket_results = bucket_all(records, blocks_due)
     return [build_advisory_row(r, br) for r, br in zip(records, bucket_results)]
