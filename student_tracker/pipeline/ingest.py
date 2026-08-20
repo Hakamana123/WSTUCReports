@@ -69,7 +69,9 @@ def load_roster(path: str, sheet_name: Optional[str] = None) -> pd.DataFrame:
     rename_map = {
         "Student ID (Mock Data)": "student_id",
         "Student ID (Mock)": "student_id",   # tolerate either file's naming
+        "Student ID": "student_id",          # real (non-mock) export
         "Student Name (Mock)": "student_name",
+        "Student name": "student_name",      # real (non-mock) export - note lowercase "name"
         "Program": "program",
         "Calculated Standing": "calculated_standing",
         "CALC Standing Desc": "standing_desc",
