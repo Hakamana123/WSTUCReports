@@ -156,3 +156,62 @@ def lookup_pattern(program: int, commencement_period: Optional[str]) -> PatternO
         block_sequence={int(k): v for k, v in positions.items()},
         resolved=True,
     )
+
+
+# --- Pattern-vs-registration comparison ---------------------------------
+# block_registrations index -> pattern position. pattern_lookup only
+# confirms positions 1-4 = Autumn Block 1-4 (the semester a student
+# *started* in); neither roster has Autumn block-level registration data,
+# only Spring Block 1-4 (the *next* semester). Positions 5-6 are the
+# candidate mapping to Spring Block 1-2 (diploma patterns always have
+# exactly 6 positions, so 5-6 are the only ones left) - empirically
+# validated 2026-08-21 against real GS-standing students: 76% match on
+# position 5 vs Spring Block 1 (1076/1422 in the Ashlee sample), 98% on
+# position 6 vs Spring Block 2 (1393/1420). Mismatches concentrate in
+# students still registered for an earlier-position subject (e.g.
+# repeating GEDU1001) - i.e. they look like genuinely off-pattern
+# students, not evidence against the mapping. Validated-but-unconfirmed,
+# not Grant-confirmed - worth a Grant question, but a much stronger
+# footing than a guess.
+SPRING_BLOCK_TO_POSITION = {0: 5, 1: 6}
+BLOCK_LABELS = ["Spring Block 1", "Spring Block 2", "Spring Block 3", "Spring Block 4"]
+
+
+@dataclass
+class PatternComparison:
+    status: str                        # "Y", "N", "Partial", "Unknown"
+    advised: str                       # formatted expected Spring Block 1-2 subjects
+    reason: Optional[str] = None       # unresolved reason, only set when status=="Unknown"
+
+
+def compare_registration_to_pattern(
+    program: int, commencement_period: Optional[str], block_registrations: list
+) -> PatternComparison:
+    """Compare a student's actual Spring Block 1-2 registration against
+    what the pattern expects there (see SPRING_BLOCK_TO_POSITION above for
+    why only blocks 1-2 are checkable). Shared by bucketing.py and
+    report_builder.py so the two stay consistent rather than drifting.
+    """
+    pattern = lookup_pattern(program, commencement_period)
+    if not pattern.resolved:
+        return PatternComparison(status="Unknown", advised="", reason=pattern.unresolved_reason)
+
+    advised_parts = []
+    matches = []
+    for block_idx, position in SPRING_BLOCK_TO_POSITION.items():
+        expected = pattern.block_sequence.get(position)
+        if expected is None:
+            continue
+        advised_parts.append(f"{BLOCK_LABELS[block_idx]}: {expected}")
+        matches.append(block_registrations[block_idx] == expected)
+
+    if matches and all(matches):
+        status = "Y"
+    elif matches and any(matches):
+        status = "Partial"
+    else:
+        status = "N"
+
+    advised = "; ".join(advised_parts) if advised_parts \
+        else "(pattern has no Spring-mapped positions for this program)"
+    return PatternComparison(status=status, advised=advised)

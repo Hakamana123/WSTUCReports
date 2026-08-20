@@ -9,9 +9,10 @@ STATUS: skeleton, not a finished tool. Bucketing (stage 3 of the pipeline)
 runs on real data; pattern lookup and subject substitution (stages 2 and 4)
 are stubs blocked on open questions for Grant — see
 student_tracker/pipeline/pattern_lookup.py and .../substitution.py. Every
-bucket below is tagged "grounded" (confirmed rule) or "candidate"
-(inference not yet confirmed by Grant) — see the Open question column for
-candidate buckets.
+bucket below carries a confidence tier — "high" (classification and action
+both confirmed by Grant), "medium" (classification confirmed, action still
+open), or "low" (classification itself is an inference, not yet confirmed)
+— see the Open question column for medium/low buckets.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ import streamlit as st
 
 from student_tracker.pipeline.ingest import load_roster, to_student_records
 from student_tracker.pipeline.bucketing import bucket_all
+from student_tracker.pipeline.report_builder import build_advisory_report
 
 st.set_page_config(page_title="Reregistration Advisory", layout="wide")
 
@@ -30,8 +32,8 @@ st.title("Reregistration Advisory")
 st.caption(
     "Sorts students into advisory buckets from progression standing and Spring "
     "registration completeness. This is a skeleton, not a finished tool — "
-    "candidate buckets below are starting points for the Grant conversation, "
-    "not confirmed rules."
+    "medium/low confidence buckets below are starting points for the Grant "
+    "conversation, not confirmed rules."
 )
 
 SHORT_LABELS = {
@@ -43,6 +45,12 @@ SHORT_LABELS = {
     "reapply_next_semester": "Reapply",
     "exception_exclusion_still_registered": "Excl. anomaly",
     "exception_no_commencement_period": "No commencement",
+    "exception_ce_over_credit_cap": "CE over cap",
+    "exception_registered_wrong_subjects": "Wrong subjects",
+    "exception_full_registration_unverified": "Full reg. unverified",
+    "on_pattern_partial_registration": "On pattern (partial)",
+    "on_pattern_at_risk_monitoring": "On pattern (at-risk)",
+    "exception_partial_registration_unverified": "Partial reg. unverified",
 }
 
 uploaded = st.sidebar.file_uploader(
@@ -75,31 +83,38 @@ rows = [
 result_df = pd.DataFrame(rows)
 
 total_students = len(records)
-grounded_count = int((result_df["confidence"] == "grounded").sum())
-candidate_count = int((result_df["confidence"] == "candidate").sum())
+high_count = int((result_df["confidence"] == "high").sum())
+medium_count = int((result_df["confidence"] == "medium").sum())
+low_count = int((result_df["confidence"] == "low").sum())
 programs_represented = result_df["program"].nunique()
 
 # --- Summary metrics ---
-m1, m2, m3, m4 = st.columns(4)
+m1, m2, m3, m4, m5 = st.columns(5)
 m1.metric("Total students", f"{total_students:,}")
 m2.metric(
-    "Grounded buckets",
-    f"{grounded_count:,}",
-    f"{grounded_count / total_students:.0%} of total",
+    "High confidence",
+    f"{high_count:,}",
+    f"{high_count / total_students:.0%} of total",
 )
 m3.metric(
-    "Candidate buckets",
-    f"{candidate_count:,}",
-    f"{candidate_count / total_students:.0%} of total",
+    "Medium confidence",
+    f"{medium_count:,}",
+    f"{medium_count / total_students:.0%} of total",
 )
-m4.metric("Programs represented", programs_represented)
+m4.metric(
+    "Low confidence",
+    f"{low_count:,}",
+    f"{low_count / total_students:.0%} of total",
+)
+m5.metric("Programs represented", programs_represented)
 
 # --- Bucket breakdown ---
 st.subheader("Buckets")
 st.caption(
-    "Grounded = confirmed rule from the 4 Aug scoping meeting. "
-    "Candidate = inferred from the data, not yet confirmed by Grant — see the "
-    "open question for each."
+    "High = classification and the resulting action are both confirmed by Grant — "
+    "safe to act on. Medium = classification confirmed, but what to do about it is "
+    "still open — see the open question. Low = the classification itself is an "
+    "inference from the data, not yet confirmed by Grant at all."
 )
 
 bucket_summary = (
@@ -121,9 +136,11 @@ bucket_summary = bucket_summary[
 
 
 def _style_confidence(val):
-    if val == "grounded":
+    if val == "high":
         return "background-color: #E7F0EA; color: #2F6B4F"
-    if val == "candidate":
+    if val == "medium":
+        return "background-color: #FDEEDC; color: #B5590F"
+    if val == "low":
         return "background-color: #FAF0DC; color: #A8720F"
     return ""
 
@@ -161,3 +178,60 @@ program_pivot = program_pivot.sort_values("Total", ascending=False)
 program_pivot = program_pivot.rename(columns=SHORT_LABELS)
 
 st.dataframe(program_pivot, use_container_width=True)
+
+# --- Per-student advisory report ---
+st.subheader("Per-student advisory report")
+st.caption(
+    "On pattern: Y/Partial/N compares actual Spring Block 1-2 registration "
+    "against the pattern's expected subjects (only checkable for diploma "
+    "programs commencing '26 - Autumn Block 1' — the position-5/6-to-Spring "
+    "mapping is empirically validated, not Grant-confirmed; see "
+    "report_builder.py). Unknown = pattern can't be resolved yet for this "
+    "student — see Reason. Advice is only populated for high-confidence "
+    "buckets; everything else is flagged for advisor review pending Grant."
+)
+
+advisory_rows = build_advisory_report(records)
+advisory_df = pd.DataFrame(
+    {
+        "Student ID": r.student_id,
+        "Student Name": r.student_name,
+        "Program": r.program,
+        "On pattern": r.on_pattern,
+        "Reason (if Unknown)": r.unknown_reason or "",
+        "Subjects advised": r.subjects_advised,
+        "Subjects registered": r.subjects_registered,
+        "Bucket": r.bucket.replace("_", " "),
+        "Bucket confidence": r.bucket_confidence,
+        "Advice": r.advice,
+    }
+    for r in advisory_rows
+)
+
+f1, f2 = st.columns(2)
+pattern_filter = f1.multiselect(
+    "Filter: On pattern",
+    options=["Y", "Partial", "N", "Unknown"],
+    default=[],
+)
+confidence_filter = f2.multiselect(
+    "Filter: Bucket confidence",
+    options=["high", "medium", "low"],
+    default=[],
+)
+
+filtered_df = advisory_df
+if pattern_filter:
+    filtered_df = filtered_df[filtered_df["On pattern"].isin(pattern_filter)]
+if confidence_filter:
+    filtered_df = filtered_df[filtered_df["Bucket confidence"].isin(confidence_filter)]
+
+st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+st.caption(f"Showing {len(filtered_df):,} of {len(advisory_df):,} students.")
+
+st.download_button(
+    "Download advisory report (CSV)",
+    advisory_df.to_csv(index=False).encode("utf-8"),
+    "reregistration_advisory_report.csv",
+    "text/csv",
+)
