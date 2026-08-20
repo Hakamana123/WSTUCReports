@@ -26,6 +26,7 @@ import streamlit as st
 from student_tracker.pipeline.ingest import load_roster, to_student_records
 from student_tracker.pipeline.bucketing import bucket_all
 from student_tracker.pipeline.report_builder import build_advisory_report
+from student_tracker.pipeline.stages import STAGES, stage5_ce_only
 
 st.set_page_config(page_title="Reregistration Advisory", layout="wide")
 
@@ -73,6 +74,47 @@ with st.expander("Instructions", expanded=False):
         "running today, assuming back-to-back 4-week blocks — this is "
         "informational only for now (not Grant-confirmed), and isn't yet "
         "wired into the bucketing logic below."
+    )
+
+with st.expander("Stage coverage (Modular Re-registration Timeline)", expanded=False):
+    st.caption(
+        "From the Modular Re-registration Timeline (supplied 2026-08-21): 5 "
+        "stages per semester, only some buildable today. Built = real logic "
+        "against real sample data. Blocked = needs a source file/data "
+        "granularity we've never seen a sample of - no guessed parsing. "
+        "Undefined = the source Timeline sheet itself never filled this row in."
+    )
+    stage_df = pd.DataFrame(
+        {
+            "Semester": s.semester,
+            "Stage": s.number,
+            "Name": s.name,
+            "Status": s.status,
+            "When": s.when,
+            "Population": s.population,
+        }
+        for s in STAGES
+    )
+
+    def _style_status(val):
+        if val == "built":
+            return "background-color: #E7F0EA; color: #2F6B4F"
+        if val == "blocked":
+            return "background-color: #FAF0DC; color: #A8720F"
+        if val == "undefined":
+            return "background-color: #F2E8E8; color: #8A4B4B"
+        return ""
+
+    st.dataframe(
+        stage_df.style.map(_style_status, subset=["Status"]),
+        use_container_width=True,
+        hide_index=True,
+    )
+    st.caption(
+        "Everything on this page today implements AUT/SPR Stage 4 (the "
+        "roster itself) and Stage 5 (the advisory report below) - see "
+        "student_tracker/pipeline/stages.py for full per-stage detail, "
+        "including data needs and notes for each blocked/undefined row."
     )
 
 term_choice = st.selectbox(
@@ -254,6 +296,16 @@ st.caption(
 )
 
 advisory_rows = build_advisory_report(records)
+
+stage5_only = st.checkbox(
+    "Scope to AUT/SPR Stage 5 (Conditional Enrolment only, per the "
+    "Timeline - 'All students on Conditional Enrolment', SB2/SU2 Week "
+    "1-2)",
+    value=False,
+)
+if stage5_only:
+    advisory_rows = stage5_ce_only(records, advisory_rows)
+
 advisory_df = pd.DataFrame(
     {
         "Student ID": r.student_id,

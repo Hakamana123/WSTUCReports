@@ -82,14 +82,12 @@ AT_RISK_LIKE = {"AR", "CE", "EX"}
 # Credit points per subject type (confirmed 2026-08-21): a block/course-specific
 # subject is 10cp, a semester-long prep subject is 15cp.
 #
-# CE_CREDIT_CAP: 30cp, confirmed directly by Grant in discussion (2026-08-21),
-# not just inferred. WSU progression policy (policies.westernsydney.edu.au,
-# id=27) clause 26 corroborates the mechanism — CE officially works by
-# "reducing the amount of credit points" — but clause 29 defers the actual
-# number to a separate "Academic Progression webpage," listed "per program
-# type" (i.e. may not be one flat cap for every program) — that page hasn't
-# been fetched, so whether 30 holds across all programs is still open
-# (Grant question #5).
+# CE_CREDIT_CAP: 30cp. Confirmed twice over: directly by Grant in
+# discussion (2026-08-21), and independently confirmed by Josiah having
+# reviewed the policy directly (2026-08-21) — not just inferred. WSU
+# progression policy (policies.westernsydney.edu.au, id=27) clause 26
+# corroborates the mechanism - CE officially works by "reducing the
+# amount of credit points."
 BLOCK_CREDIT_POINTS = 10
 PREP_CREDIT_POINTS = 15
 CE_CREDIT_CAP = 30
@@ -233,12 +231,11 @@ def bucket_student(record: StudentRecord, current_period: Optional[str]) -> Buck
                 f"Conditional Enrolment standing but registered for {credit_load}cp "
                 f"({blocks_filled} block subject(s)"
                 f"{' + a prep subject' if record.prep_registration else ''}) — over "
-                f"the {CE_CREDIT_CAP}cp CE load cap (confirmed by Grant).",
-                grant_question="WSU policy id=27 clause 29 says CE caps are set "
-                                "'per program type' on the Academic Progression "
-                                "webpage — confirm 30cp holds across all programs, "
-                                "not just the one(s) discussed. Also confirm the fix "
-                                "is withdrawing the excess block(s) (Grant question #5).",
+                f"the {CE_CREDIT_CAP}cp CE load cap (confirmed by Grant and "
+                f"independently by Josiah reviewing the policy).",
+                grant_question="What's the fix when a CE student is over the "
+                                "cap — withdrawing the excess block(s), or "
+                                "something else (Grant question #5)?",
             )
 
     # --- Good Standing, fully registered: verify it's actually the right
