@@ -108,6 +108,22 @@ evidence, not just structural inference):
     alone per Josiah - Rereg Principles classification appears to be
     driven primarily by the pass/fail pattern's shape/timing, not
     directly coupled to Calculated Standing.
+  - Confirmed "3+ Sessions" is NOT a pure tenure/duration label ("this
+    happens to be their 3rd+ semester") - it requires an actual pattern
+    of struggling ACROSS multiple sessions. The identical fail pattern
+    above (2 of 4 Sem1 blocks failed), if it belongs to a continuing
+    student now on their 3rd+ semester rather than a first-timer, does
+    map to "3+ Sessions" instead of "Unsatisfactory progress in S1" -
+    but per Josiah's reasoning, that's because being on a 3rd+ attempt
+    while still failing blocks is itself evidence of cross-session
+    struggle (and correlates with, but isn't guaranteed to be, AR/CE
+    standing), not because session-count alone overrides the pattern.
+    So the real rule needs BOTH signals together: which session number
+    this is for the student, AND whether the current pattern shows
+    struggle - neither alone determines the category. We don't yet have
+    a clean "which session number is this" signal wired into history.py
+    (commencement_period vs. the file's own period is the closest proxy
+    but hasn't been validated for this purpose).
 """
 
 from __future__ import annotations
