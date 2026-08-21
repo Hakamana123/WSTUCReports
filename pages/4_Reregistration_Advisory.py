@@ -228,11 +228,10 @@ if not uploaded:
 
 try:
     df = load_roster(io.BytesIO(uploaded.getvalue()))
+    records = to_student_records(df)
 except ValueError as e:
     st.error(f"Couldn't read this roster: {e}")
     st.stop()
-
-records = to_student_records(df)
 results = bucket_all(records, blocks_due_value, pattern_overrides)
 
 result_by_id = {r.student_id: r for r in results}

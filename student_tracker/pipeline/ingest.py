@@ -108,9 +108,17 @@ def load_roster(path: str, sheet_name: Optional[str] = None) -> pd.DataFrame:
 
 
 def to_student_records(df: pd.DataFrame) -> list[StudentRecord]:
-    """Convert a normalized roster DataFrame into StudentRecord objects."""
+    """Convert a normalized roster DataFrame into StudentRecord objects.
+
+    Raises ValueError naming the specific row/student on a blank or
+    non-numeric Program value, rather than letting int() crash with an
+    opaque "cannot convert float NaN to integer" - a blank Program cell
+    (a withdrawn/pending student, an incomplete export row) is realistic
+    in real institutional data, and this is called directly from the
+    Streamlit page with nothing catching a raw exception here.
+    """
     records = []
-    for _, row in df.iterrows():
+    for idx, row in df.iterrows():
         commencement = row.get("commencement_period")
         commencement = None if pd.isna(commencement) else str(commencement)
 
@@ -122,11 +130,27 @@ def to_student_records(df: pd.DataFrame) -> list[StudentRecord]:
         prep_val = row.get("prep")
         prep_val = None if pd.isna(prep_val) else str(prep_val)
 
+        program_val = row.get("program")
+        if pd.isna(program_val):
+            raise ValueError(
+                f"Row {idx + 2} (student ID {row.get('student_id')!r}) has no "
+                "Program value - every row needs one. Fix or remove this row "
+                "in the source file and re-upload."
+            )
+        try:
+            program_val = int(program_val)
+        except (TypeError, ValueError) as e:
+            raise ValueError(
+                f"Row {idx + 2} (student ID {row.get('student_id')!r}) has a "
+                f"non-numeric Program value ({program_val!r}) - can't process "
+                "this roster until it's fixed."
+            ) from e
+
         records.append(
             StudentRecord(
                 student_id=str(row.get("student_id")),
                 student_name=row.get("student_name") if "student_name" in df.columns else None,
-                program=int(row.get("program")),
+                program=program_val,
                 calculated_standing=str(row.get("calculated_standing")),
                 standing_desc=str(row.get("standing_desc")),
                 commencement_period=commencement,
