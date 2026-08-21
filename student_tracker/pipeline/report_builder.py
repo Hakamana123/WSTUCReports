@@ -68,9 +68,12 @@ def _advice_for_bucket(bucket_result: BucketResult) -> str:
     return "Flag for advisor review - not yet actionable."
 
 
-def build_advisory_row(record: StudentRecord, bucket_result: BucketResult) -> AdvisoryRow:
+def build_advisory_row(
+    record: StudentRecord, bucket_result: BucketResult, pattern_overrides: Optional[dict] = None
+) -> AdvisoryRow:
     comparison = compare_registration_to_pattern(
-        record.program, record.commencement_period, record.block_registrations
+        record.program, record.commencement_period, record.block_registrations,
+        pattern_overrides,
     )
     return AdvisoryRow(
         student_id=record.student_id,
@@ -87,11 +90,17 @@ def build_advisory_row(record: StudentRecord, bucket_result: BucketResult) -> Ad
 
 
 def build_advisory_report(
-    records: list[StudentRecord], blocks_due: Optional[int] = None
+    records: list[StudentRecord], blocks_due: Optional[int] = None,
+    pattern_overrides: Optional[dict] = None,
 ) -> list[AdvisoryRow]:
-    """blocks_due (student_tracker.pipeline.timing.blocks_due): passed
-    straight through to bucket_all - None (no term date picked) leaves
-    every bucket's behavior unchanged from before this parameter existed.
+    """blocks_due (student_tracker.pipeline.timing.blocks_due) and
+    pattern_overrides (pattern_lookup.load_pattern_overrides) are both
+    passed straight through to bucket_all and build_advisory_row - None
+    for either leaves that piece of behavior unchanged from before these
+    parameters existed.
     """
-    bucket_results = bucket_all(records, blocks_due)
-    return [build_advisory_row(r, br) for r, br in zip(records, bucket_results)]
+    bucket_results = bucket_all(records, blocks_due, pattern_overrides)
+    return [
+        build_advisory_row(r, br, pattern_overrides)
+        for r, br in zip(records, bucket_results)
+    ]

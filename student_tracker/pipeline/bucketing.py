@@ -136,7 +136,8 @@ def _infer_current_period(records: list[StudentRecord]) -> Optional[str]:
 
 
 def _pattern_verified_bucket(
-    sid: str, standing: str, record: StudentRecord, blocks_filled: int, *, partial: bool
+    sid: str, standing: str, record: StudentRecord, blocks_filled: int, *, partial: bool,
+    pattern_overrides: Optional[dict] = None,
 ) -> BucketResult:
     """Shared subject-level check for both "fully registered" (blocks_filled
     == 4) and "partially registered" (0 < blocks_filled < 4) students.
@@ -146,9 +147,14 @@ def _pattern_verified_bucket(
     or - for the partial case - apart from one who's on pattern but simply
     hasn't finished registering yet. compare_registration_to_pattern
     (pattern_lookup.py) is what actually resolves that.
+
+    pattern_overrides: an uploaded Pattern of Study template
+    (pattern_lookup.load_pattern_overrides), passed straight through.
+    None leaves behavior unchanged.
     """
     comparison = compare_registration_to_pattern(
-        record.program, record.commencement_period, record.block_registrations
+        record.program, record.commencement_period, record.block_registrations,
+        pattern_overrides,
     )
     reg_desc = f"{blocks_filled}/4 Spring blocks" if partial else "all 4 Spring blocks"
 
@@ -209,7 +215,8 @@ def _pattern_verified_bucket(
 
 
 def bucket_student(
-    record: StudentRecord, current_period: Optional[str], blocks_due: Optional[int] = None
+    record: StudentRecord, current_period: Optional[str], blocks_due: Optional[int] = None,
+    pattern_overrides: Optional[dict] = None,
 ) -> BucketResult:
     """blocks_due (student_tracker.pipeline.timing.blocks_due) is None
     unless a term start date was picked in the UI - when it's None,
@@ -217,6 +224,10 @@ def bucket_student(
     known, it currently only refines the zero-registration case (see
     below) - see the 2026-08-21 timing note in the module docstring for
     why it doesn't also change the subject-verification buckets.
+
+    pattern_overrides: an uploaded Pattern of Study template
+    (pattern_lookup.load_pattern_overrides), passed straight through to
+    every _pattern_verified_bucket call. None leaves behavior unchanged.
     """
     sid = record.student_id
 
@@ -271,7 +282,7 @@ def bucket_student(
     #     docstring for why - the same check now covers the partial and
     #     AR/CE-fully-registered cases below too). ---
     if standing == "GS" and blocks_filled == 4:
-        return _pattern_verified_bucket(sid, standing, record, blocks_filled, partial=False)
+        return _pattern_verified_bucket(sid, standing, record, blocks_filled, partial=False, pattern_overrides=pattern_overrides)
 
     # --- Good Standing, zero registration: whether this is meaningful or
     #     just a timing artifact is directly answerable once we know how
@@ -338,7 +349,7 @@ def bucket_student(
     #     registering-yet once checked (2026-08-21), not actually off
     #     pattern at all. ---
     if 0 < blocks_filled < 4:
-        return _pattern_verified_bucket(sid, standing, record, blocks_filled, partial=True)
+        return _pattern_verified_bucket(sid, standing, record, blocks_filled, partial=True, pattern_overrides=pattern_overrides)
 
     # --- Remaining case: AR/CE (under cap), commencing, fully registered -
     #     verify subject content instead of falling through to the
@@ -348,7 +359,7 @@ def bucket_student(
     #     provably covered by an earlier branch given only GS/AR/CE/EX
     #     appear in the standing data. ---
     if blocks_filled == 4:
-        return _pattern_verified_bucket(sid, standing, record, blocks_filled, partial=False)
+        return _pattern_verified_bucket(sid, standing, record, blocks_filled, partial=False, pattern_overrides=pattern_overrides)
 
     # --- Fallback: anything not covered above (defensive - e.g. a
     #     standing value other than GS/AR/CE/EX showing up in future data) ---
@@ -361,7 +372,8 @@ def bucket_student(
 
 
 def bucket_all(
-    records: list[StudentRecord], blocks_due: Optional[int] = None
+    records: list[StudentRecord], blocks_due: Optional[int] = None,
+    pattern_overrides: Optional[dict] = None,
 ) -> list[BucketResult]:
     current_period = _infer_current_period(records)
-    return [bucket_student(r, current_period, blocks_due) for r in records]
+    return [bucket_student(r, current_period, blocks_due, pattern_overrides) for r in records]

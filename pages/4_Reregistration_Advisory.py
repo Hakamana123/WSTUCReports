@@ -30,6 +30,7 @@ from student_tracker.pipeline.report_builder import build_advisory_report
 from student_tracker.pipeline.stages import STAGES, stage5_ce_only
 from student_tracker.pipeline.glossary import glossary_dataframe
 from student_tracker.pipeline.timing import blocks_due as compute_blocks_due, DAYS_PER_BLOCK
+from student_tracker.pipeline.pattern_lookup import load_pattern_overrides
 
 st.set_page_config(page_title="Reregistration Advisory", layout="wide")
 
@@ -40,9 +41,31 @@ if _TEMPLATE_PATH.exists():
         _TEMPLATE_PATH.read_bytes(),
         _TEMPLATE_PATH.name,
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        help="For proposing new/updated pattern-of-study reference data - "
-             "not yet wired into an upload feature on this page.",
+        help="Fill this in to propose new/updated pattern-of-study reference "
+             "data, then upload it below to try it out.",
     )
+
+st.sidebar.markdown("---")
+pattern_upload = st.sidebar.file_uploader(
+    "Upload filled Pattern of Study template (optional)",
+    type=["xlsx"],
+    help="Session-scoped only - this never edits the tool's built-in "
+         "reference data, it only affects this run. Uploaded rows "
+         "override/extend the built-in pattern table below.",
+)
+
+pattern_overrides = None
+if pattern_upload is not None:
+    try:
+        pattern_overrides = load_pattern_overrides(io.BytesIO(pattern_upload.getvalue()))
+        n_sessions = len(pattern_overrides)
+        n_rows = sum(len(programs) for programs in pattern_overrides.values())
+        st.sidebar.success(
+            f"Loaded {n_rows} program/session row(s) across "
+            f"{n_sessions} session(s): {', '.join(sorted(pattern_overrides.keys()))}."
+        )
+    except ValueError as e:
+        st.sidebar.error(f"Couldn't read this template: {e}")
 
 st.title("Reregistration Advisory")
 st.caption(
@@ -91,7 +114,13 @@ with st.expander("Instructions", expanded=False):
         "Standing student with zero registration is only flagged as "
         "*overdue* once we know a block they should've registered for has "
         "already started, rather than staying an unclear timing question. "
-        "Skip this and that case just stays classified as unclear, as before."
+        "Skip this and that case just stays classified as unclear, as before.  \n"
+        "The sidebar's **Pattern of Study template** download/upload lets you "
+        "propose new or corrected pattern-of-study data (e.g. for a "
+        "commencement session or program the built-in table doesn't cover "
+        "yet) and try it out immediately, without a code change. It's "
+        "session-scoped - uploading never edits the tool's actual built-in "
+        "data, only this run's results."
     )
 
 with st.expander("Stage coverage (Modular Re-registration Timeline)", expanded=False):
@@ -204,7 +233,7 @@ except ValueError as e:
     st.stop()
 
 records = to_student_records(df)
-results = bucket_all(records, blocks_due_value)
+results = bucket_all(records, blocks_due_value, pattern_overrides)
 
 result_by_id = {r.student_id: r for r in results}
 rows = [
@@ -329,7 +358,7 @@ st.caption(
     "buckets; everything else is flagged for advisor review pending confirmation."
 )
 
-advisory_rows = build_advisory_report(records, blocks_due_value)
+advisory_rows = build_advisory_report(records, blocks_due_value, pattern_overrides)
 
 stage5_only = st.checkbox(
     "Scope to AUT/SPR Stage 5 (Conditional Enrolment only, per the "

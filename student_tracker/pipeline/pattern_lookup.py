@@ -64,6 +64,60 @@ needs to go back to Grant, not be silently overwritten either way.
 left as-is: since it was already identical to 7198's, it should still
 be the right teach-out pattern for continuing 7188 students, not a gap
 - flagging the assumption here rather than treating it as still open.
+
+2026-08-21: the 2024-2025 archived handbook (handbook.westernsydney.
+edu.au/2024-2025/) proves patterns genuinely change by commencement
+cohort, not just by season - this is university policy, not a guess.
+7189's page there is explicit: "Effective from: 2025... applies to
+students who commenced in Autumn Block 1, 2025 or later," with a
+"Replaced Programs" table naming which OLDER program code (6000, 6001,
+7018, 7142, 7143, or 7088 depending on exact commencement year)
+students from 2020-2024 should follow instead. This almost certainly
+applies to every diploma code in this table, not just 7189 - none of
+the 2026-sourced rows above should be assumed valid for pre-2025
+commencers without checking that program's own Replaced Programs table
+first. Not yet done for anything but 9031 (see below) - a real,
+larger-than-expected piece of remaining work, not a one-off.
+
+Added "25 AUT" and "24 AUT" rows for 9031, since it (unlike 7189) kept
+the same program code across the cutover - the archived page has two
+structure tabs, "2025" and "2022-2024," confirming they genuinely
+differ: HLTH0002 and MATH0017 swap semesters between the two eras.
+"25 AUT" is copied from "26 AUT" (medium confidence - the handbook
+groups 2025 as one structure with no further split, but only 26 AUT's
+Autumn-Block-1 commencers were empirically checked against real
+registration data, not 25's specifically). "24 AUT" comes straight from
+the archived "Structure 2022-2024" tab's Term 1/Term 2 subject lists
+(medium confidence - sourced directly from the university's own
+archived handbook, but not empirically checked at all: the roster has
+only 1 student total commencing "24 - Autumn Block 1" for program 9031,
+nowhere near enough to validate against).
+
+2026-08-21: predecessor-code map for the other diploma codes, pulled
+from each program's own "Replaced Programs" section on the 2024-2025
+archive - this is what a pre-2025 commencer showing one of today's
+diploma codes in the roster should actually be checked against, once
+someone pulls that predecessor's subject-level structure (not done yet
+- this is a map of WHERE to look, not resolved pattern data):
+  - 7189 (Health Science)      <- 7018, 6000, 6001, 7142, 7143, 7088 (2020-2024)
+  - 7190 (Business)            <- 7177, 7102, 6037 (2022-2024)
+  - 7191 (ICT)                 <- 7163, 6039, 7138, 6040, 7140 (2018-2024)
+  - 7192 (Building Design &    <- MERGED from 7108 (Building Design Mgmt)
+    Construction)                 + 7169 (Construction Technology) (2021-2024)
+  - 7193 (Engineering Studies) <- 7034, 6033, 7162, 7035, 6046 (2014-2024)
+  - 7194 (Creative Industries  <- MERGED from multiple Communication/Design
+    & Communication)              Extended variants, no single clean code (2018-2024)
+  - 7195 (Arts)                <- 7049, plus 7144/7145/7146/7161/7166/7187
+                                   Extended variants (2018-2024)
+  - 7196 (Science)             <- none listed on the archive at all - either
+                                   a data gap in the source, or genuinely
+                                   unchanged/no predecessor
+  - 7197 (Education Studies)   <- none listed - genuinely new in 2025, no
+                                   predecessor to check against
+  - 7198 (Social Sciences)     <- 7188 (Diploma in Culture, Society and
+                                   Justice), 2023-2024 - confirms the
+                                   7188/7198 same-pattern assumption above
+                                   was correct, not a coincidence
 """
 
 from __future__ import annotations
@@ -131,12 +185,24 @@ def _normalize_session(commencement_period: str) -> tuple[Optional[str], Optiona
     return f"{year} {_SEASON_ABBR[season]}", None
 
 
-def lookup_pattern(program: int, commencement_period: Optional[str]) -> PatternOfStudy:
+def lookup_pattern(
+    program: int, commencement_period: Optional[str], overrides: Optional[dict] = None
+) -> PatternOfStudy:
     """Return the Pattern of Study for a given program + commencement period.
 
     Resolved only for the narrow slice described in the module docstring;
     everything else returns `resolved=False` with a specific reason rather
     than a guess.
+
+    overrides (see load_pattern_overrides below): an uploaded Pattern of
+    Study template, in the same {session: {program: {position: subject}}}
+    shape as _PATTERN_TABLE. Checked first and, if it has a matching row,
+    used instead of - and able to supersede - every built-in block below
+    (_UNMODELED_SESSIONS, _UNCONFIRMED_ORDER_PROGRAMS, missing table rows).
+    That's deliberate: the whole point of letting someone upload new
+    pattern data is to unblock exactly those cases without a code change.
+    None (the default) leaves behavior identical to before this param
+    existed.
     """
     if commencement_period is None:
         return PatternOfStudy(
@@ -154,6 +220,15 @@ def lookup_pattern(program: int, commencement_period: Optional[str]) -> PatternO
             program=program, commencement_period=commencement_period,
             resolved=False, unresolved_reason=reason,
         )
+
+    if overrides:
+        override_positions = overrides.get(session, {}).get(str(program))
+        if override_positions is not None:
+            return PatternOfStudy(
+                program=program, commencement_period=commencement_period,
+                block_sequence={int(k): v for k, v in override_positions.items()},
+                resolved=True,
+            )
 
     if session in _UNMODELED_SESSIONS:
         return PatternOfStudy(
@@ -225,14 +300,18 @@ class PatternComparison:
 
 
 def compare_registration_to_pattern(
-    program: int, commencement_period: Optional[str], block_registrations: list
+    program: int, commencement_period: Optional[str], block_registrations: list,
+    overrides: Optional[dict] = None,
 ) -> PatternComparison:
     """Compare a student's actual Spring Block 1-2 registration against
     what the pattern expects there (see SPRING_BLOCK_TO_POSITION above for
     why only blocks 1-2 are checkable). Shared by bucketing.py and
     report_builder.py so the two stay consistent rather than drifting.
+
+    overrides: passed straight through to lookup_pattern - see its
+    docstring. None leaves behavior unchanged.
     """
-    pattern = lookup_pattern(program, commencement_period)
+    pattern = lookup_pattern(program, commencement_period, overrides)
     if not pattern.resolved:
         return PatternComparison(status="Unknown", advised="", reason=pattern.unresolved_reason)
 
@@ -255,3 +334,59 @@ def compare_registration_to_pattern(
     advised = "; ".join(advised_parts) if advised_parts \
         else "(pattern has no Spring-mapped positions for this program)"
     return PatternComparison(status=status, advised=advised)
+
+
+def load_pattern_overrides(file) -> dict:
+    """Parse an uploaded Pattern of Study template (see
+    templates/pattern_of_study_template.xlsx) into the same
+    {session: {program: {position: subject}}} shape as _PATTERN_TABLE,
+    for use as the `overrides` param on lookup_pattern /
+    compare_registration_to_pattern.
+
+    Session-scoped only - this never touches pattern_table.json on disk,
+    so an upload can't silently become "official" data. A blank Subject
+    Code is kept as "confirmed doesn't run this session" by omitting that
+    position from the result, matching the convention already used for
+    e.g. program 7197 in pattern_table.json. The "Confirmed?" column is
+    read by the caller for display but isn't used here - every row that
+    parses is treated as resolved, Y or N, since there's no consumer yet
+    that varies bucket confidence by it (see bucketing.py's confidence-
+    tier docstring).
+
+    Raises ValueError with a specific message on a malformed upload
+    (wrong sheet name, missing columns) rather than silently returning an
+    empty or partial table.
+    """
+    import pandas as pd
+
+    try:
+        df = pd.read_excel(file, sheet_name="Block Positions")
+    except ValueError as e:
+        raise ValueError(
+            "Couldn't find a 'Block Positions' sheet in this file - is it "
+            "the Pattern of Study template?"
+        ) from e
+
+    required = {"Session", "Program", "Position", "Subject Code"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(
+            f"'Block Positions' sheet is missing column(s): {', '.join(sorted(missing))}"
+        )
+
+    overrides: dict = {}
+    for _, row in df.iterrows():
+        session, program, position = row.get("Session"), row.get("Program"), row.get("Position")
+        if pd.isna(session) or pd.isna(program) or pd.isna(position):
+            continue
+        session = str(session).strip()
+        program_key = str(int(program))
+        position_key = str(int(position))
+        subject = row.get("Subject Code")
+        subject = None if pd.isna(subject) else str(subject).strip()
+
+        overrides.setdefault(session, {}).setdefault(program_key, {})
+        if subject:
+            overrides[session][program_key][position_key] = subject
+
+    return overrides
