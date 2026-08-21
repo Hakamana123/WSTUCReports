@@ -73,7 +73,7 @@ scratch, we don't know Grant's actual rules for deriving Rereg
 Principles/Template from pass/fail history - only the shape of his
 finished output. So this module's role for Stage 2 is READING/
 DISPLAYING his already-computed recommendation (see
-pages/10_Stage2_Recommendations.py), not reproducing his logic the way
+pages/10_Stage2_3_Recommendations.py), not reproducing his logic the way
 bucketing.py does for Stage 5.
 
 2026-08-22, confirmed directly by Josiah (first real classification-rule
@@ -343,8 +343,9 @@ def failed_subject_codes_sem1_only(history: SubjectHistory, pattern_overrides: O
     """Same as failed_subject_codes, but only Semester 1 (sem1_failed_
     positions) - for files generated before Sem2 runs (AB4-for-SPR /
     Stage 2-3), where a Sem2 "not yet passed" digit means not-yet-due,
-    not failed. Used by pages/10_Stage2_Recommendations.py and
-    pages/11_Stage3_Prep_Recommendations.py.
+    not failed. Used by pages/10_Stage2_3_Recommendations.py (which covers
+    both Stage 2 and Stage 3, merged into one page since they share the
+    same input file).
     """
     if not history.sem1_failed_positions:
         return "(none)"
@@ -565,14 +566,37 @@ def expected_rereg_principles(history: SubjectHistory, current_autumn_year: Opti
 
 def rereg_principle_mismatch(history: SubjectHistory, current_autumn_year: Optional[int]) -> Optional[str]:
     """A human-readable description if history.rereg_principle disagrees
-    with the empirically-validated expectation, or None if it matches OR
+    with the empirically-validated expectation, or None if it matches, OR
     no confident expectation exists for this student (see
-    expected_rereg_principles). None means "nothing to flag", not
-    "confirmed correct" - this is a QA aid pointing at rows worth a human
-    second look, not a replacement for Grant's own classification.
+    expected_rereg_principles), OR there's nothing to compare against
+    because the file has no Rereg Principles for this student at all
+    (a plain enhanced roster rather than Grant's finished output - see
+    suggested_rereg_principle for that case instead). None means "nothing
+    to flag", not "confirmed correct" - this is a QA aid pointing at rows
+    worth a human second look, not a replacement for Grant's own
+    classification.
     """
+    if history.rereg_principle is None:
+        return None
     expected = expected_rereg_principles(history, current_autumn_year)
     if expected is None or history.rereg_principle in expected:
         return None
     expected_str = " or ".join(f'"{e}"' for e in expected)
     return f'Expected {expected_str}, got "{history.rereg_principle}"'
+
+
+def suggested_rereg_principle(history: SubjectHistory, current_autumn_year: Optional[int]) -> Optional[str]:
+    """Best-effort single suggested Rereg Principle from the empirically-
+    validated threshold - for use when a file doesn't carry Grant's own
+    classification at all (e.g. a plain enhanced roster rather than his
+    finished recommendation output), so there's still something useful to
+    show. Only returns a value when expected_rereg_principles narrows to
+    exactly ONE confident label - the ambiguous two-option band ("3+
+    Sessions" or "Complete") and everywhere expected_rereg_principles
+    returns None both come back as None here too. Never guesses between
+    multiple plausible labels.
+    """
+    expected = expected_rereg_principles(history, current_autumn_year)
+    if expected is None or len(expected) != 1:
+        return None
+    return expected[0]

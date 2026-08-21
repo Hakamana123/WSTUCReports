@@ -80,7 +80,7 @@ STAGES: list[Stage] = [
              "spans all standings (not just CE), and every row's 'Advice "
              "for when' reads '26 SPR' (generated after Autumn's results, "
              "advising for the coming Spring). See "
-             "pages/10_Stage2_Recommendations.py and history.py's module "
+             "pages/10_Stage2_3_Recommendations.py and history.py's module "
              "docstring. 'Built' here means the same thing it means for "
              "Stage 4 - we read/display/filter/export Grant's own already-"
              "computed output, not independently reproduce his Rereg "
@@ -105,12 +105,16 @@ STAGES: list[Stage] = [
              "the identical finished-recommendation shape as 'B1-B4 Name' "
              "('you don't need to register' vs. a specific GEDU0016/0017 "
              "code), just for the two prep subjects instead of the block "
-             "subjects. See pages/11_Stage3_Prep_Recommendations.py - kept "
-             "as its own page rather than merged into Stage 2's, per "
-             "Josiah's 'split by stage, not by type' preference. Same "
-             "'built means displays Grant's output, not reproduces his "
-             "rules' caveat as Stage 2. SPR Stage 3 stays blocked - needs "
-             "a different file ('2025 SPR for 2025 SUM') not yet seen.",
+             "subjects. Same 'built means displays Grant's output, not "
+             "reproduces his rules' caveat as Stage 2. SPR Stage 3 stays "
+             "blocked - needs a different file ('2025 SPR for 2025 SUM') "
+             "not yet seen.\n"
+             "2026-08-22: merged into pages/10_Stage2_3_Recommendations.py "
+             "instead of keeping a separate page - both stages need the "
+             "identical uploaded file, so a separate page meant uploading "
+             "it twice for no benefit. This reverses the earlier 'kept as "
+             "its own page' call for this specific pair (Stage 2/3 share "
+             "one file; Stage 2/Stage 5 don't, so that split still stands).",
     ),
     Stage(
         semester="AUT", number=4,

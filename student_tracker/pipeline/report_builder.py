@@ -23,7 +23,7 @@ separate gap from the position question (Grant question #6).
 
 2026-08-22: this used to also merge in Stage 2's past subject history
 (history.py, the "AB4 for SPR" file) as extra columns here. Moved out to
-its own page (pages/10_Stage2_Recommendations.py) instead - Josiah chose
+its own page (pages/10_Stage2_3_Recommendations.py) instead - Josiah chose
 a dedicated Stage 2 view over merging it into this (Stage 5) report,
 since the two are different audiences at different points in the
 Timeline (see stages.py). This module is Stage 5 only again.
