@@ -31,6 +31,9 @@ from student_tracker.pipeline.stages import STAGES, stage5_ce_only
 from student_tracker.pipeline.glossary import glossary_dataframe
 from student_tracker.pipeline.timing import blocks_due as compute_blocks_due, DAYS_PER_BLOCK
 from student_tracker.pipeline.pattern_lookup import load_pattern_overrides
+from student_tracker.pipeline.history import (
+    load_reregistration_history, to_history_records, history_by_student_id,
+)
 
 st.set_page_config(page_title="Reregistration Advisory", layout="wide")
 
@@ -66,6 +69,32 @@ if pattern_upload is not None:
         )
     except ValueError as e:
         st.sidebar.error(f"Couldn't read this template: {e}")
+
+st.sidebar.markdown("---")
+history_upload = st.sidebar.file_uploader(
+    "Upload past subject history (optional) — 'AB4 for SPR' style file",
+    type=["xlsx"],
+    help="Adds Rereg Principles / Template / Subjects failed to date columns "
+         "to the report below, matched by Student ID. Sits alongside the "
+         "existing Bucket column rather than replacing it. Reads every "
+         "diploma and Nursing/UPP 'full population' sheet in the workbook "
+         "automatically (not the Bulk/Complete/Exclusion breakdown sheets, "
+         "which are subsets of those).",
+)
+
+history_by_id = None
+if history_upload is not None:
+    try:
+        history_df = load_reregistration_history(io.BytesIO(history_upload.getvalue()))
+        history_records = to_history_records(history_df)
+        history_by_id = history_by_student_id(history_records)
+        skipped = len(history_df) - len(history_records)
+        msg = f"Loaded {len(history_records)} student history record(s)."
+        if skipped:
+            msg += f" Skipped {skipped} row(s) with an unrecognized subject-history shape."
+        st.sidebar.success(msg)
+    except ValueError as e:
+        st.sidebar.error(f"Couldn't read this file: {e}")
 
 st.title("Reregistration Advisory")
 st.caption(
@@ -120,7 +149,11 @@ with st.expander("Instructions", expanded=False):
         "commencement session or program the built-in table doesn't cover "
         "yet) and try it out immediately, without a code change. It's "
         "session-scoped - uploading never edits the tool's actual built-in "
-        "data, only this run's results."
+        "data, only this run's results.  \n"
+        "The sidebar's **past subject history** upload adds each student's "
+        "real Rereg Principles/Template category and which past subjects "
+        "they haven't yet passed, alongside (not instead of) the Bucket "
+        "column - covers both diploma programs and Nursing/UPP (9031)."
     )
 
 with st.expander("Stage coverage (Modular Re-registration Timeline)", expanded=False):
@@ -357,7 +390,7 @@ st.caption(
     "buckets; everything else is flagged for advisor review pending confirmation."
 )
 
-advisory_rows = build_advisory_report(records, blocks_due_value, pattern_overrides)
+advisory_rows = build_advisory_report(records, blocks_due_value, pattern_overrides, history_by_id)
 
 stage5_only = st.checkbox(
     "Scope to AUT/SPR Stage 5 (Conditional Enrolment only, per the "
@@ -380,6 +413,9 @@ advisory_df = pd.DataFrame(
         "Bucket": r.bucket.replace("_", " "),
         "Bucket confidence": r.bucket_confidence,
         "Advice": r.advice,
+        "Rereg Principles": r.rereg_principle or "",
+        "Template": r.template or "",
+        "Subjects failed to date": r.subjects_failed_to_date or "",
     }
     for r in advisory_rows
 )
