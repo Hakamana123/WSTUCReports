@@ -41,6 +41,23 @@ NURSING/UPP shape (program 9031) - 2 bracket groups, sizes (4, 4):
 Both shapes: each pass/fail digit is 0 = passed, 1 = still needs to
 enrol/pass. Any other bracket-group count/size is an unrecognized shape -
 parse_all_subjects raises rather than guess.
+
+2026-08-22: the diploma shape's pass/fail decoding (not the elective-count
+digit) was independently ground-truth-checked against a different real
+file - "2026 AUT Stage 5 Reregistration Advice List v1.1.xlsx", which
+decodes the same "All Subjects" string into explicit Subject 1-8
+Status/Prep 1-2 Status columns (e.g. "HUMN1070 Completed" vs. a bare 1).
+parse_all_subjects's output matched all 387 diploma rows exactly (one row
+showed a raw 0 instead of a resolved subject name for program 7191
+position 5 - a lookup glitch in that spreadsheet's own formula, not a
+decoding disagreement). This is a stronger check than the original v1.1
+reverse-engineering, since it's ground truth from a second, independently
+generated file rather than inference from B-Name columns. The
+elective-count digit's meaning wasn't re-confirmed by this file - its
+correlation with "elective" wording in B2-B4 Name was noticeably weaker
+there, plausibly because that file has no B1 Name column at all (see
+stages.py's Stage 5 note) so elective advice that would show in B1 isn't
+visible to check against.
 """
 
 from __future__ import annotations

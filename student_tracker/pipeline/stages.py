@@ -117,7 +117,16 @@ STAGES: list[Stage] = [
         note="This is what bucketing.py + report_builder.py already do, "
              "scoped to CE via stage5_ce_only() below rather than mutating "
              "bucketing.py itself - keeps the general-purpose, already-"
-             "validated logic intact for other consumers.",
+             "validated logic intact for other consumers.\n"
+             "2026-08-22: confirmed directly against a real file for this "
+             "exact stage - '2026 AUT Stage 5 Reregistration Advice List "
+             "v1.1.xlsx', whose Stage column literally reads '26 AUT Stage "
+             "5' and whose every row is Progression Outcome = 'Conditional "
+             "Enrolment', matching population above exactly. It also has no "
+             "B1 Name column (only Prep/B2/B3/B4) - consistent with 'SB2 "
+             "Week 1' timing, since SB1 is already a locked-in result by "
+             "then, not something left to advise on. See history.py's "
+             "module docstring for the parser validation this file enabled.",
     ),
 
     # SPR mirrors AUT exactly, block roles swapped (SB<->AB).
