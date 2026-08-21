@@ -183,29 +183,69 @@ evidence, not just structural inference):
     fails everything (GEDU0016 prep AND all 4 Sem1 blocks) - so this
     category is NOT reserved for continuing/multi-session strugglers the
     way "3+ Sessions" is; it can trigger in session 1 given total (or
-    near-total) failure. This means severity-within-the-current-session
-    and persistence-across-sessions look like two separate axes feeding
-    Rereg Principles, not one ladder ordered purely by session count -
-    e.g. a mild single-session stumble (Mostly Progressing) and a total
-    single-session wipeout (Overall lack of success) are both possible
-    in session 1, at opposite ends of severity, with no session-count
-    component needed for either. Confirmed action: "ask her to re-enrol
-    and try again" - the real-world equivalent of bucketing.py's
-    reapply_next_semester bucket (commencing, below Good Standing, zero
-    registration), suggesting our own invented taxonomy and Grant's real
-    one converge on similar remediation for this case even though the
-    category NAMES and trigger conditions differ.
+    near-total) failure. Confirmed action: "ask her to re-enrol and try
+    again" - the real-world equivalent of bucketing.py's
+    reapply_next_semester bucket.
+    *** CONTRADICTED BY REAL DATA (2026-08-22) - see the EMPIRICAL
+    VALIDATION section below. Every genuinely first-semester student in
+    the real v2.1 file (n=1809, "26 - Autumn Block 1") who failed
+    everything (149 of them) was labeled "Unsatisfactory progress in S1",
+    NEVER "Overall lack of success" - 100% clean, zero exceptions. The
+    "re-enrol and try again" action is real, but for a different
+    population than this note claimed - see below for the corrected
+    population. Kept here (not deleted) as a record of the discrepancy,
+    not as guidance to follow. ***
   - PARTIALLY CONFIRMED, needs follow-up: whether the fail-COUNT
     threshold for a category tightens the further along a student is
-    (e.g. a session-3+ student with just ONE outstanding subject already
-    counting as "Overall lack of success", vs. session 1 needing near-
-    total failure for that same label) was floated but not directly
-    confirmed or denied by Josiah - his reply ("likely to be CE") only
-    confirmed that a session-3+ student still carrying failures tends
-    toward Conditional Enrolment standing, not the specific fail-count
-    question asked. Treat the "thresholds tighten with session number"
-    idea as a live hypothesis, not a confirmed rule, until asked again
-    directly with a cleaner yes/no framing.
+    was floated but not directly confirmed or denied by Josiah - his
+    reply ("likely to be CE") only confirmed a standing correlation, not
+    the specific fail-count question asked.
+    *** RESOLVED BY REAL DATA (2026-08-22) - see the EMPIRICAL VALIDATION
+    section below. The threshold does tighten dramatically with session
+    number: a first-semester student needs to fail EVERYTHING (5 of 5) to
+    even approach "Unsatisfactory progress in S1", the most severe label
+    available to them - while a session-3 continuing student reaches
+    "Overall lack of success" (a more severe label entirely) at just 4 of
+    5 failed, and starts seeing it appear at 2-3. ***
+
+EMPIRICAL VALIDATION (2026-08-22) - cross-tabulated total_not_passed
+(GEDU0016 + the 4 Sem1 blocks, so 0-5 possible) against real Rereg
+Principles in the actual v2.1 file, separately for two commencement
+cohorts. This is a MUCH stronger evidence base than the scenario
+questions above (thousands of real rows vs. a handful of hypotheticals)
+and should be treated as the more reliable source wherever the two
+disagree - see the CONTRADICTED/RESOLVED markers above.
+
+First-semester students ("26 - Autumn Block 1", n=1809) - 100% clean,
+zero exceptions at every level:
+    total_not_passed=0        -> On Pattern                     (1030/1030)
+    total_not_passed=1 or 2   -> Mostly Progressing               (433/433)
+    total_not_passed=3, 4, 5  -> Unsatisfactory progress in S1    (346/346)
+
+Continuing students, 3rd semester ("25 - Autumn Block 1", n=625) - clean
+at the extremes, genuinely mixed in the middle (not a data error - two
+real outcomes coexist there, driven by something not yet identified,
+possibly which specific position(s) failed):
+    total_not_passed=0 or 1   -> 3+ Sessions (or "Complete" if the
+                                  student has actually finished - the 0/1
+                                  split between those two isn't yet
+                                  understood either)
+    total_not_passed=2        -> 46 "3+ Sessions" vs. 23 "Overall lack
+                                  of success" (mixed)
+    total_not_passed=3        -> 2 "3+ Sessions" vs. 48 "Overall lack of
+                                  success" (mixed, mostly the latter)
+    total_not_passed=4 or 5   -> Overall lack of success            (187/187, clean)
+
+Caveats: (1) this is one snapshot of one file - re-validate against
+future files rather than assuming it's permanent; (2) a THIRD cohort
+("25 - Spring Block 1", n=568) does NOT fit this same two-cohort model
+cleanly, plausibly because a Spring-commencing student's "Sem1" (in the
+bracket-string sense) is calendar-Spring, not calendar-Autumn, and what
+counts as "elapsed" vs "not yet due" shifts accordingly - not yet
+reconciled, treat commencement-based session-counting as validated only
+for Autumn-commencing students until checked further; (3) the middle-
+band mixing for continuing students (totals 2-3) means the rule isn't
+fully deterministic everywhere, only at the extremes.
 """
 
 from __future__ import annotations
