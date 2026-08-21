@@ -17,8 +17,10 @@ What's resolved (2026-08-07, confirmed with Josiah):
   - For that session, positions 1-4 map to Autumn Block 1-4
     respectively (Grant, scoping call: "you'll have subjects 1, 2,
     3, 4 running in blocks 1, 2, 3, 4"). A "-" in the reference pattern
-    means the subject doesn't run that session at all (see the 7197
-    case in the same call), not "not yet resolved".
+    means the subject doesn't run that session at all, not "not yet
+    resolved" - though see 2026-08-21 below: the one case this was
+    originally illustrated with (7197's position 4) turned out to be
+    wrong, not an example of it.
 
 What's still open (Grant question #1, unchanged) — these all fall
 through to `resolved=False` rather than being guessed:
@@ -52,12 +54,16 @@ handbook-listed order but aren't independently checkable (no Autumn
 block-level registration data in either roster) - trust is inherited
 from the confirmed back half, not separately verified.
 
-7197 (Diploma in Education Studies): the 2026 handbook lists a 6th
-required core subject, EDUC1012 (Literacy and Numeracy for Educators),
-that isn't in this table at all - position 4 is blank here on the
-strength of a direct Grant quote ("the 7197 case," see above), but the
-handbook contradicts that framing. Left unresolved intentionally - this
-needs to go back to Grant, not be silently overwritten either way.
+7197 (Diploma in Education Studies): RESOLVED 2026-08-21 in the
+handbook's favour, not Grant's original quote - EDUC1012 (Literacy and
+Numeracy for Educators) is now position 4, confirmed correct by Josiah
+having reviewed the handbook directly. Placement wasn't a judgment call:
+positions 1/2/3/5/6 were already occupied by the other five confirmed
+core subjects, so EDUC1012 could only go in the one open slot. The
+original "position 4 is blank, subject doesn't run" framing (attributed
+to a direct Grant quote at the top of this docstring) was simply wrong
+for this program - worth flagging back to Grant as a correction, not
+just a gap that's now filled.
 
 7188 (Diploma, same 6-subject pattern as 7198) is discontinued for new
 2026 intake (404s on the current handbook) but this table's entry is
