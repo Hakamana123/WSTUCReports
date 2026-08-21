@@ -22,7 +22,7 @@ import pandas as pd
 import streamlit as st
 
 from student_tracker.pipeline.history import (
-    load_reregistration_history, to_history_records, failed_subject_codes,
+    load_reregistration_history, to_history_records, failed_subject_codes_sem1_only,
 )
 from student_tracker.pipeline.stages import get_stage
 
@@ -85,7 +85,7 @@ report_df = pd.DataFrame(
         "Commencement Period": r.commencement_period,
         "Rereg Principles": r.rereg_principle,
         "Template": r.template,
-        "Subjects failed to date": failed_subject_codes(r),
+        "Subjects failed in Semester 1": failed_subject_codes_sem1_only(r),
         "Electives outstanding": r.electives_outstanding,
         "B1 advice": r.block_advice[0],
         "B2 advice": r.block_advice[1],

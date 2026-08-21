@@ -101,6 +101,18 @@ evidence, not just structural inference):
     Stage 5 bucketing today even though this registration is the CORRECT
     catch-up shape. Not yet acted on in bucketing.py/pattern_lookup.py -
     flagging here as a known gap this scenario exposed.
+    IMPORTANT REFINEMENT (2026-08-22): this catch-up path is NOT general
+    to any failed Sem1 position - it's specific to Blocks 3 and 4,
+    because Spring's Block 3-4 slots are physically free to reuse for
+    them. A failed Block 1 or 2 subject has no such slot available in
+    Spring at all (per Josiah: "because of the pattern of study, subject
+    2 will not be offered in block 3/4 in semester 2") - that student
+    instead has to wait for Summer or the following year's semester to
+    retake it. So which positions can even be "made up" next semester
+    depends on WHICH position failed, not just that something failed -
+    this is squarely substitution.py's territory (still a stub) and
+    should NOT be generalized into a simple "any Sem1 failure gets
+    caught up next semester" rule.
   - Confirmed Rereg Principles data point: passed prep-to-date, passed
     Sem1 Blocks 1-2, failed Sem1 Blocks 3-4, first semester (no prior
     session history) -> "Unsatisfactory progress in S1". Academic
@@ -211,19 +223,40 @@ class SubjectHistory:
         upper bound generically). The two prep subjects (diploma shape
         only) aren't pattern-table positions, so a failed prep doesn't
         show up here; check prep_passed separately if needed.
+
+        Includes Sem2 positions unconditionally - only correct for a file
+        whose timing means Sem2 has actually run. For the AB4-for-SPR /
+        Stage 2-3 files (generated BEFORE Sem2 starts), Sem2 hasn't
+        happened yet, so a "not yet passed" Sem2 digit there means not-
+        yet-due, not failed - see sem1_failed_positions for that case.
         """
         offset = len(self.sem1_passed)
         failed = [i for i, passed in enumerate(self.sem1_passed, start=1) if not passed]
         failed += [i for i, passed in enumerate(self.sem2_passed, start=offset + 1) if not passed]
         return failed
 
+    @property
+    def sem1_failed_positions(self) -> list:
+        """Semester 1 positions (1-4) not yet passed - the subset of
+        failed_positions that's ALWAYS genuinely elapsed/checkable
+        regardless of when the file was generated, since Sem1 has to have
+        already run for this file to exist at all. Use this (not
+        failed_positions) for any file generated before Sem2 runs, e.g.
+        the AB4-for-SPR / Stage 2-3 files - confirmed directly by Josiah
+        2026-08-22 (see module docstring) that GEDU0017/Sem2 blocks can't
+        be complete at that checkpoint, so treating them as "failed" is
+        wrong, not just imprecise.
+        """
+        return [i for i, passed in enumerate(self.sem1_passed, start=1) if not passed]
+
 
 def failed_subject_codes(history: SubjectHistory, pattern_overrides: Optional[dict] = None) -> str:
-    """Resolve a SubjectHistory's failed_positions to subject codes where
-    the pattern table covers them, falling back to "Position N" for
-    positions it doesn't. "(none)" when nothing is outstanding. Used by
-    pages/10_Stage2_Recommendations.py and Stage 3's equivalent page so
-    they don't drift into different wording for the same thing.
+    """Resolve a SubjectHistory's failed_positions (Sem1 AND Sem2) to
+    subject codes where the pattern table covers them, falling back to
+    "Position N" for positions it doesn't. "(none)" when nothing is
+    outstanding. Only correct for a file where Sem2 has actually run -
+    see failed_subject_codes_sem1_only for the AB4-for-SPR / Stage 2-3
+    file case.
     """
     if not history.failed_positions:
         return "(none)"
@@ -231,6 +264,23 @@ def failed_subject_codes(history: SubjectHistory, pattern_overrides: Optional[di
     parts = [
         pattern.block_sequence.get(pos, f"Position {pos}")
         for pos in history.failed_positions
+    ]
+    return "; ".join(parts)
+
+
+def failed_subject_codes_sem1_only(history: SubjectHistory, pattern_overrides: Optional[dict] = None) -> str:
+    """Same as failed_subject_codes, but only Semester 1 (sem1_failed_
+    positions) - for files generated before Sem2 runs (AB4-for-SPR /
+    Stage 2-3), where a Sem2 "not yet passed" digit means not-yet-due,
+    not failed. Used by pages/10_Stage2_Recommendations.py and
+    pages/11_Stage3_Prep_Recommendations.py.
+    """
+    if not history.sem1_failed_positions:
+        return "(none)"
+    pattern = lookup_pattern(history.program, history.commencement_period, pattern_overrides)
+    parts = [
+        pattern.block_sequence.get(pos, f"Position {pos}")
+        for pos in history.sem1_failed_positions
     ]
     return "; ".join(parts)
 
