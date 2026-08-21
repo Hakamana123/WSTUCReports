@@ -249,13 +249,14 @@ fully deterministic everywhere, only at the extremes.
 """
 
 from __future__ import annotations
+from collections import Counter
 from dataclasses import dataclass
 from typing import Optional
 import re
 
 import pandas as pd
 
-from .pattern_lookup import lookup_pattern
+from .pattern_lookup import lookup_pattern, _COMMENCEMENT_RE
 
 PREP_SUBJECT_CODES = ["GEDU0016", "GEDU0017"]
 
@@ -509,3 +510,69 @@ def to_history_records(df: pd.DataFrame) -> list:
 def history_by_student_id(records: list) -> dict:
     """Index SubjectHistory records by student_id."""
     return {r.student_id: r for r in records}
+
+
+def infer_current_commencement_year(records: list) -> Optional[int]:
+    """Most common Autumn-commencement year across a list of SubjectHistory
+    records - proxy for "which year's Autumn intake this file is currently
+    reporting on" (mirrors bucketing.py's _infer_current_period technique).
+    None if there are no Autumn-commencement records at all.
+    """
+    years = []
+    for r in records:
+        m = _COMMENCEMENT_RE.match((r.commencement_period or "").strip())
+        if m and m.group(2) == "Autumn":
+            years.append(int(m.group(1)))
+    if not years:
+        return None
+    return Counter(years).most_common(1)[0][0]
+
+
+def expected_rereg_principles(history: SubjectHistory, current_autumn_year: Optional[int]) -> Optional[tuple]:
+    """The Rereg Principle(s) consistent with the EMPIRICAL VALIDATION
+    threshold documented in this module's docstring - a tuple of one or
+    more acceptable labels, or None if this student's situation isn't one
+    we have a confident, validated expectation for (any of: Nursing/UPP,
+    a non-Autumn or unparseable commencement, a commencement more than one
+    year off from the current intake, or the genuinely-mixed middle band
+    for continuing students). None means "no basis to check", NOT "this
+    is wrong" - callers must treat it as "skip", never as a mismatch.
+    """
+    if not history.prep_passed or current_autumn_year is None:
+        return None
+    m = _COMMENCEMENT_RE.match((history.commencement_period or "").strip())
+    if not m or m.group(2) != "Autumn":
+        return None
+    year = int(m.group(1))
+    total_not_passed = sum(1 for p in history.sem1_passed if not p) + (0 if history.prep_passed[0] else 1)
+
+    if year == current_autumn_year:
+        if total_not_passed == 0:
+            return ("On Pattern",)
+        if total_not_passed in (1, 2):
+            return ("Mostly Progressing",)
+        return ("Unsatisfactory progress in S1",)   # 3, 4, or 5
+
+    if year == current_autumn_year - 1:
+        if total_not_passed in (0, 1):
+            return ("3+ Sessions", "Complete")
+        if total_not_passed in (4, 5):
+            return ("Overall lack of success",)
+        return None   # 2-3: genuinely mixed in real data, no confident call
+
+    return None   # any other cohort (older, or a gap year) not validated
+
+
+def rereg_principle_mismatch(history: SubjectHistory, current_autumn_year: Optional[int]) -> Optional[str]:
+    """A human-readable description if history.rereg_principle disagrees
+    with the empirically-validated expectation, or None if it matches OR
+    no confident expectation exists for this student (see
+    expected_rereg_principles). None means "nothing to flag", not
+    "confirmed correct" - this is a QA aid pointing at rows worth a human
+    second look, not a replacement for Grant's own classification.
+    """
+    expected = expected_rereg_principles(history, current_autumn_year)
+    if expected is None or history.rereg_principle in expected:
+        return None
+    expected_str = " or ".join(f'"{e}"' for e in expected)
+    return f'Expected {expected_str}, got "{history.rereg_principle}"'

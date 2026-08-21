@@ -12,6 +12,14 @@ v1.1 and v2.1 - see student_tracker/pipeline/history.py) but not his
 actual classification rules, so this page's job is to read/filter/export
 his file, not to reproduce it. See stages.py for the full Stage 2 entry
 this page implements.
+
+2026-08-22: added a "QA check" column (history.rereg_principle_mismatch)
+- flags rows where the assigned Rereg Principle disagrees with a
+threshold that was 100% consistent across thousands of real students
+(history.py's EMPIRICAL VALIDATION section). This is a second-look aid
+for catching data anomalies, NOT a replacement for Grant's judgment - a
+blank QA check can mean either "matches" or "no confident rule exists
+for this student's cohort", and callers must not conflate the two.
 """
 
 from __future__ import annotations
@@ -23,6 +31,7 @@ import streamlit as st
 
 from student_tracker.pipeline.history import (
     load_reregistration_history, to_history_records, failed_subject_codes_sem1_only,
+    infer_current_commencement_year, rereg_principle_mismatch,
 )
 from student_tracker.pipeline.stages import get_stage
 
@@ -77,6 +86,8 @@ if skipped:
         "shape (not diploma or Nursing/UPP)."
     )
 
+current_autumn_year = infer_current_commencement_year(records)
+
 report_df = pd.DataFrame(
     {
         "Student ID": r.student_id,
@@ -85,6 +96,7 @@ report_df = pd.DataFrame(
         "Commencement Period": r.commencement_period,
         "Rereg Principles": r.rereg_principle,
         "Template": r.template,
+        "QA check": rereg_principle_mismatch(r, current_autumn_year) or "",
         "Subjects failed in Semester 1": failed_subject_codes_sem1_only(r),
         "Electives outstanding": r.electives_outstanding,
         "B1 advice": r.block_advice[0],
@@ -96,10 +108,33 @@ report_df = pd.DataFrame(
 )
 
 total = len(report_df)
-m1, m2, m3 = st.columns(3)
+flagged_count = int((report_df["QA check"] != "").sum())
+m1, m2, m3, m4 = st.columns(4)
 m1.metric("Total students", f"{total:,}")
 m2.metric("Programs represented", report_df["Program"].nunique())
 m3.metric("Rereg Principles categories", report_df["Rereg Principles"].nunique())
+m4.metric("QA flags", f"{flagged_count:,}")
+
+if current_autumn_year is None:
+    st.caption(
+        "QA check unavailable - couldn't infer which Autumn intake this "
+        "file is currently reporting on (no Autumn-commencement rows "
+        "found)."
+    )
+else:
+    st.caption(
+        f"QA check compares each Autumn-commencing diploma student's "
+        f"Rereg Principles against a pattern empirically confirmed "
+        f"against real data (see history.py) - only for {current_autumn_year} "
+        "(this file's inferred current intake) and continuing students "
+        f"from {current_autumn_year - 1}, and only where that pattern was "
+        "100% consistent in real data. A blank QA check means either it "
+        "matched, or this student's situation isn't one we have a "
+        "confident rule for yet (Nursing/UPP, a different commencement "
+        "cohort, or a genuinely ambiguous case) - it does NOT mean "
+        "confirmed correct. This flags rows worth a second look, it "
+        "doesn't override Grant's own classification."
+    )
 
 st.subheader("By Rereg Principles")
 principle_summary = (
@@ -126,8 +161,11 @@ template_filter = f3.multiselect(
     options=sorted(report_df["Template"].dropna().unique()),
     default=[],
 )
+flagged_only = st.checkbox(f"Show only QA-flagged rows ({flagged_count:,})", value=False)
 
 filtered_df = report_df
+if flagged_only:
+    filtered_df = filtered_df[filtered_df["QA check"] != ""]
 if program_filter:
     filtered_df = filtered_df[filtered_df["Program"].isin(program_filter)]
 if principle_filter:
