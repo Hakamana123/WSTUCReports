@@ -113,6 +113,20 @@ evidence, not just structural inference):
     this is squarely substitution.py's territory (still a stub) and
     should NOT be generalized into a simple "any Sem1 failure gets
     caught up next semester" rule.
+    FURTHER CONFIRMED (2026-08-22): the reason Blocks 1/2 have no catch-up
+    slot isn't just "no free slot exists somewhere" - Spring Block 1-2
+    ALREADY has its own required forward-progress subject (positions 5-6)
+    occupying it, so a failed Block 1 or 2 subject can't be swapped in
+    without blocking the student's actual progression. It's only
+    available again in Summer, or the next time that exact block position
+    cycles around in a later semester (Josiah's example: "block 2 of the
+    third semester") - meaning a Block 1/2 failure genuinely delays
+    graduation, unlike a Block 3/4 failure which catches up within the
+    very next semester. This strongly suggests WHICH position failed (not
+    just how many) may also affect the Rereg Principles severity call,
+    since Block 1/2 failures have a structurally worse outcome even at
+    the same failure count - not yet confirmed for Rereg Principles
+    specifically, only for the registration/graduation-timing mechanics.
   - Confirmed Rereg Principles data point: passed prep-to-date, passed
     Sem1 Blocks 1-2, failed Sem1 Blocks 3-4, first semester (no prior
     session history) -> "Unsatisfactory progress in S1". Academic
