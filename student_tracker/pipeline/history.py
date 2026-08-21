@@ -153,6 +153,17 @@ evidence, not just structural inference):
     registration), suggesting our own invented taxonomy and Grant's real
     one converge on similar remediation for this case even though the
     category NAMES and trigger conditions differ.
+  - PARTIALLY CONFIRMED, needs follow-up: whether the fail-COUNT
+    threshold for a category tightens the further along a student is
+    (e.g. a session-3+ student with just ONE outstanding subject already
+    counting as "Overall lack of success", vs. session 1 needing near-
+    total failure for that same label) was floated but not directly
+    confirmed or denied by Josiah - his reply ("likely to be CE") only
+    confirmed that a session-3+ student still carrying failures tends
+    toward Conditional Enrolment standing, not the specific fail-count
+    question asked. Treat the "thresholds tighten with session number"
+    idea as a live hypothesis, not a confirmed rule, until asked again
+    directly with a cleaner yes/no framing.
 """
 
 from __future__ import annotations
