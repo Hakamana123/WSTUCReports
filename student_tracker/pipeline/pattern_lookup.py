@@ -25,17 +25,45 @@ through to `resolved=False` rather than being guessed:
   - Block 2/3/4 commencers: unconfirmed whether they follow a shifted
     version of the same sequence, or something else entirely.
   - Spring: zero rows exist in the reference table.
-  - Program 9034: zero rows exist in the reference table.
+  - Program 9034: zero rows exist in the reference table. Also now a
+    live discrepancy, not just a gap - the 2026 handbook's 9034 is a
+    tiny 20cp/2-subject "Applied Policing" prep program that doesn't
+    match the 81-127 students under this code in the roster at all.
+    Needs Grant/registrar confirmation of what 9034 actually was for
+    those students before touching this at all.
   - "25 SUM" / "25 SB4": the reference table stores these as two
     dual-bracket lists joined with "+" (e.g.
     "[1, 2, -, -, -, -] + [1, -, 3, 4, -, -]") — meaning unconfirmed,
     not modeled.
-  - Program 9031 (nursing/UPP): the reference pattern has 8 positions
-    (vs. 6 for diplomas), but which of Prep 1/2 + Subject 1-6 map to
-    which of the 8 positions, in what order, is unconfirmed.
   - Any commencement code that isn't a plain "YY - Season[ Block N]"
     string (e.g. "SC1, WSTC T1" codes) — these are legacy, out of
     scope (see project memory).
+
+2026-08-21: Program 9031 (nursing/UPP) resolved via the 2026 student
+handbook (studenthandbook.westernsydney.edu.au), not Grant. The
+handbook shows there's no Prep/Subject split at all for 9031 - it's 8
+subjects total, "taught in 4-Week Block sessions on Campus - one
+subject per Block session," across 2 semesters (4 blocks each), no
+prep subject. Positions 5-8 (Spring Block 1-4) are empirically
+validated at 100% against real GS-standing 26-Autumn-Block-1 commencers
+(280-283 students each, zero mismatches) - stronger evidence than the
+diploma position-5/6 mapping. Positions 1-4 (Autumn) use the same
+handbook-listed order but aren't independently checkable (no Autumn
+block-level registration data in either roster) - trust is inherited
+from the confirmed back half, not separately verified.
+
+7197 (Diploma in Education Studies): the 2026 handbook lists a 6th
+required core subject, EDUC1012 (Literacy and Numeracy for Educators),
+that isn't in this table at all - position 4 is blank here on the
+strength of a direct Grant quote ("the 7197 case," see above), but the
+handbook contradicts that framing. Left unresolved intentionally - this
+needs to go back to Grant, not be silently overwritten either way.
+
+7188 (Diploma, same 6-subject pattern as 7198) is discontinued for new
+2026 intake (404s on the current handbook) but this table's entry is
+left as-is: since it was already identical to 7198's, it should still
+be the right teach-out pattern for continuing 7188 students, not a gap
+- flagging the assumption here rather than treating it as still open.
 """
 
 from __future__ import annotations
@@ -53,7 +81,10 @@ _COMMENCEMENT_RE = re.compile(r"^(\d{2}) - (Autumn|Spring|Summer)(?:\s+Block\s+(
 # doesn't understand yet (dual-bracket "+"-joined patterns for Summer).
 _UNMODELED_SESSIONS = {"25 SUM", "25 SB4"}
 # Programs whose position ordering isn't confirmed even where a row exists.
-_UNCONFIRMED_ORDER_PROGRAMS = {9031}
+# 9031 was here until 2026-08-21 - resolved via the handbook + empirical
+# validation, see module docstring. Left as an empty set (rather than
+# removed) since the mechanism is still needed for any future case like it.
+_UNCONFIRMED_ORDER_PROGRAMS = set()
 
 
 @dataclass
@@ -162,18 +193,27 @@ def lookup_pattern(program: int, commencement_period: Optional[str]) -> PatternO
 # block_registrations index -> pattern position. pattern_lookup only
 # confirms positions 1-4 = Autumn Block 1-4 (the semester a student
 # *started* in); neither roster has Autumn block-level registration data,
-# only Spring Block 1-4 (the *next* semester). Positions 5-6 are the
-# candidate mapping to Spring Block 1-2 (diploma patterns always have
-# exactly 6 positions, so 5-6 are the only ones left) - empirically
-# validated 2026-08-21 against real GS-standing students: 76% match on
-# position 5 vs Spring Block 1 (1076/1422 in the Ashlee sample), 98% on
-# position 6 vs Spring Block 2 (1393/1420). Mismatches concentrate in
-# students still registered for an earlier-position subject (e.g.
-# repeating GEDU1001) - i.e. they look like genuinely off-pattern
-# students, not evidence against the mapping. Validated-but-unconfirmed,
-# not Grant-confirmed - worth a Grant question, but a much stronger
-# footing than a guess.
-SPRING_BLOCK_TO_POSITION = {0: 5, 1: 6}
+# only Spring Block 1-4 (the *next* semester).
+#
+# Diplomas: positions 5-6 are the candidate mapping to Spring Block 1-2
+# (diploma core patterns only have 6 positions - the remaining 2 Spring
+# slots are free-choice electives per the 2026 handbook, not a fixed
+# lookup, so nothing to check there). Empirically validated 2026-08-21
+# against real GS-standing students: 76% match on position 5 vs Spring
+# Block 1 (1076/1422 in the Ashlee sample), 98% on position 6 vs Spring
+# Block 2 (1393/1420). Mismatches concentrate in students still
+# registered for an earlier-position subject (e.g. repeating GEDU1001) -
+# i.e. they look like genuinely off-pattern students, not evidence
+# against the mapping. Validated-but-unconfirmed, not Grant-confirmed -
+# worth a Grant question, but a much stronger footing than a guess.
+#
+# 9031 (UPP) has no electives at all - all 8 positions are fixed, so
+# positions 7-8 map to Spring Block 3-4 too. Confirmed at 100% (280-283
+# students each, zero mismatches) - see pattern_table.json / module
+# docstring. Harmless no-op for diplomas: they have no position 7/8, so
+# compare_registration_to_pattern's "skip if position not in pattern"
+# check just skips these entries for them, same as before this changed.
+SPRING_BLOCK_TO_POSITION = {0: 5, 1: 6, 2: 7, 3: 8}
 BLOCK_LABELS = ["Spring Block 1", "Spring Block 2", "Spring Block 3", "Spring Block 4"]
 
 
