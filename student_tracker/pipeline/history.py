@@ -137,6 +137,22 @@ evidence, not just structural inference):
     which specific block failed matters (e.g. an earlier block being a
     prerequisite for a later one), or whether 3-4 failures tips into a
     more severe category like "Overall lack of success".
+  - Confirmed "Overall lack of success" for a FIRST-semester student who
+    fails everything (GEDU0016 prep AND all 4 Sem1 blocks) - so this
+    category is NOT reserved for continuing/multi-session strugglers the
+    way "3+ Sessions" is; it can trigger in session 1 given total (or
+    near-total) failure. This means severity-within-the-current-session
+    and persistence-across-sessions look like two separate axes feeding
+    Rereg Principles, not one ladder ordered purely by session count -
+    e.g. a mild single-session stumble (Mostly Progressing) and a total
+    single-session wipeout (Overall lack of success) are both possible
+    in session 1, at opposite ends of severity, with no session-count
+    component needed for either. Confirmed action: "ask her to re-enrol
+    and try again" - the real-world equivalent of bucketing.py's
+    reapply_next_semester bucket (commencing, below Good Standing, zero
+    registration), suggesting our own invented taxonomy and Grant's real
+    one converge on similar remediation for this case even though the
+    category NAMES and trigger conditions differ.
 """
 
 from __future__ import annotations
