@@ -127,6 +127,22 @@ evidence, not just structural inference):
     since Block 1/2 failures have a structurally worse outcome even at
     the same failure count - not yet confirmed for Rereg Principles
     specifically, only for the registration/graduation-timing mechanics.
+    RESOLVED (2026-08-22): a single Block 1 (or 2) failure, first
+    semester, IS still "Mostly Progressing" - so for a single failure,
+    WHICH position failed does NOT override the count-based threshold.
+    Position only matters for compounding cases (below), not this one.
+  - Confirmed compounding-delay shape: a student who fails BOTH Semester
+    1 Block 1's subject (position 1) AND Semester 2 Block 1's subject
+    (position 5, a different subject, not a retake) ends up needing a
+    "semester 4" of study to graduate (both are Block-1-slot subjects
+    that only recur once a year) - or "semester 3" if a Summer offering
+    of one of them exists as a shortcut. Each blocked position waits for
+    its own slot to cycle back around independently; the delays don't
+    resolve in parallel. This is very plausibly the real substance behind
+    "3+ Sessions" - a student stretching well past the normal 2-semester
+    span due to compounding non-adjacent-position failures - though that
+    specific link (compounding delays -> "3+ Sessions" label) hasn't been
+    directly confirmed yet, only the delay mechanics have.
   - Confirmed Rereg Principles data point: passed prep-to-date, passed
     Sem1 Blocks 1-2, failed Sem1 Blocks 3-4, first semester (no prior
     session history) -> "Unsatisfactory progress in S1". Academic
