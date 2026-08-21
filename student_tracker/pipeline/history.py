@@ -124,6 +124,19 @@ evidence, not just structural inference):
     a clean "which session number is this" signal wired into history.py
     (commencement_period vs. the file's own period is the closest proxy
     but hasn't been validated for this purpose).
+  - Confirmed the failure-COUNT boundary between "Mostly Progressing" and
+    "Unsatisfactory progress in S1" for a first-semester student: passed
+    prep-to-date, passed Sem1 Blocks 1-2, failed only ONE of the
+    remaining two Sem1 blocks -> "Mostly Progressing", not
+    "Unsatisfactory progress in S1". Josiah's stated reasoning was
+    recoverability ("the student can quite easily catch up"), not a
+    rigid count rule per se - but for THIS specific block-4 pattern, the
+    working threshold is: 1 of 4 Sem1 blocks failed = Mostly Progressing,
+    2 of 4 failed = Unsatisfactory progress in S1 (first semester) / 3+
+    Sessions (continuing, struggling pattern). Not yet tested: whether
+    which specific block failed matters (e.g. an earlier block being a
+    prerequisite for a later one), or whether 3-4 failures tips into a
+    more severe category like "Overall lack of success".
 """
 
 from __future__ import annotations
