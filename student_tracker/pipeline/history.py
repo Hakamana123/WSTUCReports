@@ -75,6 +75,39 @@ finished output. So this module's role for Stage 2 is READING/
 DISPLAYING his already-computed recommendation (see
 pages/10_Stage2_Recommendations.py), not reproducing his logic the way
 bucketing.py does for Stage 5.
+
+2026-08-22, confirmed directly by Josiah (first real classification-rule
+evidence, not just structural inference):
+  - GEDU0016 and GEDU0017 are NOT interchangeable/concurrent - GEDU0016 is
+    the Semester 1 prep, GEDU0017 is the Semester 2 prep. A student can't
+    have passed both by the time a Stage 2 (post-AB4, pre-SPR) file is
+    generated, since GEDU0017 hasn't run yet. So prep_passed[1] (and,
+    generally, any sem2_passed digit) showing as "not yet passed" at this
+    checkpoint means NOT YET DUE, not failed - only sem1_passed digits are
+    genuine pass/fail signals at this point in the calendar. (This is why
+    failed_positions/glossary wording already says "not yet passed"
+    rather than "failed" - that hedge turns out to be load-bearing, not
+    just cautious phrasing.)
+  - Confirmed remediation shape for a student who fails Sem1 Block 3 AND
+    4 (passed prep-to-date and Blocks 1-2): the following semester's
+    registration is NOT the normal 4-block pattern. Spring Block 1-2 =
+    the normal pattern positions 5-6; Spring Block 3-4 = the FAILED
+    Semester 1 Block 3/4 subjects moved into the back half of next
+    semester as catch-up, alongside GEDU0017 proceeding as normal. This
+    is a genuinely different registration shape than what
+    pattern_lookup.compare_registration_to_pattern currently checks (it
+    only compares Spring Block 1-2 against positions 5-6 for diplomas) -
+    a student in exactly this situation would look "off pattern" to our
+    Stage 5 bucketing today even though this registration is the CORRECT
+    catch-up shape. Not yet acted on in bucketing.py/pattern_lookup.py -
+    flagging here as a known gap this scenario exposed.
+  - Confirmed Rereg Principles data point: passed prep-to-date, passed
+    Sem1 Blocks 1-2, failed Sem1 Blocks 3-4, first semester (no prior
+    session history) -> "Unsatisfactory progress in S1". Academic
+    standing (GS/AR/CE) was explicitly NOT predictable from this pattern
+    alone per Josiah - Rereg Principles classification appears to be
+    driven primarily by the pass/fail pattern's shape/timing, not
+    directly coupled to Calculated Standing.
 """
 
 from __future__ import annotations
