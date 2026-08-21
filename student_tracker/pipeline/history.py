@@ -113,6 +113,7 @@ class SubjectHistory:
     rereg_principle: Optional[str]
     template: Optional[str]
     block_advice: list      # length 4, B1-B4 Name, next semester's advice
+    prep_advice: Optional[str]   # "Prep Name" (diploma) / "Prep" (Nursing, always None) - Stage 3's recommendation
 
     @property
     def failed_positions(self) -> list:
@@ -131,10 +132,9 @@ class SubjectHistory:
 def failed_subject_codes(history: SubjectHistory, pattern_overrides: Optional[dict] = None) -> str:
     """Resolve a SubjectHistory's failed_positions to subject codes where
     the pattern table covers them, falling back to "Position N" for
-    positions it doesn't. "(none)" when nothing is outstanding. Shared by
-    report_builder.py (Stage 5's sidecar merge) and
-    pages/10_Stage2_Recommendations.py (the standalone Stage 2 view) so the
-    two don't drift into different wording for the same thing.
+    positions it doesn't. "(none)" when nothing is outstanding. Used by
+    pages/10_Stage2_Recommendations.py and Stage 3's equivalent page so
+    they don't drift into different wording for the same thing.
     """
     if not history.failed_positions:
         return "(none)"
@@ -223,6 +223,8 @@ def load_reregistration_history(path, sheet_name=None) -> pd.DataFrame:
         "B2 Name": "b2_name",
         "B3 Name": "b3_name",
         "B4 Name": "b4_name",
+        "Prep Name": "prep_advice",
+        "Prep": "prep_advice",
     }
 
     frames = []
@@ -287,13 +289,14 @@ def to_history_records(df: pd.DataFrame) -> list:
                     None if pd.isna(row.get("template")) else str(row.get("template"))
                 ),
                 block_advice=block_advice,
+                prep_advice=(
+                    None if pd.isna(row.get("prep_advice")) else str(row.get("prep_advice"))
+                ),
             )
         )
     return records
 
 
 def history_by_student_id(records: list) -> dict:
-    """Index SubjectHistory records by student_id for lookup when
-    combining with the roster in report_builder.py.
-    """
+    """Index SubjectHistory records by student_id."""
     return {r.student_id: r for r in records}

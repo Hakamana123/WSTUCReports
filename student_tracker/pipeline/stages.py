@@ -91,7 +91,7 @@ STAGES: list[Stage] = [
     Stage(
         semester="AUT", number=3,
         name="Recommendations for Prep subjects (Post AUT Results)",
-        status="blocked",
+        status="built",
         when="SB1 Week 0 (break between AUT and SPR).",
         who="Grant",
         population="All active students registered in any subject over "
@@ -99,8 +99,18 @@ STAGES: list[Stage] = [
         what="Results-based recommendation - not detailed further in the "
              "source sheet.",
         data_needs="Results from each Autumn Block AND the AUTUMN prep "
-                    "subject. No future registrations. Same missing-file-"
-                    "format problem as Stage 2.",
+                    "subject. No future registrations.",
+        note="2026-08-22: confirmed the same AB4-for-SPR file used for "
+             "Stage 2 also satisfies this - its 'Prep Name' column follows "
+             "the identical finished-recommendation shape as 'B1-B4 Name' "
+             "('you don't need to register' vs. a specific GEDU0016/0017 "
+             "code), just for the two prep subjects instead of the block "
+             "subjects. See pages/11_Stage3_Prep_Recommendations.py - kept "
+             "as its own page rather than merged into Stage 2's, per "
+             "Josiah's 'split by stage, not by type' preference. Same "
+             "'built means displays Grant's output, not reproduces his "
+             "rules' caveat as Stage 2. SPR Stage 3 stays blocked - needs "
+             "a different file ('2025 SPR for 2025 SUM') not yet seen.",
     ),
     Stage(
         semester="AUT", number=4,
