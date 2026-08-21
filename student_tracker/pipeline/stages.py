@@ -65,7 +65,7 @@ STAGES: list[Stage] = [
     Stage(
         semester="AUT", number=2,
         name="Recommendations for Spring Block subjects (Post AB4)",
-        status="blocked",
+        status="built",
         when="After AB4 results entered, before AUT results released.",
         who="Grant",
         population="All active students registered in any subject over "
@@ -74,8 +74,19 @@ STAGES: list[Stage] = [
              "source sheet.",
         data_needs="Results from each Autumn Block + AUT prep registration. "
                     "No future registrations. Needs a results-only file "
-                    "(example name: '2026 AB4 for 2026 SPR') - never seen a "
-                    "sample of this format.",
+                    "(example name: '2026 AB4 for 2026 SPR').",
+        note="2026-08-22: a real file matching this exact example filename "
+             "was found and confirmed on every checkable point - population "
+             "spans all standings (not just CE), and every row's 'Advice "
+             "for when' reads '26 SPR' (generated after Autumn's results, "
+             "advising for the coming Spring). See "
+             "pages/10_Stage2_Recommendations.py and history.py's module "
+             "docstring. 'Built' here means the same thing it means for "
+             "Stage 4 - we read/display/filter/export Grant's own already-"
+             "computed output, not independently reproduce his Rereg "
+             "Principles/Template classification rules, which we don't "
+             "know. SPR Stage 2 stays blocked - it needs a different real "
+             "file ('2025 SB4 for 2025 SU1') we haven't seen a sample of.",
     ),
     Stage(
         semester="AUT", number=3,

@@ -40,22 +40,6 @@ COLUMN_GLOSSARY: list[tuple[str, str]] = [
     ("Advice", "The recommended next step, where one has actually been "
                "confirmed. Most buckets don't have confirmed advice yet - see "
                "Confidence tiers."),
-    ("Rereg Principles", "Blank unless a past subject history file was also "
-                          "uploaded. When present, this is the real advisory "
-                          "category applied to the student, separate from "
-                          "'Bucket' above - the two aren't the same "
-                          "classification and shouldn't be read as agreeing "
-                          "or disagreeing with each other."),
-    ("Template", "Blank unless a past subject history file was also "
-                 "uploaded. The specific advice-letter template associated "
-                 "with this student's Rereg Principles category."),
-    ("Subjects failed to date", "Blank unless a past subject history file "
-                                 "was also uploaded. Which of the student's "
-                                 "past core subjects (not prep subjects) "
-                                 "they haven't yet passed, based on that "
-                                 "file's pass/fail history - not the same "
-                                 "as 'Subjects advised', which is about "
-                                 "upcoming registration, not past results."),
 ]
 
 CONFIDENCE_GLOSSARY: list[tuple[str, str]] = [

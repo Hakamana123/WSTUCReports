@@ -58,6 +58,23 @@ correlation with "elective" wording in B2-B4 Name was noticeably weaker
 there, plausibly because that file has no B1 Name column at all (see
 stages.py's Stage 5 note) so elective advice that would show in B1 isn't
 visible to check against.
+
+2026-08-22: this file matches AUT STAGE 2 of the Modular Re-registration
+Timeline (stages.py) on every checkable point - its filename is exactly
+Stage 2's documented example ("2026 AB4 for 2026 SPR"), its population
+spans ALL standings (Good Standing/At Risk/Conditional Enrolment/
+Exclusion, confirmed by checking Progression Outcome's value counts) not
+just Conditional Enrolment, and every row's "Advice for when" reads "26
+SPR" - i.e. generated after Autumn's results, advising for the coming
+Spring. That's Stage 2's population and timing exactly, not Stage 5's
+(which is CE-only, confirmed separately via the different Stage 5 file -
+see stages.py). Unlike Stage 5, which our bucketing.py computes from
+scratch, we don't know Grant's actual rules for deriving Rereg
+Principles/Template from pass/fail history - only the shape of his
+finished output. So this module's role for Stage 2 is READING/
+DISPLAYING his already-computed recommendation (see
+pages/10_Stage2_Recommendations.py), not reproducing his logic the way
+bucketing.py does for Stage 5.
 """
 
 from __future__ import annotations
@@ -66,6 +83,8 @@ from typing import Optional
 import re
 
 import pandas as pd
+
+from .pattern_lookup import lookup_pattern
 
 PREP_SUBJECT_CODES = ["GEDU0016", "GEDU0017"]
 
@@ -84,6 +103,7 @@ REQUIRED_COLUMNS = [
 @dataclass
 class SubjectHistory:
     student_id: str
+    student_name: Optional[str]
     program: int
     commencement_period: Optional[str]
     prep_passed: list       # matches PREP_SUBJECT_CODES order; [] for the Nursing/UPP shape (no prep group)
@@ -106,6 +126,24 @@ class SubjectHistory:
         failed = [i for i, passed in enumerate(self.sem1_passed, start=1) if not passed]
         failed += [i for i, passed in enumerate(self.sem2_passed, start=offset + 1) if not passed]
         return failed
+
+
+def failed_subject_codes(history: SubjectHistory, pattern_overrides: Optional[dict] = None) -> str:
+    """Resolve a SubjectHistory's failed_positions to subject codes where
+    the pattern table covers them, falling back to "Position N" for
+    positions it doesn't. "(none)" when nothing is outstanding. Shared by
+    report_builder.py (Stage 5's sidecar merge) and
+    pages/10_Stage2_Recommendations.py (the standalone Stage 2 view) so the
+    two don't drift into different wording for the same thing.
+    """
+    if not history.failed_positions:
+        return "(none)"
+    pattern = lookup_pattern(history.program, history.commencement_period, pattern_overrides)
+    parts = [
+        pattern.block_sequence.get(pos, f"Position {pos}")
+        for pos in history.failed_positions
+    ]
+    return "; ".join(parts)
 
 
 def parse_all_subjects(value: str) -> tuple:
@@ -173,6 +211,9 @@ def load_reregistration_history(path, sheet_name=None) -> pd.DataFrame:
 
     rename_map = {
         "STUDENT_ID": "student_id",
+        "FIRST_NAME": "first_name",
+        "LAST_NAME": "last_name",
+        "PREFERRED_NAME": "preferred_name",
         "PROGRAM_CD": "program",
         "COMMENCEMENT_PERIOD": "commencement_period",
         "All Subjects": "all_subjects",
@@ -222,9 +263,17 @@ def to_history_records(df: pd.DataFrame) -> list:
             for col in ["b1_name", "b2_name", "b3_name", "b4_name"]
         ]
 
+        preferred = row.get("preferred_name")
+        first = row.get("first_name")
+        last = row.get("last_name")
+        given_name = preferred if not pd.isna(preferred) else first
+        name_parts = [str(p) for p in (given_name, last) if not pd.isna(p)]
+        student_name = " ".join(name_parts) if name_parts else None
+
         records.append(
             SubjectHistory(
                 student_id=str(row.get("student_id")),
+                student_name=student_name,
                 program=int(row.get("program")),
                 commencement_period=commencement,
                 prep_passed=prep,
