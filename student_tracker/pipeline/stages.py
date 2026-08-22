@@ -49,7 +49,8 @@ STAGES: list[Stage] = [
         semester="AUT", number=1,
         name="Recommendations for students who fail AB1 and AB2",
         status="blocked",
-        when="In break week after AB2, before AB3.",
+        when="Halfway through Autumn - the short break after Block 2, "
+             "before Block 3 starts (break after AB2, before AB3).",
         who="Grant",
         population="Any commencing students who failed to complete AB1 AND "
                     "AB2 (dropped, TFN/SSAF issues, off pattern, etc).",
@@ -64,10 +65,11 @@ STAGES: list[Stage] = [
     ),
     Stage(
         semester="AUT", number=2,
-        name="Recommendations for Spring Block subjects (Post Block 4)",
+        name="Recommendations for next semester's Block subjects (Post Block 4)",
         status="built",
-        when="After Block 4 results entered, before this session's results "
-             "released.",
+        when="Right at the end of Autumn - Block 4 just marked, before the "
+             "semester's overall result is released (post-AB4, pre-AUT "
+             "results).",
         who="Grant",
         population="All active students registered in any subject over "
                     "Block 1-4 post census. Excludes this session's prep "
@@ -98,8 +100,8 @@ STAGES: list[Stage] = [
         semester="AUT", number=3,
         name="Recommendations for Prep subjects (Post session results)",
         status="built",
-        when="Next session's Week 0 (break between this session and the "
-             "next).",
+        when="In the break between Autumn and Spring, before Spring's "
+             "Week 1 (SB1 Week 0).",
         who="Grant",
         population="All active students registered in any subject over "
                     "Block 1-4 and this session's prep, post census.",
@@ -130,7 +132,7 @@ STAGES: list[Stage] = [
         semester="AUT", number=4,
         name="Provision of progression outcomes",
         status="built",
-        when="SB1 Week 1.",
+        when="The very first week of Spring (SB1 Week 1).",
         who="UNCLEAR (per source sheet)",
         population="All active students.",
         what="Information on their progression outcome.",
@@ -143,7 +145,8 @@ STAGES: list[Stage] = [
         semester="AUT", number=5,
         name="Applied progression outcomes recommendations",
         status="built",
-        when="SB2 Week 1.",
+        when="About 4 weeks into Spring, once Block 2 has started "
+             "(SB2 Week 1).",
         who="Grant",
         population="All students on Conditional Enrolment.",
         what="Provide manual academic advice on subject registration.",
@@ -169,7 +172,8 @@ STAGES: list[Stage] = [
         semester="SPR", number=1,
         name="Recommendations for students who fail SB1 and SB2",
         status="blocked",
-        when="In break week after SB2, before SB3.",
+        when="Halfway through Spring - the short break after Block 2, "
+             "before Block 3 starts (break after SB2, before SB3).",
         who="Grant",
         population="Any commencing students who failed to complete SB1 AND "
                     "SB2.",
@@ -181,10 +185,11 @@ STAGES: list[Stage] = [
     ),
     Stage(
         semester="SPR", number=2,
-        name="Recommendations for Summer subjects (Post Block 4)",
+        name="Recommendations for next semester's subjects (Post Block 4)",
         status="blocked",
-        when="After Block 4 results entered, before this session's results "
-             "released.",
+        when="Right at the end of Spring - Block 4 just marked, before the "
+             "semester's overall result is released (post-SB4, pre-SPR "
+             "results).",
         who="Grant",
         population="All active students registered in any subject over "
                     "Block 1-4 post census. Excludes this session's prep "
@@ -199,8 +204,8 @@ STAGES: list[Stage] = [
         semester="SPR", number=3,
         name="Recommendations for Prep subjects (Post session results)",
         status="blocked",
-        when="Next session's Week 0 (break between this session and the "
-             "next).",
+        when="In the break between Spring and Summer, before Summer "
+             "starts (break after SPR session, before SU1).",
         who="Grant",
         population="All active students registered in any subject over "
                     "Block 1-4 and this session's prep, post census.",
@@ -214,7 +219,7 @@ STAGES: list[Stage] = [
         semester="SPR", number=4,
         name="Provision of progression outcomes",
         status="built",
-        when="SUM Week 1.",
+        when="The very first week of Summer (SUM Week 1).",
         who="UNCLEAR (per source sheet)",
         population="All active students.",
         what="Information on their progression outcome.",
@@ -225,7 +230,7 @@ STAGES: list[Stage] = [
         semester="SPR", number=5,
         name="Applied progression outcomes recommendations",
         status="built",
-        when="SU2 Week 2.",
+        when="The second week of Summer's second half (SU2 Week 2).",
         who="Grant",
         population="All students on Conditional Enrolment.",
         what="Provide manual academic advice on subject registration.",
@@ -244,7 +249,7 @@ STAGES: list[Stage] = [
         semester="SUM", number=1,
         name="SUM Stage 1",
         status="blocked",
-        when="After SU1 results released, before SU2 begins.",
+        when="After SU1 results are released, before SU2 begins.",
         who="Grant",
         population="Students registered in SU1 post census, but NOT "
                     "registered in SU2 or SUM.",
@@ -257,7 +262,7 @@ STAGES: list[Stage] = [
         semester="SUM", number=2,
         name="SUM Stage 2",
         status="blocked",
-        when="After SU2 results.",
+        when="After SU2 results come in.",
         who="Grant",
         population="Students registered in SU2 and NOT in SUM.",
         what="Same dropout-detection shape as SUM Stage 1.",
@@ -268,7 +273,8 @@ STAGES: list[Stage] = [
         semester="SUM", number=3,
         name="SUM Stage 3",
         status="undefined",
-        when="After SUM results, AB1 Week 1.",
+        when="The first week of the following Autumn (AB1 Week 1) - though "
+             "the source sheet just says 'etc' beyond that.",
         who="Grant",
         note="Not a gap in our reading - the source Timeline sheet "
              "literally reads 'etc' / 'etc' for population and action on "
