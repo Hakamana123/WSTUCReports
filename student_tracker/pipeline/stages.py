@@ -64,12 +64,14 @@ STAGES: list[Stage] = [
     ),
     Stage(
         semester="AUT", number=2,
-        name="Recommendations for Spring Block subjects (Post AB4)",
+        name="Recommendations for Spring Block subjects (Post Block 4)",
         status="built",
-        when="After AB4 results entered, before AUT results released.",
+        when="After Block 4 results entered, before this session's results "
+             "released.",
         who="Grant",
         population="All active students registered in any subject over "
-                    "AB1-4 post census. Excludes AUT prep results.",
+                    "Block 1-4 post census. Excludes this session's prep "
+                    "results.",
         what="Results-based recommendation - not detailed further in the "
              "source sheet.",
         data_needs="Results from each Autumn Block + AUT prep registration. "
@@ -94,12 +96,13 @@ STAGES: list[Stage] = [
     ),
     Stage(
         semester="AUT", number=3,
-        name="Recommendations for Prep subjects (Post AUT Results)",
+        name="Recommendations for Prep subjects (Post session results)",
         status="built",
-        when="SB1 Week 0 (break between AUT and SPR).",
+        when="Next session's Week 0 (break between this session and the "
+             "next).",
         who="Grant",
         population="All active students registered in any subject over "
-                    "AB1-4 and Autumn (prep) post census.",
+                    "Block 1-4 and this session's prep, post census.",
         what="Results-based recommendation - not detailed further in the "
              "source sheet.",
         data_needs="Results from each Autumn Block AND the AUTUMN prep "
@@ -178,12 +181,14 @@ STAGES: list[Stage] = [
     ),
     Stage(
         semester="SPR", number=2,
-        name="Recommendations for Summer subjects (Post SB4)",
+        name="Recommendations for Summer subjects (Post Block 4)",
         status="blocked",
-        when="After SB4 results entered, before SPR results released.",
+        when="After Block 4 results entered, before this session's results "
+             "released.",
         who="Grant",
         population="All active students registered in any subject over "
-                    "SB1-4 post census. Excludes SPR prep results.",
+                    "Block 1-4 post census. Excludes this session's prep "
+                    "results.",
         what="Results-based recommendation - not detailed further in the "
              "source sheet.",
         data_needs="Results from each Spring Block + SPR prep registration. "
@@ -192,12 +197,13 @@ STAGES: list[Stage] = [
     ),
     Stage(
         semester="SPR", number=3,
-        name="Recommendations for Prep subjects (Post SPR Results)",
+        name="Recommendations for Prep subjects (Post session results)",
         status="blocked",
-        when="Break week after SPR session, before SU1.",
+        when="Next session's Week 0 (break between this session and the "
+             "next).",
         who="Grant",
         population="All active students registered in any subject over "
-                    "SB1-4 and Spring (prep) post census.",
+                    "Block 1-4 and this session's prep, post census.",
         what="Results-based recommendation - not detailed further in the "
              "source sheet.",
         data_needs="Results from each Spring Block AND the SPRING prep "
