@@ -86,7 +86,11 @@ STAGES: list[Stage] = [
              "computed output, not independently reproduce his Rereg "
              "Principles/Template classification rules, which we don't "
              "know. SPR Stage 2 stays blocked - it needs a different real "
-             "file ('2025 SB4 for 2025 SU1') we haven't seen a sample of.",
+             "file ('2025 SB4 for 2025 SU1') we haven't seen a sample of.\n"
+             "2026-08-22: pages/10_Stage2_3_Recommendations.py folded into "
+             "pages/4_Reregistration_Advisory.py as a collapsed section - "
+             "Josiah wants one main page with a section per stage rather "
+             "than a page per stage.",
     ),
     Stage(
         semester="AUT", number=3,
@@ -114,7 +118,10 @@ STAGES: list[Stage] = [
              "identical uploaded file, so a separate page meant uploading "
              "it twice for no benefit. This reverses the earlier 'kept as "
              "its own page' call for this specific pair (Stage 2/3 share "
-             "one file; Stage 2/Stage 5 don't, so that split still stands).",
+             "one file; Stage 2/Stage 5 don't, so that split still stands).\n"
+             "2026-08-22: that page itself then folded into "
+             "pages/4_Reregistration_Advisory.py as a collapsed section - "
+             "single main page, one section per stage.",
     ),
     Stage(
         semester="AUT", number=4,
