@@ -246,6 +246,49 @@ reconciled, treat commencement-based session-counting as validated only
 for Autumn-commencing students until checked further; (3) the middle-
 band mixing for continuing students (totals 2-3) means the rule isn't
 fully deterministic everywhere, only at the extremes.
+
+REGISTRATION ADVICE (2026-08-25) - confirmed directly by Josiah, after a
+real meeting with Ashlee (transcript reviewed) established that the raw
+pass/fail data she sends Grant is richer than the "All Subjects" bracket
+string (real letter grades, explicit per-subject completion), and that
+Grant's own B1-4/Prep Name columns are HIS judgment layer on top of it,
+not a mechanical derivation - this module still can't reproduce that
+layer from scratch. What changed 2026-08-25 is that Josiah answered a
+concrete set of scenario questions about the actual advice rules, giving
+enough to draft a first version - see suggested_block_advice and
+suggested_prep_advice below. Confirmed rules:
+  - The organizing principle behind all of it: help the student graduate
+    in as short a time as possible.
+  - A single failed Block 1/2 subject: no computed schedule - the real
+    answer is a generic "retake in next available block, speak to your
+    academic learning advisor for more details". The tool isn't meant to
+    work out the exact future session; that's the ALA's job.
+  - A single failed Block 3/4 subject: catches up in the SAME block slot
+    next semester - but ONLY when it's the student's one and only
+    outstanding Sem1 subject. Confirmed: "it will only get caught up if
+    the student has already completed their other subjects."
+  - Two or more failed Sem1 positions at once (any combination): genuinely
+    can't be resolved by a simple rule - Josiah's own answer for
+    compounding cases was "speak to ALA" ("if none of their failed
+    subjects are offered in summer, then they may end up waiting like 5
+    blocks more"). Rather than invent an untested interaction rule for
+    which positions take priority, every position in a multi-failure case
+    gets the same ALA-referral text.
+  - "3+ Sessions" is confirmed to literally BE the compounding-delay
+    mechanic (a student who now needs 3+ sessions to graduate because of
+    stacked position failures) - not a broader "just been enrolled a
+    while" concept.
+  - A failed prep subject (either GEDU0016 or GEDU0017) is always
+    retaken in Summer and does NOT push overall severity up - "prep
+    subjects are definitely offered in summer, so it does not push them."
+  - Electives never get advice text, full stop - "we do not give
+    elective advice."
+  - NOT YET ANSWERED, still open: (a) what actually distinguishes the two
+    real outcomes in the continuing-student 2-3-fails middle band (see
+    EMPIRICAL VALIDATION above); (b) whether the Spring-commencing
+    cohort's mismatch is a genuine different rule or a data-quality
+    fluke. Both stay unresolved - suggested_rereg_principle already
+    returns None for exactly these cases rather than guessing.
 """
 
 from __future__ import annotations
@@ -600,3 +643,61 @@ def suggested_rereg_principle(history: SubjectHistory, current_autumn_year: Opti
     if expected is None or len(expected) != 1:
         return None
     return expected[0]
+
+
+_ALA_REFERRAL = (
+    "Retake in next available block. Please speak with your academic "
+    "learning advisor for more details."
+)
+_ALA_REFERRAL_MULTIPLE = (
+    "Multiple subjects outstanding - please speak with your academic "
+    "learning advisor for a personalised plan."
+)
+
+
+def suggested_block_advice(history: SubjectHistory, pattern_overrides: Optional[dict] = None) -> list:
+    """Best-effort Stage 2 block-subject advice - see the REGISTRATION
+    ADVICE section of this module's docstring for the confirmed rules
+    this implements (2026-08-25). Returns a list of 4 strings, one per
+    Sem1 block position - "No action needed." for a passed block, an
+    ALA-referral for a Block 1/2 failure or any multi-failure case, or
+    the specific catch-up subject for a single Block 3/4 failure.
+
+    Sem1-only, same as sem1_failed_positions/failed_subject_codes_sem1_only
+    - a Sem2 position isn't due yet at this file's checkpoint, so it's
+    never treated as a failure here either.
+    """
+    failed = history.sem1_failed_positions
+    advice = ["No action needed."] * 4
+
+    if len(failed) == 1:
+        pos = failed[0]
+        if pos in (1, 2):
+            advice[pos - 1] = _ALA_REFERRAL
+        else:
+            pattern = lookup_pattern(history.program, history.commencement_period, pattern_overrides)
+            subject = pattern.block_sequence.get(pos, f"Position {pos}")
+            advice[pos - 1] = f"Retake {subject} in the same block next semester."
+    elif len(failed) > 1:
+        for pos in failed:
+            advice[pos - 1] = _ALA_REFERRAL_MULTIPLE
+
+    return advice
+
+
+def suggested_prep_advice(history: SubjectHistory) -> Optional[str]:
+    """Best-effort Stage 3 prep-subject advice - see the REGISTRATION
+    ADVICE section of this module's docstring. None for Nursing/UPP
+    (prep_passed == [], no prep subjects at all - see module docstring's
+    NURSING/UPP shape note).
+
+    Only looks at prep_passed[0] (Sem1 prep, GEDU0016) - prep_passed[1]
+    (Sem2 prep, GEDU0017) isn't due yet at this file's checkpoint, same
+    "not yet due, not failed" caveat as everywhere else in this module,
+    so it's never read as a failure signal here.
+    """
+    if not history.prep_passed:
+        return None
+    if not history.prep_passed[0]:
+        return f"Retake {PREP_SUBJECT_CODES[0]} in Summer."
+    return f"Register for {PREP_SUBJECT_CODES[1]}."

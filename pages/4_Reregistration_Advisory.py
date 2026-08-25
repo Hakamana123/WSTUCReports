@@ -35,6 +35,7 @@ from student_tracker.pipeline.pattern_lookup import load_pattern_overrides
 from student_tracker.pipeline.history import (
     load_reregistration_history, to_history_records, failed_subject_codes_sem1_only,
     infer_current_commencement_year, rereg_principle_mismatch, suggested_rereg_principle,
+    suggested_block_advice, suggested_prep_advice,
 )
 
 st.set_page_config(page_title="Reregistration Advisory", layout="wide")
@@ -114,6 +115,19 @@ def _render_stage_2_3() -> None:
         "empirically-validated threshold - a best-effort fallback, not a "
         "claim to have reproduced Grant's judgment."
     )
+    st.caption(
+        "The 'Suggested B1-4/Prep advice' columns are new (2026-08-25) - "
+        "our own best-effort registration advice, computed from rules "
+        "Josiah confirmed directly (see history.py's REGISTRATION ADVICE "
+        "docstring section), shown ALONGSIDE Grant's own advice rather "
+        "than replacing it. They deliberately punt to 'speak with your "
+        "academic learning advisor' for anything more complex than a "
+        "single Block 1/2 failure or a single Block 3/4 failure - a "
+        "student with 2+ subjects outstanding, or a Block 1/2 failure, "
+        "gets a generic ALA referral rather than a guessed schedule, "
+        "because that's the honest answer for those cases, not a gap in "
+        "the logic."
+    )
 
     uploaded = st.file_uploader(
         "Reregistration recommendation list (.xlsx) — 'AB4 for SPR' style "
@@ -176,6 +190,11 @@ def _render_stage_2_3() -> None:
             "B3 advice (Stage 2)": r.block_advice[2],
             "B4 advice (Stage 2)": r.block_advice[3],
             "Prep advice (Stage 3)": r.prep_advice or "",
+            "Suggested B1 advice": suggested_block_advice(r)[0],
+            "Suggested B2 advice": suggested_block_advice(r)[1],
+            "Suggested B3 advice": suggested_block_advice(r)[2],
+            "Suggested B4 advice": suggested_block_advice(r)[3],
+            "Suggested Prep advice": suggested_prep_advice(r) or "",
         }
         for r in records
     )
