@@ -2,14 +2,20 @@
 Reregistration Advisory — main hub for the Modular Re-registration Timeline
 =============================================================================
 
-One page, one entry point. Each buildable stage gets its own collapsed
-section below (with its own file upload — Stage 2/3 and Stage 5 need
-genuinely different source files, see stages.py) rather than a separate
-page per stage. Restructured 2026-08-22 at Josiah's request:
-"Reregistration advice as the main page... generate advice for each
-stage... stage 2 3 page should be collapsed basically." Stage 2/3 used
-to live at pages/10_Stage2_3_Recommendations.py - that file is gone,
-folded into the "Stage 2 & 3" section below.
+One page, one entry point, ONE upload feeding every stage. Restructured
+2026-08-25 at Josiah's request ("I want to use the updated (or completed)
+Ashlee file as the input file, regardless which stage") - a single real
+file from Ashlee's team (student_tracker/pipeline/live_roster.py) now
+drives both the Stage 2/3 section and the Stage 5 section, replacing the
+two separate uploads (Grant's AB4-for-SPR file, the old Progression
+Outcomes roster) that used to be needed. See live_roster.py's module
+docstring for the full story of how that file was confirmed (a recorded
+walkthrough meeting with Ashlee) and exactly what it contains.
+
+Earlier history: this page used to be a single Stage 5 report; Stage 2/3
+was folded in as a second section on 2026-08-22 (previously its own page,
+pages/10_Stage2_3_Recommendations.py, now gone); each section had its own
+file upload until this 2026-08-25 restructure unified them.
 
 STATUS: skeleton, not a finished tool. See the "Stage coverage" expander
 below and student_tracker/pipeline/stages.py for what's built vs blocked
@@ -25,7 +31,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from student_tracker.pipeline.ingest import load_roster, to_student_records
+from student_tracker.pipeline import live_roster
 from student_tracker.pipeline.bucketing import bucket_all
 from student_tracker.pipeline.report_builder import build_advisory_report
 from student_tracker.pipeline.stages import STAGES, stage5_ce_only, get_stage
@@ -33,9 +39,8 @@ from student_tracker.pipeline.glossary import glossary_dataframe
 from student_tracker.pipeline.timing import blocks_due as compute_blocks_due, DAYS_PER_BLOCK
 from student_tracker.pipeline.pattern_lookup import load_pattern_overrides
 from student_tracker.pipeline.history import (
-    load_reregistration_history, to_history_records, failed_subject_codes_sem1_only,
-    infer_current_commencement_year, rereg_principle_mismatch, suggested_rereg_principle,
-    suggested_block_advice, suggested_prep_advice,
+    failed_subject_codes_sem1_only, infer_current_commencement_year,
+    suggested_rereg_principle, suggested_block_advice, suggested_prep_advice,
 )
 
 st.set_page_config(page_title="Reregistration Advisory", layout="wide")
@@ -90,7 +95,7 @@ TERM_OPTIONS = {
 }
 
 
-def _render_stage_2_3() -> None:
+def _render_stage_2_3(records, skipped) -> None:
     stage2 = get_stage("AUT", 2)
     stage3 = get_stage("AUT", 3)
     st.markdown(
@@ -102,76 +107,41 @@ def _render_stage_2_3() -> None:
         f"Population: {stage3.population}"
     )
     st.caption(
-        "Both stages draw on the same file - Stage 2 is the block-subject "
-        "recommendation (B1-B4 Name), Stage 3 is the prep-subject "
-        "recommendation (Prep Name), so this section covers both together "
-        "rather than asking for the file twice. When the file carries "
-        "Grant's own Rereg Principles/Template/B1-4 Name/Prep Name "
-        "columns, this displays/filters/exports them - it does not "
-        "independently derive them the way Stage 5 computes its bucket "
-        "from scratch, since we only know the shape of Grant's output, "
-        "not his actual classification rules. When those columns are "
-        "absent, it falls back to a 'Suggested Rereg Principle' from an "
-        "empirically-validated threshold - a best-effort fallback, not a "
-        "claim to have reproduced Grant's judgment."
+        "Stage 2 is the block-subject recommendation, Stage 3 is the "
+        "prep-subject recommendation - both come from the same uploaded "
+        "roster above, so this section covers both together. Everything "
+        "below is OUR OWN best-effort suggestion (see history.py's "
+        "REGISTRATION ADVICE docstring section for the confirmed rules "
+        "behind it, and suggested_rereg_principle for the severity label) "
+        "- this file is upstream of Grant's own judgment layer, so there "
+        "is no 'Grant's own advice' to fall back to or compare against "
+        "here anymore, unlike before this page moved to the live roster."
     )
     st.caption(
-        "The 'Suggested B1-4/Prep advice' columns are new (2026-08-25) - "
-        "our own best-effort registration advice, computed from rules "
-        "Josiah confirmed directly (see history.py's REGISTRATION ADVICE "
-        "docstring section), shown ALONGSIDE Grant's own advice rather "
-        "than replacing it. They deliberately punt to 'speak with your "
-        "academic learning advisor' for anything more complex than a "
-        "single Block 1/2 failure or a single Block 3/4 failure - a "
-        "student with 2+ subjects outstanding, or a Block 1/2 failure, "
-        "gets a generic ALA referral rather than a guessed schedule, "
-        "because that's the honest answer for those cases, not a gap in "
-        "the logic."
+        "The Suggested B1-4/Prep advice columns deliberately punt to "
+        "'speak with your academic learning advisor' for anything more "
+        "complex than a single Block 1/2 failure or a single Block 3/4 "
+        "failure - a student with 2+ subjects outstanding, or a Block "
+        "1/2 failure, gets a generic ALA referral rather than a guessed "
+        "schedule, because that's the honest answer for those cases, not "
+        "a gap in the logic."
     )
 
-    uploaded = st.file_uploader(
-        "Reregistration recommendation list (.xlsx) — 'AB4 for SPR' style "
-        "file, or an enhanced roster with the same 'All Subjects' pass/fail "
-        "column",
-        type=["xlsx"],
-        help="Reads every diploma and Nursing/UPP 'full population' sheet "
-             "in the workbook automatically (not the Bulk/Complete/"
-             "Exclusion breakdown sheets, which are subsets of those). "
-             "Rereg Principles/Template/B1-4 Name/Prep Name are all "
-             "optional - this still works without them, just with less to "
-             "show. This is a different file than Stage 5's Progression "
-             "Outcomes roster below - it needs subject-level pass/fail "
-             "history, which the roster doesn't carry.",
-        key="stage23_upload",
-    )
-
-    run_btn = st.button(
-        "Generate report", type="primary", disabled=not uploaded, key="stage23_generate",
-    )
-
-    if run_btn:
-        try:
-            df = load_reregistration_history(io.BytesIO(uploaded.getvalue()))
-            st.session_state["stage23_records"] = to_history_records(df)
-            st.session_state["stage23_skipped"] = len(df) - len(st.session_state["stage23_records"])
-        except ValueError as e:
-            st.session_state.pop("stage23_records", None)
-            st.error(f"Couldn't read this file: {e}")
-
-    if "stage23_records" not in st.session_state:
-        st.info("Upload the Stage 2/3 recommendation file (.xlsx) and click Generate.")
+    if records is None:
+        st.info("Upload the roster above and click Generate.")
         return
 
-    records = st.session_state["stage23_records"]
-    skipped = st.session_state["stage23_skipped"]
     if skipped:
         st.warning(
-            f"Skipped {skipped} row(s) with an unrecognized subject-history "
-            "shape (not diploma or Nursing/UPP)."
+            f"Skipped {skipped:,} row(s) with no usable Block 1-4 result "
+            "for the current session (e.g. a Leave of Absence/Deferred "
+            "student, or a student who hasn't started this session yet - "
+            "commonly next session's already-registered commencers riding "
+            "along in the same export). Not a parsing error - see "
+            "live_roster.py's to_history_records docstring."
         )
 
     current_autumn_year = infer_current_commencement_year(records)
-    has_rereg_data = any(r.rereg_principle is not None for r in records)
 
     report_df = pd.DataFrame(
         {
@@ -179,17 +149,9 @@ def _render_stage_2_3() -> None:
             "Student Name": r.student_name,
             "Program": r.program,
             "Commencement Period": r.commencement_period,
-            "Rereg Principles": r.rereg_principle,
             "Suggested Rereg Principle": suggested_rereg_principle(r, current_autumn_year) or "",
-            "Template": r.template,
-            "QA check": rereg_principle_mismatch(r, current_autumn_year) or "",
             "Subjects failed in Semester 1": failed_subject_codes_sem1_only(r),
             "Electives outstanding": r.electives_outstanding,
-            "B1 advice (Stage 2)": r.block_advice[0],
-            "B2 advice (Stage 2)": r.block_advice[1],
-            "B3 advice (Stage 2)": r.block_advice[2],
-            "B4 advice (Stage 2)": r.block_advice[3],
-            "Prep advice (Stage 3)": r.prep_advice or "",
             "Suggested B1 advice": suggested_block_advice(r)[0],
             "Suggested B2 advice": suggested_block_advice(r)[1],
             "Suggested B3 advice": suggested_block_advice(r)[2],
@@ -200,84 +162,39 @@ def _render_stage_2_3() -> None:
     )
 
     total = len(report_df)
-    flagged_count = int((report_df["QA check"] != "").sum())
-    m1, m2, m3, m4 = st.columns(4)
+    m1, m2, m3 = st.columns(3)
     m1.metric("Total students", f"{total:,}")
     m2.metric("Programs represented", report_df["Program"].nunique())
-    m3.metric("Rereg Principles categories", report_df["Rereg Principles"].nunique())
-    m4.metric("QA flags", f"{flagged_count:,}")
+    m3.metric(
+        "With a suggested principle",
+        f"{int((report_df['Suggested Rereg Principle'] != '').sum()):,}",
+    )
 
-    if not has_rereg_data:
-        st.info(
-            "This file has no Rereg Principles column at all - showing "
-            "'Suggested Rereg Principle' instead, computed from the "
-            "empirically-validated threshold. Blank means we don't have a "
-            "confident basis for this student (Nursing/UPP, a different "
-            "commencement cohort, or a genuinely ambiguous fail count) - "
-            "it's not a claim that nothing's wrong, just that we can't say."
-        )
-    elif current_autumn_year is None:
-        st.caption(
-            "QA check unavailable - couldn't infer which Autumn intake "
-            "this file is currently reporting on (no Autumn-commencement "
-            "rows found)."
-        )
-    else:
-        st.caption(
-            f"QA check compares each Autumn-commencing diploma student's "
-            f"Rereg Principles against a pattern empirically confirmed "
-            f"against real data (see history.py) - only for "
-            f"{current_autumn_year} (this file's inferred current intake) "
-            f"and continuing students from {current_autumn_year - 1}, and "
-            "only where that pattern was 100% consistent in real data. A "
-            "blank QA check means either it matched, or this student's "
-            "situation isn't one we have a confident rule for yet - it "
-            "does NOT mean confirmed correct. This flags rows worth a "
-            "second look, it doesn't override Grant's own classification."
-        )
-
-    if has_rereg_data:
-        st.subheader("By Rereg Principles")
-        principle_summary = (
-            report_df.groupby(["Rereg Principles", "Template"])
-            .size()
-            .reset_index(name="Count")
-            .sort_values("Count", ascending=False)
-        )
-        st.dataframe(principle_summary, use_container_width=True, hide_index=True)
-        st.bar_chart(report_df["Rereg Principles"].value_counts())
+    st.info(
+        "'Suggested Rereg Principle' is blank when we don't have a "
+        "confident basis for this student (Nursing/UPP, a different "
+        "commencement cohort, or a genuinely ambiguous fail count) - "
+        "it's not a claim that nothing's wrong, just that we can't say."
+    )
 
     st.subheader("Per-student recommendations")
-    f1, f2, f3 = st.columns(3)
+    f1, f2 = st.columns(2)
     program_filter = f1.multiselect(
         "Filter: Program", options=sorted(report_df["Program"].unique()), default=[],
         key="stage23_program_filter",
     )
     principle_filter = f2.multiselect(
-        "Filter: Rereg Principles",
-        options=sorted(report_df["Rereg Principles"].dropna().unique()),
+        "Filter: Suggested Rereg Principle",
+        options=sorted(p for p in report_df["Suggested Rereg Principle"].unique() if p),
         default=[],
         key="stage23_principle_filter",
     )
-    template_filter = f3.multiselect(
-        "Filter: Template",
-        options=sorted(report_df["Template"].dropna().unique()),
-        default=[],
-        key="stage23_template_filter",
-    )
-    flagged_only = st.checkbox(
-        f"Show only QA-flagged rows ({flagged_count:,})", value=False, key="stage23_flagged_only",
-    )
 
     filtered_df = report_df
-    if flagged_only:
-        filtered_df = filtered_df[filtered_df["QA check"] != ""]
     if program_filter:
         filtered_df = filtered_df[filtered_df["Program"].isin(program_filter)]
     if principle_filter:
-        filtered_df = filtered_df[filtered_df["Rereg Principles"].isin(principle_filter)]
-    if template_filter:
-        filtered_df = filtered_df[filtered_df["Template"].isin(template_filter)]
+        filtered_df = filtered_df[filtered_df["Suggested Rereg Principle"].isin(principle_filter)]
 
     st.dataframe(filtered_df, use_container_width=True, hide_index=True)
     st.caption(f"Showing {len(filtered_df):,} of {len(report_df):,} students.")
@@ -295,7 +212,7 @@ def _render_stage_2_3() -> None:
     )
 
 
-def _render_stage_5(pattern_overrides) -> None:
+def _render_stage_5(records, pattern_overrides) -> None:
     st.caption(
         "Sorts students into advisory buckets from progression standing "
         "and Spring registration completeness. Medium/low confidence "
@@ -354,26 +271,8 @@ def _render_stage_5(pattern_overrides) -> None:
             "either way."
         )
 
-    uploaded = st.file_uploader(
-        "Roster (.xlsx) — Progression Outcomes export",
-        type=["xlsx"],
-        help="The 'Autumn for Spring Progression Outcomes' or ALA-style export "
-             "with Calculated Standing and Spring Block 1-4 registration "
-             "columns. This is a different file than Stage 2/3's "
-             "recommendation list above - it doesn't carry subject-level "
-             "pass/fail history, so it can't drive that section.",
-        key="stage5_upload",
-    )
-
-    if not uploaded:
-        st.info("Upload a Progression Outcomes roster (.xlsx) to run the bucketing pass.")
-        return
-
-    try:
-        df = load_roster(io.BytesIO(uploaded.getvalue()))
-        records = to_student_records(df)
-    except ValueError as e:
-        st.error(f"Couldn't read this roster: {e}")
+    if records is None:
+        st.info("Upload the roster above to run the bucketing pass.")
         return
 
     results = bucket_all(records, blocks_due_value, pattern_overrides)
@@ -603,18 +502,16 @@ if pattern_upload is not None:
 st.title("Reregistration Advisory")
 st.caption(
     "One stop for the Modular Re-registration Timeline's advisory reports. "
-    "Each stage below has its own upload, since different stages need "
-    "different source files - the same roster won't satisfy both sections."
+    "Upload the roster once below - it drives every stage section."
 )
 
 with st.expander("Instructions", expanded=False):
     st.markdown(
-        "**Stage 2 & 3** need an 'AB4 for SPR'-style recommendation file "
-        "(subject-level pass/fail history). **Stage 5** needs a "
-        "Progression Outcomes roster (Calculated Standing + Spring Block "
-        "registrations). These are different files carrying different "
-        "data - uploading one where the other is expected will error out, "
-        "that's expected rather than a bug.  \n"
+        "Upload the real roster Ashlee's team sends Grant directly (e.g. "
+        "'... Autumn to Spring Re-reg - AUT End progression Status ....xlsx', "
+        "sheet 'Query1') - one file drives both the Stage 2/3 and Stage 5 "
+        "sections below. See student_tracker/pipeline/live_roster.py for "
+        "exactly what columns it needs and how they're used.  \n"
         "The sidebar's **Pattern of Study template** download/upload lets you "
         "propose new or corrected pattern-of-study data (e.g. for a "
         "commencement session or program the built-in table doesn't cover "
@@ -656,10 +553,44 @@ with st.expander("Stage coverage (Modular Re-registration Timeline)", expanded=F
         "blocked/undefined row."
     )
 
+st.header("Upload roster")
+uploaded = st.file_uploader(
+    "Roster (.xlsx) — the live Autumn-to-Spring re-reg file (sheet 'Query1')",
+    type=["xlsx"],
+    help="The real file Ashlee's team sends Grant directly - carries both "
+         "the forward-looking Spring registration AND this session's "
+         "per-block/per-prep pass-fail results in one file. See "
+         "live_roster.py for the exact expected columns.",
+    key="live_upload",
+)
+run_btn = st.button("Generate", type="primary", disabled=not uploaded, key="live_generate")
+
+if run_btn:
+    try:
+        df = live_roster.load_live_roster(io.BytesIO(uploaded.getvalue()))
+        student_records, student_skipped = live_roster.to_student_records(df)
+        history_records, history_skipped = live_roster.to_history_records(df)
+        st.session_state["live_student_records"] = student_records
+        st.session_state["live_student_skipped"] = student_skipped
+        st.session_state["live_history_records"] = history_records
+        st.session_state["live_history_skipped"] = history_skipped
+    except ValueError as e:
+        st.session_state.pop("live_student_records", None)
+        st.session_state.pop("live_history_records", None)
+        st.error(f"Couldn't read this file: {e}")
+
+_student_records = st.session_state.get("live_student_records")
+_history_records = st.session_state.get("live_history_records")
+if _student_records is not None and st.session_state.get("live_student_skipped"):
+    st.warning(
+        f"Skipped {st.session_state['live_student_skipped']:,} row(s) with "
+        "a blank/non-numeric Program value."
+    )
+
 st.header("Generate advice by stage")
 
 with st.expander("Stage 2 & 3 — Block & Prep recommendations (post-AB4 results)", expanded=False):
-    _render_stage_2_3()
+    _render_stage_2_3(_history_records, st.session_state.get("live_history_skipped"))
 
 with st.expander("Stage 5 — Applied progression outcomes recommendations (Conditional Enrolment)", expanded=True):
-    _render_stage_5(pattern_overrides)
+    _render_stage_5(_student_records, pattern_overrides)
