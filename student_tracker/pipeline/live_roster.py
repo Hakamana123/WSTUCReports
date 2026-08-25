@@ -69,6 +69,7 @@ and it's exactly what this file's output triggers.
 """
 
 from __future__ import annotations
+from dataclasses import dataclass
 from typing import Optional
 
 import pandas as pd
@@ -217,28 +218,107 @@ def to_student_records(df: pd.DataFrame) -> tuple:
     return records, skipped
 
 
+@dataclass
+class SkippedHistoryRow:
+    """A student whose Stage 2/3 advice couldn't be computed - carried
+    with an explanatory note rather than dropped, since Josiah confirmed
+    2026-08-25 these still have real value to a coach ("not silently
+    vanishing is itself useful information, not noise").
+    """
+    student_id: str
+    student_name: Optional[str]
+    program: Optional[int]
+    commencement_period: Optional[str]
+    note: str
+
+
+_BLOCK_RESULT_COLS = ["block1_result", "block2_result", "block3_result", "block4_result"]
+
+
+def _skip_reason(row) -> str:
+    """Best-effort plain-English reason a student has no usable Block 1-4
+    Result this session, in priority order:
+      1. Leave of Absence / Deferred - from STUDY_PATH_STATUS directly.
+      2. Not yet started - commencement_period names a different session
+         than this file's own ('Autumn' not in it), most commonly a
+         student already registered for the coming Spring riding along
+         in this Autumn-end export.
+      3. Partial enrolment - SOME but not all 4 blocks have a value
+         recorded (confirmed against real data 2026-08-25: this is a
+         real, common shape - 96 of 697 real cases were "only Block 3-4
+         recorded", consistent with the confirmed Block 3/4 catch-up
+         mechanic; 45 were "only Block 1", etc). Named descriptively
+         (which blocks DO have something recorded), not diagnosed -
+         we know WHAT is present, not WHY only some blocks are.
+      4. Fallback: ALL FOUR blocks blank despite an Active study path -
+         Josiah confirmed (2026-08-25) this could be genuine non-
+         standard enrolment OR an inactive/"ghost" registration that
+         never really engaged from Block 1 - "those are all possible",
+         i.e. genuinely not distinguishable from this data alone.
+         Labeled "Non-participatory enrolment" per Josiah's own naming
+         (2026-08-25) - accurate for either underlying cause without
+         picking one.
+    """
+    study_path = row.get("study_path_status")
+    study_path = None if pd.isna(study_path) else str(study_path)
+    if study_path == "Leave of Absence":
+        return "Leave of Absence"
+    if study_path == "Deferred Study Path":
+        return "Deferred"
+
+    commencement = row.get("commencement_period")
+    commencement = None if pd.isna(commencement) else str(commencement)
+    if commencement and "Autumn" not in commencement:
+        return f"Not yet started - registered for {commencement}"
+
+    recorded_blocks = [
+        i for i, col in enumerate(_BLOCK_RESULT_COLS, start=1) if not pd.isna(row.get(col))
+    ]
+    if recorded_blocks:
+        block_desc = (
+            f"Block {recorded_blocks[0]}" if len(recorded_blocks) == 1
+            else "Blocks " + ", ".join(str(b) for b in recorded_blocks)
+        )
+        return f"Partial enrolment this session ({block_desc} only)"
+
+    return "Non-participatory enrolment (no block results recorded this session)"
+
+
 def to_history_records(df: pd.DataFrame) -> tuple:
     """SubjectHistory list for Stage 2/3 (history.py's suggested_*
-    functions), plus a count of rows skipped for a blank/non-numeric
-    Program or an unresolvable Block 1-4 Result (missing or a grade code
-    not in PASS_GRADES/FAIL_GRADES - e.g. a Leave of Absence student with
-    no session results at all). Returns (records, skipped_count).
+    functions), plus a list of SkippedHistoryRow for students whose
+    advice couldn't be computed (a blank/non-numeric Program, or an
+    unresolvable Block 1-4 Result - missing or a grade code not in
+    PASS_GRADES/FAIL_GRADES). Returns (records, skipped).
+
+    Skipped students are NOT dropped from the Stage 2/3 report - see
+    SkippedHistoryRow/_skip_reason; the caller is expected to show them
+    with their note instead of computed advice, not omit them.
 
     A student skipped here may still appear in to_student_records's
     output - the two are independent passes, since Stage 4/5 doesn't
     need block-result data at all.
     """
     records = []
-    skipped = 0
+    skipped = []
     for _, row in df.iterrows():
+        commencement = row.get("commencement_period")
+        commencement = None if pd.isna(commencement) else str(commencement)
+        student_id = str(row.get("student_id"))
+        student_name = _student_name(row)
+
         program_val = row.get("program")
-        if pd.isna(program_val):
-            skipped += 1
-            continue
-        try:
-            program = int(program_val)
-        except (TypeError, ValueError):
-            skipped += 1
+        program = None
+        if not pd.isna(program_val):
+            try:
+                program = int(program_val)
+            except (TypeError, ValueError):
+                program = None
+        if program is None:
+            skipped.append(SkippedHistoryRow(
+                student_id, student_name, program, commencement,
+                "No usable Program value",
+            ))
             continue
 
         sem1_results = [
@@ -246,7 +326,10 @@ def to_history_records(df: pd.DataFrame) -> tuple:
             for col in ["block1_result", "block2_result", "block3_result", "block4_result"]
         ]
         if any(r is None for r in sem1_results):
-            skipped += 1
+            skipped.append(SkippedHistoryRow(
+                student_id, student_name, program, commencement,
+                _skip_reason(row),
+            ))
             continue
         sem1_passed = sem1_results  # now all bool, no None left
 
@@ -267,13 +350,10 @@ def to_history_records(df: pd.DataFrame) -> tuple:
         except (TypeError, ValueError):
             electives_outstanding = None   # e.g. "Not Applicable" / "No Elective Required"
 
-        commencement = row.get("commencement_period")
-        commencement = None if pd.isna(commencement) else str(commencement)
-
         records.append(
             SubjectHistory(
-                student_id=str(row.get("student_id")),
-                student_name=_student_name(row),
+                student_id=student_id,
+                student_name=student_name,
                 program=program,
                 commencement_period=commencement,
                 prep_passed=prep_passed,

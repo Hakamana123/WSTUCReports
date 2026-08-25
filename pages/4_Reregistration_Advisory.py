@@ -131,24 +131,15 @@ def _render_stage_2_3(records, skipped) -> None:
         st.info("Upload the roster above and click Generate.")
         return
 
-    if skipped:
-        st.warning(
-            f"Skipped {skipped:,} row(s) with no usable Block 1-4 result "
-            "for the current session (e.g. a Leave of Absence/Deferred "
-            "student, or a student who hasn't started this session yet - "
-            "commonly next session's already-registered commencers riding "
-            "along in the same export). Not a parsing error - see "
-            "live_roster.py's to_history_records docstring."
-        )
-
     current_autumn_year = infer_current_commencement_year(records)
 
-    report_df = pd.DataFrame(
+    computed_rows = [
         {
             "Student ID": r.student_id,
             "Student Name": r.student_name,
             "Program": r.program,
             "Commencement Period": r.commencement_period,
+            "Status": "",
             "Suggested Rereg Principle": suggested_rereg_principle(r, current_autumn_year) or "",
             "Subjects failed in Semester 1": failed_subject_codes_sem1_only(r),
             "Electives outstanding": r.electives_outstanding,
@@ -159,16 +150,47 @@ def _render_stage_2_3(records, skipped) -> None:
             "Suggested Prep advice": suggested_prep_advice(r) or "",
         }
         for r in records
-    )
+    ]
+    no_advice_rows = [
+        {
+            "Student ID": s.student_id,
+            "Student Name": s.student_name,
+            "Program": s.program,
+            "Commencement Period": s.commencement_period,
+            "Status": s.note,
+            "Suggested Rereg Principle": "",
+            "Subjects failed in Semester 1": "",
+            "Electives outstanding": None,
+            "Suggested B1 advice": "",
+            "Suggested B2 advice": "",
+            "Suggested B3 advice": "",
+            "Suggested B4 advice": "",
+            "Suggested Prep advice": "",
+        }
+        for s in (skipped or [])
+    ]
+    report_df = pd.DataFrame(computed_rows + no_advice_rows)
 
     total = len(report_df)
-    m1, m2, m3 = st.columns(3)
+    no_advice_count = len(no_advice_rows)
+    m1, m2, m3, m4 = st.columns(4)
     m1.metric("Total students", f"{total:,}")
     m2.metric("Programs represented", report_df["Program"].nunique())
     m3.metric(
         "With a suggested principle",
         f"{int((report_df['Suggested Rereg Principle'] != '').sum()):,}",
     )
+    m4.metric("No advice this session", f"{no_advice_count:,}")
+
+    if no_advice_count:
+        st.caption(
+            f"{no_advice_count:,} student(s) above have no computed advice - "
+            "see their Status for why (most commonly: already registered "
+            "for a later session and haven't started yet, or on Leave of "
+            "Absence/Deferred). They're still included in the table and "
+            "export below rather than dropped, since knowing who they are "
+            "and why still has value."
+        )
 
     st.info(
         "'Suggested Rereg Principle' is blank when we don't have a "
@@ -178,7 +200,7 @@ def _render_stage_2_3(records, skipped) -> None:
     )
 
     st.subheader("Per-student recommendations")
-    f1, f2 = st.columns(2)
+    f1, f2, f3 = st.columns(3)
     program_filter = f1.multiselect(
         "Filter: Program", options=sorted(report_df["Program"].unique()), default=[],
         key="stage23_program_filter",
@@ -189,12 +211,20 @@ def _render_stage_2_3(records, skipped) -> None:
         default=[],
         key="stage23_principle_filter",
     )
+    status_filter = f3.multiselect(
+        "Filter: Status",
+        options=sorted(s for s in report_df["Status"].unique() if s),
+        default=[],
+        key="stage23_status_filter",
+    )
 
     filtered_df = report_df
     if program_filter:
         filtered_df = filtered_df[filtered_df["Program"].isin(program_filter)]
     if principle_filter:
         filtered_df = filtered_df[filtered_df["Suggested Rereg Principle"].isin(principle_filter)]
+    if status_filter:
+        filtered_df = filtered_df[filtered_df["Status"].isin(status_filter)]
 
     st.dataframe(filtered_df, use_container_width=True, hide_index=True)
     st.caption(f"Showing {len(filtered_df):,} of {len(report_df):,} students.")
