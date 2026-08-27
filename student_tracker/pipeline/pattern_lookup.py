@@ -56,14 +56,36 @@ from the confirmed back half, not separately verified.
 
 7197 (Diploma in Education Studies): RESOLVED 2026-08-21 in the
 handbook's favour, not Grant's original quote - EDUC1012 (Literacy and
-Numeracy for Educators) is now position 4, confirmed correct by Josiah
-having reviewed the handbook directly. Placement wasn't a judgment call:
-positions 1/2/3/5/6 were already occupied by the other five confirmed
-core subjects, so EDUC1012 could only go in the one open slot. The
-original "position 4 is blank, subject doesn't run" framing (attributed
-to a direct Grant quote at the top of this docstring) was simply wrong
-for this program - worth flagging back to Grant as a correction, not
-just a gap that's now filled.
+Numeracy for Educators) is now confirmed as one of the program's 6 core
+subjects, via Josiah reviewing the handbook directly. The original
+"position 4 is blank, subject doesn't run" framing (attributed to a
+direct Grant quote at the top of this docstring) was simply wrong for
+this program - worth flagging back to Grant as a correction, not just a
+gap that's now filled.
+
+CORRECTED 2026-08-26: which SIX subjects belong to 7197 was right (the
+handbook check above stands), but which POSITION each one sits at was
+not independently verified on 2026-08-21 - EDUC1012 was placed at
+position 4 "by elimination" (positions 1/2/3/5/6 were assumed already
+settled, so it got the one open slot), and that order assumption turned
+out to be wrong. Found via a real false positive: Stefan Lakic
+(20308432), a model student (all "H" grades, fully registered, Good
+Standing) was being flagged exception_registered_wrong_subjects. His
+actual Autumn Block 1-4 order was GEDU1001, EDUC1010, EDUC1013,
+EDUC2015 - not the table's GEDU1001, EDUC1010, EDUC2015, EDUC1012.
+Checked against all 386 real "26 - Autumn Block 1" commencers in this
+program (not just Stefan): 91%+ consensus on each block matches this
+corrected order, and re-checking Spring registrations for the 309
+students this bug had wrongly flagged (94% of that whole exception
+bucket) confirms positions 5/6 too. Corrected order: position 3 =
+EDUC1013 (was 5), position 4 = EDUC2015 (was 3), position 5 = EDUC1012
+(was 4) - a 3-way rotation, not a full reshuffle; positions 1, 2, 6 were
+already right. Dropped exception_registered_wrong_subjects from 330 to
+25 students in the real file. The handbook confirms the subject LIST;
+this correction is from real registration-pattern evidence, not the
+handbook - "semi-fixed" in Josiah's own words (2026-08-26), i.e. strong
+statistical evidence (91%+ consensus, hundreds of students) rather than
+an authoritative document, unlike the subject-list question above.
 
 7188 (Diploma, same 6-subject pattern as 7198) is discontinued for new
 2026 intake (404s on the current handbook) but this table's entry is
