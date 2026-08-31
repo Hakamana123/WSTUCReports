@@ -26,13 +26,18 @@ COLUMN_GLOSSARY: list[tuple[str, str]] = [
     ("Reason (if Unknown)", "Why 'On pattern' can't be determined for this "
                              "student - e.g. their program/start-date combination "
                              "isn't supported by the pattern data yet."),
-    ("Subjects advised", "What the student's pattern says they should be "
-                          "registered for, for the next two blocks (Spring Block "
-                          "1 and 2 only - the pattern data doesn't cover further "
-                          "blocks yet, see the technical notes in "
-                          "report_builder.py if useful)."),
-    ("Subjects registered", "What the student is actually registered for right "
-                             "now, across all 4 blocks plus the prep subject."),
+    ("Block 1-4 advised", "What the student's pattern says they should be "
+                           "registered for in that block. Only Block 1 and 2 are "
+                           "usually filled in - the pattern data doesn't cover "
+                           "Block 3/4 for most programs yet, see the technical "
+                           "notes in report_builder.py if useful. Blank means no "
+                           "pattern-expected subject for that block."),
+    ("Block 1-4 registered", "What the student is actually registered for in "
+                              "that block right now. Blank means not registered "
+                              "for that block."),
+    ("Prep registered", "The prep subject the student is registered for, shown "
+                         "for reference only - not checked against the pattern "
+                         "(see report_builder.py)."),
     ("Bucket", "Which advisory category the student has been sorted into - see "
                "the Buckets section of this glossary for what each one means."),
     ("Bucket confidence", "How solid that categorisation is - see the Confidence "

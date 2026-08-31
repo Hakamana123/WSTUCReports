@@ -27,6 +27,13 @@ its own page (pages/10_Stage2_3_Recommendations.py) instead - Josiah chose
 a dedicated Stage 2 view over merging it into this (Stage 5) report,
 since the two are different audiences at different points in the
 Timeline (see stages.py). This module is Stage 5 only again.
+
+2026-08-26: "Subjects advised"/"Subjects registered" used to be single
+semicolon-joined strings (e.g. "Spring Block 1: BLDG1021; Spring Block
+2: BLDG1022"). Split into one value per block (advised_blocks/
+registered_blocks, both length-4 lists) at Josiah's request, so the
+downstream report/Excel export can show one column per block instead of
+packing them into one cell.
 """
 
 from __future__ import annotations
@@ -34,7 +41,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from .ingest import StudentRecord
-from .pattern_lookup import compare_registration_to_pattern, BLOCK_LABELS
+from .pattern_lookup import compare_registration_to_pattern
 from .bucketing import bucket_all, BucketResult
 
 
@@ -45,22 +52,19 @@ class AdvisoryRow:
     program: int
     on_pattern: str                    # "Y", "N", "Partial", "Unknown"
     unknown_reason: Optional[str]
-    subjects_advised: str
-    subjects_registered: str
+    advised_blocks: list                # length 4, one per Spring Block 1-4 - "" where
+                                         # the pattern has no mapped position for that
+                                         # block (e.g. Block 3/4 for a 6-position diploma)
+    registered_blocks: list             # length 4, one per Spring Block 1-4 - "" if
+                                         # not registered
+    prep_registered: Optional[str]      # not evaluated against the pattern - see module docstring
     bucket: str
     bucket_confidence: str
     advice: str
 
 
-def _format_registered(record: StudentRecord) -> str:
-    parts = [
-        f"{label}: {subject}"
-        for label, subject in zip(BLOCK_LABELS, record.block_registrations)
-        if subject
-    ]
-    if record.prep_registration:
-        parts.append(f"Prep (not evaluated): {record.prep_registration}")
-    return "; ".join(parts) if parts else "(none registered)"
+def _registered_blocks(record: StudentRecord) -> list:
+    return [subject or "" for subject in record.block_registrations]
 
 
 def _advice_for_bucket(bucket_result: BucketResult) -> str:
@@ -88,8 +92,9 @@ def build_advisory_row(
         program=record.program,
         on_pattern=comparison.status,
         unknown_reason=comparison.reason,
-        subjects_advised=comparison.advised,
-        subjects_registered=_format_registered(record),
+        advised_blocks=comparison.advised_by_block,
+        registered_blocks=_registered_blocks(record),
+        prep_registered=record.prep_registration,
         bucket=bucket_result.bucket,
         bucket_confidence=bucket_result.confidence,
         advice=_advice_for_bucket(bucket_result),

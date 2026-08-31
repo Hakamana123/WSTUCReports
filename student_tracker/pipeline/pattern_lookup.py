@@ -325,6 +325,17 @@ class PatternComparison:
     status: str                        # "Y", "N", "Partial", "Unknown"
     advised: str                       # formatted expected Spring Block 1-2 subjects
     reason: Optional[str] = None       # unresolved reason, only set when status=="Unknown"
+    advised_by_block: list = None      # length-4, one entry per Spring Block 1-4 -
+                                        # "" where the pattern has no mapped position for
+                                        # that block (e.g. Block 3/4 for a 6-position
+                                        # diploma - see SPRING_BLOCK_TO_POSITION). Added
+                                        # 2026-08-26 so callers can show one column per
+                                        # block instead of one joined string - see
+                                        # report_builder.py.
+
+    def __post_init__(self):
+        if self.advised_by_block is None:
+            self.advised_by_block = ["", "", "", ""]
 
 
 def compare_registration_to_pattern(
@@ -344,12 +355,14 @@ def compare_registration_to_pattern(
         return PatternComparison(status="Unknown", advised="", reason=pattern.unresolved_reason)
 
     advised_parts = []
+    advised_by_block = ["", "", "", ""]
     matches = []
     for block_idx, position in SPRING_BLOCK_TO_POSITION.items():
         expected = pattern.block_sequence.get(position)
         if expected is None:
             continue
         advised_parts.append(f"{BLOCK_LABELS[block_idx]}: {expected}")
+        advised_by_block[block_idx] = expected
         matches.append(block_registrations[block_idx] == expected)
 
     if matches and all(matches):
@@ -361,7 +374,7 @@ def compare_registration_to_pattern(
 
     advised = "; ".join(advised_parts) if advised_parts \
         else "(pattern has no Spring-mapped positions for this program)"
-    return PatternComparison(status=status, advised=advised)
+    return PatternComparison(status=status, advised=advised, advised_by_block=advised_by_block)
 
 
 def load_pattern_overrides(file) -> dict:
