@@ -107,6 +107,10 @@ _RENAME_MAP = {
     "Block 2 Result": "block2_result",
     "Block 3 Result": "block3_result",
     "Block 4 Result": "block4_result",
+    "Block 1 code": "block1_code",
+    "Block 2 code": "block2_code",
+    "Block 3 code": "block3_code",
+    "Block 4 code": "block4_code",
     "Prep Registration": "prep_registration",
     "Block 1 Registration": "block1_registration",
     "Block 2 Registration": "block2_registration",
@@ -383,6 +387,11 @@ def to_history_records(df: pd.DataFrame) -> tuple:
         except (TypeError, ValueError):
             electives_outstanding = None   # e.g. "Not Applicable" / "No Elective Required"
 
+        sem1_subjects = [
+            None if pd.isna(row.get(col)) else str(row.get(col))
+            for col in ["block1_code", "block2_code", "block3_code", "block4_code"]
+        ]
+
         records.append(
             SubjectHistory(
                 student_id=student_id,
@@ -397,6 +406,7 @@ def to_history_records(df: pd.DataFrame) -> tuple:
                 template=None,
                 block_advice=[None, None, None, None],
                 prep_advice=None,
+                sem1_subjects=sem1_subjects,
             )
         )
     return records, skipped

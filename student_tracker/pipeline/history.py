@@ -289,6 +289,22 @@ suggested_prep_advice below. Confirmed rules:
     cohort's mismatch is a genuine different rule or a data-quality
     fluke. Both stay unresolved - suggested_rereg_principle already
     returns None for exactly these cases rather than guessing.
+
+2026-08-26 (Josiah): "Ashlee's file should be the source of truth... it
+should be used as a basis for determining what advice should be given" -
+suggested_block_advice/failed_subject_codes_sem1_only now name the
+ACTUAL subject a student was recorded against (SubjectHistory.
+sem1_subjects, from live_roster.py's Block N code - Ashlee's own data),
+falling back to the pattern_table.json lookup only when that isn't
+known (the old AB4-for-SPR bracket file never carries subject codes at
+all, only pass/fail digits). This isn't just a preference - it's more
+correct: checking real students in program 7189 found THREE different
+real Block 3/4 subject pairs (PUBH1015/HLTH1021, NATS1029/NATS1030,
+HLTH1022/HLTH1023) across different students, meaning that program has
+multiple legitimate subject tracks pattern_table.json could only ever
+represent one of - a static single-sequence lookup would have been
+wrong for most of them. Naming the subject the student was actually
+recorded against sidesteps that entirely.
 """
 
 from __future__ import annotations
@@ -329,6 +345,25 @@ class SubjectHistory:
     template: Optional[str]
     block_advice: list      # length 4, B1-B4 Name, next semester's advice
     prep_advice: Optional[str]   # "Prep Name" (diploma) / "Prep" (Nursing, always None) - Stage 3's recommendation
+    sem1_subjects: list = None   # length 4, the ACTUAL subject code attempted at each
+                                  # Sem1 position, straight from Ashlee's live-roster
+                                  # data (live_roster.py's Block N code) - None entries
+                                  # (or the whole list, from a source that doesn't carry
+                                  # this, e.g. the old AB4-for-SPR bracket file) mean
+                                  # "unknown, fall back to the pattern table". Added
+                                  # 2026-08-26 per Josiah: "Ashlee's file should be the
+                                  # source of truth" for what advice gets given -
+                                  # failed_subject_codes_sem1_only/suggested_block_advice
+                                  # both prefer this real data over a pattern_table.json
+                                  # lookup wherever it's available, since the reference
+                                  # table is a separate, occasionally-wrong/stale copy
+                                  # (see the 7197 position-order bug) of something we
+                                  # often already know directly from the student's own
+                                  # record.
+
+    def __post_init__(self):
+        if self.sem1_subjects is None:
+            self.sem1_subjects = [None, None, None, None]
 
     @property
     def failed_positions(self) -> list:
@@ -386,17 +421,28 @@ def failed_subject_codes_sem1_only(history: SubjectHistory, pattern_overrides: O
     """Same as failed_subject_codes, but only Semester 1 (sem1_failed_
     positions) - for files generated before Sem2 runs (AB4-for-SPR /
     Stage 2-3), where a Sem2 "not yet passed" digit means not-yet-due,
-    not failed. Used by pages/10_Stage2_3_Recommendations.py (which covers
-    both Stage 2 and Stage 3, merged into one page since they share the
-    same input file).
+    not failed. Used by the Stage 2/3 section of
+    pages/4_Reregistration_Advisory.py.
+
+    Prefers history.sem1_subjects (the actual subject code the student
+    was recorded against, from Ashlee's live-roster data) over the
+    pattern_table.json lookup wherever it's known - only falls back to
+    the reference table for a position where sem1_subjects is None
+    (e.g. the old AB4-for-SPR bracket file, which never carries actual
+    subject codes at all). See SubjectHistory.sem1_subjects.
     """
     if not history.sem1_failed_positions:
         return "(none)"
-    pattern = lookup_pattern(history.program, history.commencement_period, pattern_overrides)
-    parts = [
-        pattern.block_sequence.get(pos, f"Position {pos}")
-        for pos in history.sem1_failed_positions
-    ]
+    pattern = None
+    parts = []
+    for pos in history.sem1_failed_positions:
+        actual = history.sem1_subjects[pos - 1] if pos - 1 < len(history.sem1_subjects) else None
+        if actual:
+            parts.append(actual)
+            continue
+        if pattern is None:
+            pattern = lookup_pattern(history.program, history.commencement_period, pattern_overrides)
+        parts.append(pattern.block_sequence.get(pos, f"Position {pos}"))
     return "; ".join(parts)
 
 
@@ -666,6 +712,11 @@ def suggested_block_advice(history: SubjectHistory, pattern_overrides: Optional[
     Sem1-only, same as sem1_failed_positions/failed_subject_codes_sem1_only
     - a Sem2 position isn't due yet at this file's checkpoint, so it's
     never treated as a failure here either.
+
+    Names the actual failed subject from history.sem1_subjects (Ashlee's
+    live-roster data) when known, falling back to the pattern_table.json
+    lookup only when it isn't (e.g. the old AB4-for-SPR bracket file) -
+    see SubjectHistory.sem1_subjects and failed_subject_codes_sem1_only.
     """
     failed = history.sem1_failed_positions
     advice = ["No action needed."] * 4
@@ -675,8 +726,12 @@ def suggested_block_advice(history: SubjectHistory, pattern_overrides: Optional[
         if pos in (1, 2):
             advice[pos - 1] = _ALA_REFERRAL
         else:
-            pattern = lookup_pattern(history.program, history.commencement_period, pattern_overrides)
-            subject = pattern.block_sequence.get(pos, f"Position {pos}")
+            actual = history.sem1_subjects[pos - 1] if pos - 1 < len(history.sem1_subjects) else None
+            if actual:
+                subject = actual
+            else:
+                pattern = lookup_pattern(history.program, history.commencement_period, pattern_overrides)
+                subject = pattern.block_sequence.get(pos, f"Position {pos}")
             advice[pos - 1] = f"Retake {subject} in the same block next semester."
     elif len(failed) > 1:
         for pos in failed:
