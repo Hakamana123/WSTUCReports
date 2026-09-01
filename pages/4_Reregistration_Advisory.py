@@ -45,6 +45,9 @@ with st.expander("How the advice is built", expanded=False):
   (from their commencement period), then any earlier outstanding subjects fill
   the remaining blocks, each displacing one elective to a later session.
 - **Electives** — `+1 elective` per leftover block, down to `Electives Needed`.
+- **Standing** — `Conditional Enrolment` caps the load at 30cp: 3 subjects max
+  and the prep subject moves to Summer. `Exclusion` gets no advice. `At Risk`
+  and new starters get a normal full load.
 - **Carry** — anything not offered in Spring, or with no room, is named in the
   reason as *carry to a later session*.
 - Cohort positions are only confirmed for `26 - Autumn Block 1/3` and
@@ -75,13 +78,15 @@ result = ra.build_advice(df)
 total = len(result)
 flagged = int(result[ra.REASON_COL].str.contains("NOTE:", regex=False).sum())
 nothing = int(result[ra.REASON_COL].str.startswith("Nothing outstanding").sum())
-not_offered = int(result[ra.REASON_COL].str.contains("Not offered in Spring", regex=False).sum())
+ce = int(result[ra.REASON_COL].str.contains("30cp cap", regex=False).sum())
+no_advice = int(result[ra.REASON_COL].str.contains("not eligible", regex=False).sum())
 
-c1, c2, c3, c4 = st.columns(4)
+c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("Students", f"{total:,}")
 c2.metric("Nothing outstanding", f"{nothing:,}")
-c3.metric("Carrying a not-offered subject", f"{not_offered:,}")
-c4.metric("Flagged for coach review", f"{flagged:,}")
+c3.metric("Conditional Enrolment (30cp)", f"{ce:,}")
+c4.metric("No advice (excluded)", f"{no_advice:,}")
+c5.metric("Flagged for coach review", f"{flagged:,}")
 
 # --- preview -------------------------------------------------------------
 preview_cols = [

@@ -54,6 +54,16 @@ BLOCKS_PER_SESSION = 4
 # shows up in the file is a data artifact (confirmed by Josiah 2026-09-01).
 NO_ELECTIVE_PROGRAMS = {"9034"}
 
+# Progression standing -> registration rules (Josiah, 2026-09-01):
+#   Conditional Enrolment: 30cp cap => 3 modular subjects max, and the prep
+#     subject (15cp) moves to Summer (prep runs in every Summer block), so the
+#     30cp is spent entirely on modular progress.
+#   Exclusion: not eligible to re-register - no advice.
+#   Good Standing / At Risk / blank (new starters): full load, no restriction.
+STANDING_MAX_BLOCKS = {"Conditional Enrolment": 3}
+STANDING_PREP_TO_SUMMER = {"Conditional Enrolment"}
+STANDING_NO_ADVICE = {"Exclusion"}
+
 # Commencement period -> pattern slot the student's cohort reaches THIS Spring.
 # Only mappings checked against real data in the sample are listed; every other
 # commencement string falls through to "backlog mode" (start at slot 1, clear
@@ -179,9 +189,13 @@ def advise_student(row: pd.Series, slot_map: dict, offerings: dict) -> Advice:
     status = str(row.get("STUDY_PATH_STATUS", "") or "")
     if status and status != "Active Study Path":
         notes.append(f"{status} - confirm the student is returning before acting")
-    outcome = str(row.get("Progression Outcome", "") or "")
-    if outcome == "Exclusion":
-        notes.append("Progression outcome is Exclusion - check eligibility first")
+
+    outcome = str(row.get("Progression Outcome", "") or "").strip()
+    if outcome in STANDING_NO_ADVICE:
+        return Advice(reason=f"{outcome} - not eligible to re-register; refer to coach.")
+
+    max_blocks = STANDING_MAX_BLOCKS.get(outcome, BLOCKS_PER_SESSION)
+    prep_to_summer = outcome in STANDING_PREP_TO_SUMMER
 
     electives_needed = _parse_elective_count(row.get("Electives Needed"))
     if program in NO_ELECTIVE_PROGRAMS:
@@ -222,7 +236,7 @@ def advise_student(row: pd.Series, slot_map: dict, offerings: dict) -> Advice:
         code = pmap.get(slot, slot)
         if not offered(slot):
             not_offered.append(code)
-        elif len(blocks) >= BLOCKS_PER_SESSION:
+        elif len(blocks) >= max_blocks:
             rolls_over.append(code)
         else:
             blocks.append(code)
@@ -233,7 +247,7 @@ def advise_student(row: pd.Series, slot_map: dict, offerings: dict) -> Advice:
 
     # --- electives fill whatever block room is left, one per block cell ----
     electives_to_add = max(0, electives_needed - backlog_placed)
-    room = BLOCKS_PER_SESSION - len(blocks)
+    room = max_blocks - len(blocks)
     add_now = min(room, electives_to_add)
     blocks.extend(["+1 elective"] * add_now)
     electives_deferred = electives_needed - add_now
@@ -242,16 +256,30 @@ def advise_student(row: pd.Series, slot_map: dict, offerings: dict) -> Advice:
     prep_available = [
         pmap.get(s, s) for s in outstanding_prep if pmap.get(s, s) not in prep_not_offered
     ]
-    prep_value = prep_available[0] if prep_available else ""
-    prep_carried = [c for c in prep_available[1:]] + [
-        pmap.get(s, s) for s in outstanding_prep if pmap.get(s, s) in prep_not_offered
-    ]
+    prep_summer: list[str] = []
+    if prep_to_summer:
+        prep_summer = prep_available
+        prep_value = ""
+        prep_carried = [
+            pmap.get(s, s) for s in outstanding_prep if pmap.get(s, s) in prep_not_offered
+        ]
+    else:
+        prep_value = prep_available[0] if prep_available else ""
+        prep_carried = list(prep_available[1:]) + [
+            pmap.get(s, s) for s in outstanding_prep if pmap.get(s, s) in prep_not_offered
+        ]
 
     # --- reason --------------------------------------------------------
     reason_bits: list[str] = []
     core_advised = blocks[:core_count]
+    if outcome in STANDING_MAX_BLOCKS:
+        reason_bits.append(f"{outcome}: 30cp cap - {max_blocks} subjects max this session")
+    elif outcome == "At Risk":
+        reason_bits.append("At Risk (full load allowed - monitor)")
     if has_prep and prep_value:
         reason_bits.append(f"Prep: {prep_value}")
+    if prep_summer:
+        reason_bits.append("Prep in Summer: " + ", ".join(prep_summer))
     if core_advised:
         reason_bits.append("Subjects: " + ", ".join(core_advised))
     if add_now:
@@ -270,7 +298,7 @@ def advise_student(row: pd.Series, slot_map: dict, offerings: dict) -> Advice:
         reason_bits.append("Not offered in Spring, carry: " + ", ".join(not_offered))
     if prep_carried:
         reason_bits.append("Prep for a later session: " + ", ".join(prep_carried))
-    free = BLOCKS_PER_SESSION - len(blocks)
+    free = max_blocks - len(blocks)
     if free and not electives_deferred:
         reason_bits.append(f"Light load - {free} block(s) free, coach to place")
     if notes:

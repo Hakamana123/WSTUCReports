@@ -89,6 +89,15 @@ encoded (`COHORT_START_SLOT` in the code):
 
 Never exceed 4 block subjects + 1 prep.
 
+### Progression standing (`Progression Outcome` column)
+
+| Standing | Rule |
+|---|---|
+| Good Standing / At Risk / blank (new starters) | full load — prep + 4 subjects. At Risk gets a "monitor" note, no restriction. |
+| **Conditional Enrolment** | 30cp cap → **3 modular subjects max** (Block 4 left blank), and the prep subject moves to **Summer** (prep runs in every Summer block), so the 30cp is all modular progress. Electives still fill leftover of the 3 slots; a 2-core student gets 1 elective + 1 deferred. |
+| Exclusion | no advice — blank columns, reason "not eligible to re-register". |
+| Deferred / Leave of Absence | plan still computed, reason prefixed "confirm the student is returning". |
+
 ### Worked example — behind student (Josiah's scenario)
 7197, 26-Autumn intake, failed slot 3 (EDUC1013), passed 4/5/6, owes prep 2.
 
