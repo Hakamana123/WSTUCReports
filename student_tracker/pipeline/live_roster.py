@@ -234,15 +234,46 @@ class SkippedHistoryRow:
 
 _BLOCK_RESULT_COLS = ["block1_result", "block2_result", "block3_result", "block4_result"]
 
+# Cumulative (lifetime) completion columns - NOT renamed by _RENAME_MAP, so
+# still accessed by their original headers here. Deliberately NOT used for
+# sem1_passed (see module docstring's CUMULATIVE vs THIS-SESSION section) -
+# this is the one place cumulative data is the right tool, since the
+# question here is "has this student done ANYTHING at all, ever", not
+# "which position is which block".
+_CUMULATIVE_STATUS_COLS = [
+    "Prep 1 Status", "Prep 2 Status",
+    "Subject 1 Status", "Subject 2 Status", "Subject 3 Status", "Subject 4 Status",
+    "Subject 5 Status", "Subject 6 Status", "Subject 7 Status", "Subject 8 Status",
+]
+
+
+def _has_any_completed_subject(row) -> bool:
+    return any(
+        isinstance(row.get(col), str) and "Completed" in row.get(col)
+        for col in _CUMULATIVE_STATUS_COLS
+    )
+
 
 def _skip_reason(row) -> str:
     """Best-effort plain-English reason a student has no usable Block 1-4
     Result this session, in priority order:
       1. Leave of Absence / Deferred - from STUDY_PATH_STATUS directly.
       2. Not yet started - commencement_period names a different session
-         than this file's own ('Autumn' not in it), most commonly a
-         student already registered for the coming Spring riding along
-         in this Autumn-end export.
+         than this file's own ('Autumn' not in it) AND the student has
+         zero completed subjects on record - most commonly a student
+         already registered for the coming Spring riding along in this
+         Autumn-end export.
+      2b. Continuing, no data this session - same non-Autumn commencement
+         as #2, but the student DOES have real completed-subject history
+         (cumulative Subject/Prep N Status shows at least one "Completed")
+         - a genuine continuing student this file just doesn't have
+         current-session block data for (e.g. their active cycle is
+         Spring, not Autumn), not someone who hasn't started. Found via a
+         real false positive: Chumani Nmezi (18736289, program 9031,
+         commenced "25 - Spring Block 1") has 6 of 8 core subjects
+         already completed but was being labeled "Not yet started" -
+         wrong, and worth distinguishing from #2 rather than lumping
+         every non-Autumn commencer together.
       3. Partial enrolment - SOME but not all 4 blocks have a value
          recorded (confirmed against real data 2026-08-25: this is a
          real, common shape - 96 of 697 real cases were "only Block 3-4
@@ -269,6 +300,8 @@ def _skip_reason(row) -> str:
     commencement = row.get("commencement_period")
     commencement = None if pd.isna(commencement) else str(commencement)
     if commencement and "Autumn" not in commencement:
+        if _has_any_completed_subject(row):
+            return f"Continuing student, no Autumn-session data this file (commenced {commencement})"
         return f"Not yet started - registered for {commencement}"
 
     recorded_blocks = [

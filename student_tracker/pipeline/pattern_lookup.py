@@ -24,9 +24,20 @@ What's resolved (2026-08-07, confirmed with Josiah):
 
 What's still open (Grant question #1, unchanged) — these all fall
 through to `resolved=False` rather than being guessed:
-  - Block 2/3/4 commencers: unconfirmed whether they follow a shifted
-    version of the same sequence, or something else entirely.
-  - Spring: zero rows exist in the reference table.
+  - Block 2/3/4 commencers: PARTIALLY RESOLVED 2026-08-26 - see "Block
+    2/3/4 commencers" note below. They do NOT follow one fixed shifted
+    sequence, so `resolved=False` for them is the correct answer, not a
+    gap - but the note explains why, which is worth reading before
+    assuming this is unfinished.
+  - Spring: zero rows exist in the reference table. One real lead worth
+    following up (2026-08-26, single example only): Chumani Nmezi
+    (18736289, program 9031, commenced "25 - Spring Block 1") is missing
+    exactly LANG0051 and BEHV0008 - positions 1 and 3 of the "26 AUT"/
+    "25 AUT" 9031 sequence - matching that table exactly even though she
+    commenced in Spring. Suggestive that 9031's 8-subject sequence may
+    not vary by season at all, but one student isn't enough to confirm -
+    same discipline as the Block 2/3/4 commencer finding below, don't
+    generalize from a single case.
   - Program 9034: zero rows exist in the reference table, and stays that
     way deliberately - see "9034 RESOLVED" below, this is no longer an
     open question, just a program this stage will never resolve a
@@ -106,6 +117,27 @@ of-study MODEL itself (a fixed subject-per-block-position sequence tied
 to a commencement cohort) doesn't apply to a standalone, no-fixed-term
 program at all. resolved=False for 9034 is the correct, final answer,
 not a placeholder waiting on missing data.
+
+Block 2/3/4 commencers: PARTIALLY RESOLVED 2026-08-26. Josiah's
+explanation - "sometimes they are block 3 starters as they have credit
+for prior learning" - is confirmed as the right general shape, but
+digging into the only 3 real non-Block-1 diploma commencers in the file
+(everything else non-Block-1 turned out to be 9034, see above) shows
+this can't be reduced to one fixed "shift by N positions" rule:
+  - Diana Nguyen (7197, "26 - Autumn Block 3"): no prep, no position 1
+    (GEDU1001) - her first three active blocks did positions 2, 3, 4.
+  - The only two 7198 "26 - Autumn Block 3" commencers: DID do position
+    1 (GEDU1001) in Block 1, but position 2 (GEDU1002) is entirely
+    missing, then position 3 in Block 3 and position 4 in Block 4.
+Two different subjects skipped (position 1 for one student, position 2
+for the other two) under the identical commencement label "Block 3" -
+so which subject(s) a student has credit for is individual (from their
+specific CPL assessment), not something the commencement label alone
+predicts. With only 3 real examples and already 2 different shapes,
+there's no safe general rule to encode - `resolved=False` (falling
+through to "Unknown" rather than guessing) is the right, final behavior
+for these students, the same way it now is for 9034, just for a
+different reason (individual variability vs. a model mismatch).
 
 7188 (Diploma, same 6-subject pattern as 7198) is discontinued for new
 2026 intake (404s on the current handbook) but this table's entry is
