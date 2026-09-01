@@ -2,9 +2,10 @@
 Re-registration advice (v2) - clean rebuild
 ===========================================
 
-One progression workbook in, the same workbook back out, with the five
-registration columns refilled with a recommendation and an ``Advice Reason``
-column added.
+One progression workbook in, the same workbook back out, with five
+``... Registration Advice`` columns and an ``Advice Reason`` column added
+(the file's own ``... Registration`` columns - the student's current
+enrolment - are left untouched for side-by-side comparison).
 
 The whole thing is three steps (Josiah's framing, 2026-09-01):
 
@@ -34,12 +35,15 @@ PREP_SLOTS = ["Prep 1 Status", "Prep 2 Status"]
 MODULAR_SLOTS = [f"Subject {i} Status" for i in range(1, 9)]
 ALL_SLOTS = PREP_SLOTS + MODULAR_SLOTS
 
-REG_COLS = [
-    "Prep Registration",
-    "Block 1 Registration",
-    "Block 2 Registration",
-    "Block 3 Registration",
-    "Block 4 Registration",
+# The recommendation is written into its own columns, left of nothing and
+# alongside the file's original "... Registration" columns (which hold the
+# student's actual current enrolment - kept for comparison, never overwritten).
+ADVICE_COLS = [
+    "Prep Registration Advice",
+    "Block 1 Registration Advice",
+    "Block 2 Registration Advice",
+    "Block 3 Registration Advice",
+    "Block 4 Registration Advice",
 ]
 REASON_COL = "Advice Reason"
 
@@ -280,20 +284,22 @@ def advise_student(row: pd.Series, slot_map: dict, offerings: dict) -> Advice:
 # Whole-file entry point                                                      #
 # --------------------------------------------------------------------------- #
 def build_advice(df: pd.DataFrame, offerings: dict | None = None) -> pd.DataFrame:
-    """Return a copy of ``df`` with the registration columns refilled + a reason."""
+    """Return a copy of ``df`` with the advice columns + a reason appended.
+
+    The file's original "... Registration" columns (the student's current
+    enrolment) are left untouched, so a coach can compare them side by side.
+    """
     offerings = offerings or load_offerings()
     slot_map = derive_slot_map(df)
 
     out = df.copy()
-    for col in REG_COLS:
-        if col not in out.columns:
-            out[col] = ""
-    out[REASON_COL] = ""
+    for col in [*ADVICE_COLS, REASON_COL]:
+        out[col] = ""
 
     for idx, row in df.iterrows():
         advice = advise_student(row, slot_map, offerings)
-        out.at[idx, REG_COLS[0]] = advice.prep
-        for block_col, value in zip(REG_COLS[1:], advice.blocks):
+        out.at[idx, ADVICE_COLS[0]] = advice.prep
+        for block_col, value in zip(ADVICE_COLS[1:], advice.blocks):
             out.at[idx, block_col] = value
         out.at[idx, REASON_COL] = advice.reason
 

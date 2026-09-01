@@ -1,9 +1,10 @@
 # Re-registration advice — clean rebuild (v2)
 
 ## Goal
-One input file in, same file back out, with the
-`Prep / Block 1 / Block 2 / Block 3 / Block 4 Registration` columns **cleared and
-refilled** with a recommendation, plus a new `Advice Reason` column.
+One input file in, same file back out, with five new columns —
+`Prep / Block 1-4 Registration Advice` — holding the recommendation, plus an
+`Advice Reason` column. The file's own `... Registration` columns (current
+enrolment) are left untouched so a coach can compare advice vs actual.
 
 No pattern_table.json, no live-roster merge, no history. Everything needed is in
 the one workbook, except the Spring subject-offering list (see Inputs).
@@ -101,8 +102,9 @@ Never exceed 4 block subjects + 1 prep.
 
 ## Output
 - Same workbook, `Query1` sheet.
-- `Prep Registration` … `Block 4 Registration` overwritten with codes /
-  `"+1 elective"` text / blank.
+- Five columns added: `Prep Registration Advice`, `Block 1-4 Registration
+  Advice` — subject codes / `"+1 elective"` text / blank.
+- Original `... Registration` columns untouched (current enrolment, for compare).
 - New column `Advice Reason` — one plain-English sentence.
 - Rows with no live cohort and a large backlog still get a best-effort plan +
   a reason flagging them for coach review.

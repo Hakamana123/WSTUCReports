@@ -6,8 +6,9 @@ Three steps:
   1. Upload the progression workbook (sheet 'Query1').
   2. The tool lists each student's outstanding subjects + elective count.
   3. It advises next session's subjects from the student's commencement
-     cohort and pattern of study, and hands back the same workbook with the
-     five registration columns refilled + an 'Advice Reason' column.
+     cohort and pattern of study, and hands back the same workbook with five
+     '... Registration Advice' columns + an 'Advice Reason' column added
+     (the original registration columns are left as-is for comparison).
 
 Logic lives in student_tracker/rereg_advice.py; design in
 docs/rereg_advice_v2_spec.md. The previous multi-stage version (and its
@@ -28,8 +29,8 @@ st.set_page_config(page_title="Reregistration Advisory", layout="wide")
 st.title("Reregistration Advisory")
 st.caption(
     "Upload the Autumn-to-Spring progression file. The tool recommends each "
-    "student's next-session subjects and returns the same workbook with the "
-    "registration columns filled in."
+    "student's next-session subjects and returns the same workbook with "
+    "'... Registration Advice' columns added."
 )
 
 with st.expander("How the advice is built", expanded=False):
@@ -85,7 +86,7 @@ c4.metric("Flagged for coach review", f"{flagged:,}")
 # --- preview -------------------------------------------------------------
 preview_cols = [
     "STUDENT_ID", "FIRST_NAME", "LAST_NAME", "PROGRAM_CD", "COMMENCEMENT_PERIOD",
-    "Electives Needed", *ra.REG_COLS, ra.REASON_COL,
+    "Electives Needed", *ra.ADVICE_COLS, ra.REASON_COL,
 ]
 preview_cols = [c for c in preview_cols if c in result.columns]
 view = result[preview_cols]
