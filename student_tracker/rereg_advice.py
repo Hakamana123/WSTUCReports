@@ -337,20 +337,33 @@ def build_advice(df: pd.DataFrame, offerings: dict | None = None) -> pd.DataFram
 # --------------------------------------------------------------------------- #
 # Coach view - a slim, readable second sheet                                   #
 # --------------------------------------------------------------------------- #
-PASSED_MARK = "·"       # passed / not required this list
-OUTSTANDING_MARK = "X"  # still to pass
+PASSED_MARK = "✓"       # passed
+OUTSTANDING_MARK = "✗"  # still to pass
+BAR_FILLED = "█"
+BAR_EMPTY = "░"
+BAR_WIDTH = 10
+
+
+def _bar(done: int, total: int) -> str:
+    """Text progress bar, e.g. '██████░░░░ 60%'."""
+    if total <= 0:
+        return ""
+    filled = round(done / total * BAR_WIDTH)
+    return f"{BAR_FILLED * filled}{BAR_EMPTY * (BAR_WIDTH - filled)} {done / total:.0%}"
+
 
 COACH_VIEW_SHEET = "Coach View"
 
 
-def _status(row: pd.Series, slot_map: dict) -> tuple[str, str]:
-    """(summary, grid) - a plain count line and a positional ✓/✗ grid.
+def _status(row: pd.Series) -> tuple[str, str, str]:
+    """(summary, grid, bar).
 
-    Grid groups: prep (if any) · core blocks in fours · electives.
-    ✓ = passed, ✗ = still to pass. Electives count as outstanding (the file
-    only gives a count of what's still needed).
+    - summary: plain count line, e.g. "Outstanding: 1 prep, 2 core, 2 electives"
+    - grid: positional marks, e.g. "Prep ✓✗ | Blk 1-4 ✓✓✓✓ | Blk 5-6 ✗✗ | Elec ✗✗"
+    - bar: text progress bar over all required subjects
+    ✓ = passed, ✗ = still to pass. Electives always count as outstanding (the
+    file only gives a count of what's still needed).
     """
-    pmap = slot_map.get(str(row["PROGRAM_CD"]), {})
     prep_used = [s for s in PREP_SLOTS if pd.notna(row[s])]
     core_used = [s for s in MODULAR_SLOTS if pd.notna(row[s])]
 
@@ -384,7 +397,11 @@ def _status(row: pd.Series, slot_map: dict) -> tuple[str, str]:
     if elec_out:
         segs.append("Elec " + OUTSTANDING_MARK * elec_out)
     grid = " | ".join(segs)
-    return summary, grid
+
+    # bar: passed / total required (prep + core + electives-needed)
+    total = len(prep_used) + len(core_used) + elec_out
+    done = (len(prep_used) - prep_out) + (len(core_used) - core_out)
+    return summary, grid, _bar(done, total)
 
 
 COACH_VIEW_COLUMNS = [
@@ -396,12 +413,12 @@ COACH_VIEW_COLUMNS = [
 
 def build_coach_view(advised: pd.DataFrame, offerings: dict | None = None) -> pd.DataFrame:
     """Slim sheet: identity + success coach + status + the advice columns."""
-    slot_map = derive_slot_map(advised)
     base = advised[[c for c in COACH_VIEW_COLUMNS if c in advised.columns]].copy()
 
-    status = advised.apply(lambda r: _status(r, slot_map), axis=1)
-    base["Student Status"] = [s for s, _ in status]
-    base["Progress"] = [g for _, g in status]
+    status = [_status(r) for _, r in advised.iterrows()]
+    base["Student Status"] = [s for s, _, _ in status]
+    base["Progress Bar"] = [b for _, _, b in status]
+    base["Progress"] = [g for _, g, _ in status]
 
     for col in [*ADVICE_COLS, REASON_COL]:
         base[col] = advised[col]

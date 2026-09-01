@@ -108,8 +108,9 @@ if only_flagged:
 st.dataframe(view, use_container_width=True, hide_index=True)
 st.caption(
     f"Showing {len(view):,} of {total:,} students.  "
-    "Progress key: **X** = still to pass, **·** = passed. "
-    "Groups: prep · core blocks (in fours) · electives."
+    "Progress key: ✓ = passed, ✗ = still to pass. "
+    "Groups: prep · core blocks (in fours) · electives. "
+    "Progress Bar is over all required subjects (prep + core + electives)."
 )
 
 st.download_button(

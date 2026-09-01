@@ -116,8 +116,9 @@ preferred name, email, `Coach` (success coach), `PROGRAM_CD`,
 `COMMENCEMENT_PERIOD`, `Progression Outcome`, then:
 - `Student Status` — plain count, e.g. *"Outstanding: 1 prep, 2 core, 2
   electives"* / *"All passed"*
-- `Progress` — positional grid, e.g. `Prep ·X | Blk 1-4 ···· | Blk 5-6 XX | Elec XX`
-  (`X` = still to pass, `·` = passed; groups: prep · core in fours · electives)
+- `Progress Bar` — text bar over all required subjects, e.g. `█████░░░░░ 50%`
+- `Progress` — positional grid, e.g. `Prep ✓✗ | Blk 1-4 ✓✓✓✓ | Blk 5-6 ✗✗ | Elec ✗✗`
+  (`✓` = passed, `✗` = still to pass; groups: prep · core in fours · electives)
 - the five `... Registration Advice` columns + `Advice Reason`
 
 **`Query1`** (second sheet): the original file untouched, with the five
