@@ -334,10 +334,86 @@ def build_advice(df: pd.DataFrame, offerings: dict | None = None) -> pd.DataFram
     return out
 
 
-def to_workbook_bytes(df: pd.DataFrame) -> bytes:
+# --------------------------------------------------------------------------- #
+# Coach view - a slim, readable second sheet                                   #
+# --------------------------------------------------------------------------- #
+PASSED_MARK = "·"       # passed / not required this list
+OUTSTANDING_MARK = "X"  # still to pass
+
+COACH_VIEW_SHEET = "Coach View"
+
+
+def _status(row: pd.Series, slot_map: dict) -> tuple[str, str]:
+    """(summary, grid) - a plain count line and a positional ✓/✗ grid.
+
+    Grid groups: prep (if any) · core blocks in fours · electives.
+    ✓ = passed, ✗ = still to pass. Electives count as outstanding (the file
+    only gives a count of what's still needed).
+    """
+    pmap = slot_map.get(str(row["PROGRAM_CD"]), {})
+    prep_used = [s for s in PREP_SLOTS if pd.notna(row[s])]
+    core_used = [s for s in MODULAR_SLOTS if pd.notna(row[s])]
+
+    prep_out = sum(_is_outstanding(row[s]) for s in prep_used)
+    core_out = sum(_is_outstanding(row[s]) for s in core_used)
+    elec_out = 0 if str(row["PROGRAM_CD"]) in NO_ELECTIVE_PROGRAMS \
+        else _parse_elective_count(row.get("Electives Needed"))
+
+    # summary
+    parts = []
+    if prep_out:
+        parts.append(f"{prep_out} prep")
+    if core_out:
+        parts.append(f"{core_out} core")
+    if elec_out:
+        parts.append(f"{elec_out} elective" + ("s" if elec_out > 1 else ""))
+    summary = ("Outstanding: " + ", ".join(parts)) if parts else "All passed"
+
+    # grid
+    def marks(slots):
+        return "".join(OUTSTANDING_MARK if _is_outstanding(row[s]) else PASSED_MARK for s in slots)
+
+    segs = []
+    if prep_used:
+        segs.append("Prep " + marks(prep_used))
+    for i in range(0, len(core_used), 4):
+        chunk = core_used[i:i + 4]
+        lo, hi = i + 1, i + len(chunk)
+        label = f"Blk {lo}-{hi}" if hi > lo else f"Blk {lo}"
+        segs.append(f"{label} {marks(chunk)}")
+    if elec_out:
+        segs.append("Elec " + OUTSTANDING_MARK * elec_out)
+    grid = " | ".join(segs)
+    return summary, grid
+
+
+COACH_VIEW_COLUMNS = [
+    "STUDENT_ID", "FIRST_NAME", "LAST_NAME", "PREFERRED_NAME",
+    "INSTITUTION_EMAIL_ADDRESS", "Coach", "PROGRAM_CD", "COMMENCEMENT_PERIOD",
+    "Progression Outcome",
+]
+
+
+def build_coach_view(advised: pd.DataFrame, offerings: dict | None = None) -> pd.DataFrame:
+    """Slim sheet: identity + success coach + status + the advice columns."""
+    slot_map = derive_slot_map(advised)
+    base = advised[[c for c in COACH_VIEW_COLUMNS if c in advised.columns]].copy()
+
+    status = advised.apply(lambda r: _status(r, slot_map), axis=1)
+    base["Student Status"] = [s for s, _ in status]
+    base["Progress"] = [g for _, g in status]
+
+    for col in [*ADVICE_COLS, REASON_COL]:
+        base[col] = advised[col]
+    return base
+
+
+def to_workbook_bytes(df: pd.DataFrame, coach_view: pd.DataFrame | None = None) -> bytes:
     import io
 
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        if coach_view is not None:
+            coach_view.to_excel(writer, sheet_name=COACH_VIEW_SHEET, index=False)
         df.to_excel(writer, sheet_name=SHEET_NAME, index=False)
     return buffer.getvalue()

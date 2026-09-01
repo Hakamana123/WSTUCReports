@@ -109,12 +109,19 @@ Never exceed 4 block subjects + 1 prep.
 
 ---
 
-## Output
-- Same workbook, `Query1` sheet.
-- Five columns added: `Prep Registration Advice`, `Block 1-4 Registration
-  Advice` — subject codes / `"+1 elective"` text / blank.
-- Original `... Registration` columns untouched (current enrolment, for compare).
-- New column `Advice Reason` — one plain-English sentence.
+## Output — two sheets
+
+**`Coach View`** (first sheet, the readable one): `STUDENT_ID`, first / last /
+preferred name, email, `Coach` (success coach), `PROGRAM_CD`,
+`COMMENCEMENT_PERIOD`, `Progression Outcome`, then:
+- `Student Status` — plain count, e.g. *"Outstanding: 1 prep, 2 core, 2
+  electives"* / *"All passed"*
+- `Progress` — positional grid, e.g. `Prep ·X | Blk 1-4 ···· | Blk 5-6 XX | Elec XX`
+  (`X` = still to pass, `·` = passed; groups: prep · core in fours · electives)
+- the five `... Registration Advice` columns + `Advice Reason`
+
+**`Query1`** (second sheet): the original file untouched, with the five
+`... Registration Advice` columns + `Advice Reason` appended at the end.
 - Rows with no live cohort and a large backlog still get a best-effort plan +
   a reason flagging them for coach review.
 

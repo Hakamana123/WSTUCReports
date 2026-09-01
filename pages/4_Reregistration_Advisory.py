@@ -73,6 +73,7 @@ except ValueError as exc:
     st.stop()
 
 result = ra.build_advice(df)
+coach_view = ra.build_coach_view(result)
 
 # --- summary ---------------------------------------------------------------
 total = len(result)
@@ -88,28 +89,32 @@ c3.metric("Conditional Enrolment (30cp)", f"{ce:,}")
 c4.metric("No advice (excluded)", f"{no_advice:,}")
 c5.metric("Flagged for coach review", f"{flagged:,}")
 
-# --- preview -------------------------------------------------------------
-preview_cols = [
-    "STUDENT_ID", "FIRST_NAME", "LAST_NAME", "PROGRAM_CD", "COMMENCEMENT_PERIOD",
-    "Electives Needed", *ra.ADVICE_COLS, ra.REASON_COL,
-]
-preview_cols = [c for c in preview_cols if c in result.columns]
-view = result[preview_cols]
+# --- preview (the Coach View sheet) -------------------------------------
+st.caption(
+    "Preview of the **Coach View** sheet — identity, success coach, an "
+    "at-a-glance status, then the advice. The full workbook (with the "
+    "original columns + advice appended) is the second sheet."
+)
+view = coach_view
 
-programs = sorted(result["PROGRAM_CD"].dropna().astype(str).unique())
+programs = sorted(coach_view["PROGRAM_CD"].dropna().astype(str).unique())
 pick = st.multiselect("Filter by program", programs, default=[])
 if pick:
-    view = view[result["PROGRAM_CD"].astype(str).isin(pick)]
+    view = view[view["PROGRAM_CD"].astype(str).isin(pick)]
 only_flagged = st.checkbox("Only rows flagged for coach review", value=False)
 if only_flagged:
-    view = view[result.loc[view.index, ra.REASON_COL].str.contains("NOTE:", regex=False)]
+    view = view[view[ra.REASON_COL].str.contains("NOTE:", regex=False)]
 
 st.dataframe(view, use_container_width=True, hide_index=True)
-st.caption(f"Showing {len(view):,} of {total:,} students.")
+st.caption(
+    f"Showing {len(view):,} of {total:,} students.  "
+    "Progress key: **X** = still to pass, **·** = passed. "
+    "Groups: prep · core blocks (in fours) · electives."
+)
 
 st.download_button(
-    "Download workbook with advice",
-    ra.to_workbook_bytes(result),
+    "Download workbook (Coach View + full sheet)",
+    ra.to_workbook_bytes(result, coach_view),
     "reregistration_advice.xlsx",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     type="primary",
