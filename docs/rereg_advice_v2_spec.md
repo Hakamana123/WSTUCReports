@@ -121,11 +121,13 @@ enrolment in the file:
 
 Blocks 3–4 diverge by design (elective choice is the coach's).
 
-## Known open questions
-1. Prep order when both are outstanding (above).
-2. The handbook Spring-offering scrape — only 9031 is seeded so far.
-3. `9034` (Policing) rows showing `Electives Needed = 2` — is that real or a
-   data artifact for a 2-subject program?
-4. Heavily-behind students: "cohort subjects first" can put a slot-6 subject in
-   Block 1 ahead of a slot-2 re-take. Confirm that's acceptable vs pure
-   earliest-first for students with 3+ outstanding.
+## Decisions (Josiah, 2026-09-01)
+- **Prep order when both outstanding:** GEDU0016 (prep 1) first, GEDU0017 later.
+  (Tool already does this; the 76% is messy real enrolment differing, not a bug.)
+- **9034 electives:** ignore `Electives Needed` for 9034 — it's a 2-subject
+  program with no elective structure. Handled via `NO_ELECTIVE_PROGRAMS`.
+- **Heavily-behind students:** keep cohort subjects first, then re-takes — even
+  when that puts a later subject in an earlier block. No special case.
+
+## Still open
+- The handbook Spring-offering scrape — only 9031 is seeded so far.

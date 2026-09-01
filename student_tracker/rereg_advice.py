@@ -45,6 +45,11 @@ REASON_COL = "Advice Reason"
 
 BLOCKS_PER_SESSION = 4
 
+# Programs whose "Electives Needed" value is not a real requirement. 9034
+# (Policing) is a 2-subject program with no elective structure; the 2 that
+# shows up in the file is a data artifact (confirmed by Josiah 2026-09-01).
+NO_ELECTIVE_PROGRAMS = {"9034"}
+
 # Commencement period -> pattern slot the student's cohort reaches THIS Spring.
 # Only mappings checked against real data in the sample are listed; every other
 # commencement string falls through to "backlog mode" (start at slot 1, clear
@@ -175,6 +180,8 @@ def advise_student(row: pd.Series, slot_map: dict, offerings: dict) -> Advice:
         notes.append("Progression outcome is Exclusion - check eligibility first")
 
     electives_needed = _parse_elective_count(row.get("Electives Needed"))
+    if program in NO_ELECTIVE_PROGRAMS:
+        electives_needed = 0
 
     if not outstanding_prep and not outstanding_mod and electives_needed == 0:
         return Advice(reason="Nothing outstanding - no re-registration needed; confirm completion.")
