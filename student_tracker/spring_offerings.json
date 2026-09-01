@@ -1,0 +1,21 @@
+{
+  "_comment": [
+    "Spring subject offerings, keyed by PROGRAM_CD (string).",
+    "'not_offered_slots' lists pattern positions (the number N in 'Subject N Status')",
+    "that do NOT run in Spring, so a student owing that subject carries it to a",
+    "later session instead of being advised into it now.",
+    "",
+    "Only 9031 (Nursing) is seeded, and only because the source file shows a clean",
+    "full-population signal: across every student who still owes slots 1-4, not one",
+    "is registered for them in Spring - that program runs slots 1-4 in Autumn and",
+    "5-8 in Spring by design. Every other program is left empty on purpose: the",
+    "moderate 'sometimes skipped' rates elsewhere are noise, not a confirmed rule.",
+    "Replace/extend this from Josiah's handbook scrape when it lands.",
+    "",
+    "'prep_not_offered': list of prep subject codes not offered in Spring (none known)."
+  ],
+  "programs": {
+    "9031": { "not_offered_slots": [1, 2, 3, 4] }
+  },
+  "prep_not_offered": []
+}
