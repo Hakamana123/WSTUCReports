@@ -27,12 +27,10 @@ through to `resolved=False` rather than being guessed:
   - Block 2/3/4 commencers: unconfirmed whether they follow a shifted
     version of the same sequence, or something else entirely.
   - Spring: zero rows exist in the reference table.
-  - Program 9034: zero rows exist in the reference table. Also now a
-    live discrepancy, not just a gap - the 2026 handbook's 9034 is a
-    tiny 20cp/2-subject "Applied Policing" prep program that doesn't
-    match the 81-127 students under this code in the roster at all.
-    Needs Grant/registrar confirmation of what 9034 actually was for
-    those students before touching this at all.
+  - Program 9034: zero rows exist in the reference table, and stays that
+    way deliberately - see "9034 RESOLVED" below, this is no longer an
+    open question, just a program this stage will never resolve a
+    pattern for.
   - "25 SUM" / "25 SB4": the reference table stores these as two
     dual-bracket lists joined with "+" (e.g.
     "[1, 2, -, -, -, -] + [1, -, 3, 4, -, -]") — meaning unconfirmed,
@@ -86,6 +84,28 @@ this correction is from real registration-pattern evidence, not the
 handbook - "semi-fixed" in Josiah's own words (2026-08-26), i.e. strong
 statistical evidence (91%+ consensus, hundreds of students) rather than
 an authoritative document, unlike the subject-list question above.
+
+9034 RESOLVED 2026-08-26 (Josiah, direct confirmation): the earlier
+"live discrepancy" framing above (81-127 roster students not matching
+the handbook's tiny 2-subject description) was wrong to call a
+discrepancy at all. 9034 genuinely IS that small 2-subject "Applied
+Policing" program - the two subjects are GEDU0018 and LANG0054 - and it
+deliberately has NO fixed start terms and is standalone (no cohort to
+join - each student progresses individually, not in lockstep with other
+9034 students). That's why its students show real COMMENCEMENT_PERIOD
+values like "26 - Autumn Block 3" that look like mid-sequence diploma
+commencers (found while investigating a specific 7197 Block-3
+commencer, Diana Nguyen - 81 of the 84 real "non-Block-1 Autumn
+commencer" rows turned out to be 9034, not a 7197 pattern at all) -
+those labels don't mean "joined partway through the standard block
+sequence" for 9034 the way they would for a diploma, since 9034 was
+never on that sequence to begin with. Resolution: 9034 stays
+permanently absent from pattern_table.json - not because the two
+subjects aren't known (they are, see above), but because the pattern-
+of-study MODEL itself (a fixed subject-per-block-position sequence tied
+to a commencement cohort) doesn't apply to a standalone, no-fixed-term
+program at all. resolved=False for 9034 is the correct, final answer,
+not a placeholder waiting on missing data.
 
 7188 (Diploma, same 6-subject pattern as 7198) is discontinued for new
 2026 intake (404s on the current handbook) but this table's entry is
