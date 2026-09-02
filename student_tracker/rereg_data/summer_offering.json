@@ -1,0 +1,906 @@
+[
+ {
+  "code": "Elective",
+  "program": "7188",
+  "position": "Elective",
+  "block": "SU1",
+  "comment": "Ready to transition.",
+  "full_comment": "Congratulations you are ready to transition to the Univeristy into your chosen Bachelor."
+ },
+ {
+  "code": "BEHV0008",
+  "program": "9031",
+  "position": "Subject 3",
+  "block": "SU1",
+  "comment": "One elective on offer.",
+  "full_comment": "You should choose an appropriate elective for your Diploma and field of interest. This can be in either Block. However, your choice may affect your subject availability for next semester. Please consult me if you need help with this."
+ },
+ {
+  "code": "BLDG1022",
+  "program": "7192",
+  "position": "Subject 6",
+  "block": "SU1",
+  "comment": "Two electives.",
+  "full_comment": "You should choose two appropriate electives for your Diploma and field of interest. Please consult me if you need help with this."
+ },
+ {
+  "code": "Elective",
+  "program": "7188",
+  "position": "Elective",
+  "block": "SU2",
+  "comment": "Register for AUT",
+  "full_comment": "You should register for your 2026 Autumn subjects as soon as possible. I will write to you closer to the start of the semester with some options for this."
+ },
+ {
+  "code": "BEHV2017",
+  "program": "7188",
+  "position": "Subject 7",
+  "block": "SU2",
+  "comment": "Seek SSC advice. Register for AUT.",
+  "full_comment": "Please contact me so that I can discuss your options with you for next semester."
+ },
+ {
+  "code": "Elective",
+  "program": "7198",
+  "position": "Elective",
+  "block": "SU2",
+  "comment": "(can't do 2 and 6 together)",
+  "full_comment": "NO COMMENT"
+ },
+ {
+  "code": "BIOS1041",
+  "program": "7196",
+  "position": "Subject 4",
+  "block": "SU2",
+  "comment": "Rule waiver required to register in both.",
+  "full_comment": "NOT RESOLVED"
+ },
+ {
+  "code": "BLDG1019",
+  "program": "7192",
+  "position": "Subject 3",
+  "block": "SU2",
+  "comment": "Plan your electives carefully",
+  "full_comment": "If you would like to discuss your options with your choice of electives please do contact me."
+ },
+ {
+  "code": "GEDU0016",
+  "program": "7188",
+  "position": "GEDU0016",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0016/7",
+  "program": "7188",
+  "position": "GEDU0016/7",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0017",
+  "program": "7188",
+  "position": "GEDU0017",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "Elective",
+  "program": "7189",
+  "position": "Elective",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "BUSM1045",
+  "program": "7190",
+  "position": "Subject 2",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "BUSM1045",
+  "program": "7191",
+  "position": "Subject 2",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "BUSM1045",
+  "program": "7194",
+  "position": "Subject 2",
+  "block": "SU1",
+  "comment": "1",
+  "full_comment": null
+ },
+ {
+  "code": "Elective",
+  "program": "7189",
+  "position": "Elective",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "BLDG1020",
+  "program": "7192",
+  "position": "Subject 4",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "CULT1028",
+  "program": "7188",
+  "position": "Subject 3",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "CULT1028",
+  "program": "7198",
+  "position": "Subject 3",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0016",
+  "program": "7189",
+  "position": "GEDU0016",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0016/7",
+  "program": "7189",
+  "position": "GEDU0016/7",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0017",
+  "program": "7189",
+  "position": "GEDU0017",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "Elective",
+  "program": "7190",
+  "position": "Elective",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "BUSM1046",
+  "program": "7190",
+  "position": "Subject 6",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "EDUC1010",
+  "program": "7197",
+  "position": "Subject 2",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "ENVL1008",
+  "program": "7192",
+  "position": "Subject 2",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "Elective",
+  "program": "7190",
+  "position": "Elective",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "ECON1015",
+  "program": "7190",
+  "position": "Subject 3",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "EDUC1012",
+  "program": "7197",
+  "position": "Subject 4",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "EDUC2015",
+  "program": "7197",
+  "position": "Subject 3",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0016",
+  "program": "7190",
+  "position": "GEDU0016",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0016/7",
+  "program": "7190",
+  "position": "GEDU0016/7",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0017",
+  "program": "7190",
+  "position": "GEDU0017",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "Elective",
+  "program": "7191",
+  "position": "Elective",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "ENVL1008",
+  "program": "7193",
+  "position": "Subject 2",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "ENVL1008",
+  "program": "7196",
+  "position": "Subject 2",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "Elective",
+  "program": "7191",
+  "position": "Elective",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "FINC1004",
+  "program": "7190",
+  "position": "Subject 4",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU1001",
+  "program": "7188",
+  "position": "Subject 1",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0016",
+  "program": "7191",
+  "position": "GEDU0016",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0016/7",
+  "program": "7191",
+  "position": "GEDU0016/7",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0017",
+  "program": "7191",
+  "position": "GEDU0017",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "Elective",
+  "program": "7192",
+  "position": "Elective",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU1001",
+  "program": "7188",
+  "position": "Subject 1",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU1001",
+  "program": "7189",
+  "position": "Subject 1",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU1001",
+  "program": "7190",
+  "position": "Subject 1",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "Elective",
+  "program": "7192",
+  "position": "Elective",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU1001",
+  "program": "7189",
+  "position": "Subject 1",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU1001",
+  "program": "7190",
+  "position": "Subject 1",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU1001",
+  "program": "7191",
+  "position": "Subject 1",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0016",
+  "program": "7192",
+  "position": "GEDU0016",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0016/7",
+  "program": "7192",
+  "position": "GEDU0016/7",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0017",
+  "program": "7192",
+  "position": "GEDU0017",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "Elective",
+  "program": "7193",
+  "position": "Elective",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU1001",
+  "program": "7191",
+  "position": "Subject 1",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU1001",
+  "program": "7192",
+  "position": "Subject 1",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU1001",
+  "program": "7193",
+  "position": "Subject 1",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "Elective",
+  "program": "7193",
+  "position": "Elective",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU1001",
+  "program": "7192",
+  "position": "Subject 1",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0016",
+  "program": "7193",
+  "position": "GEDU0016",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0016/7",
+  "program": "7193",
+  "position": "GEDU0016/7",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0017",
+  "program": "7193",
+  "position": "GEDU0017",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "Elective",
+  "program": "7194",
+  "position": "Elective",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU1001",
+  "program": "7194",
+  "position": "Subject 1",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU1001",
+  "program": "7195",
+  "position": "Subject 1",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "Elective",
+  "program": "7194",
+  "position": "Elective",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU1001",
+  "program": "7193",
+  "position": "Subject 1",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0016",
+  "program": "7194",
+  "position": "GEDU0016",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0016/7",
+  "program": "7194",
+  "position": "GEDU0016/7",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0017",
+  "program": "7194",
+  "position": "GEDU0017",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "Elective",
+  "program": "7195",
+  "position": "Elective",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU1001",
+  "program": "7196",
+  "position": "Subject 1",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU1001",
+  "program": "7197",
+  "position": "Subject 1",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "Elective",
+  "program": "7195",
+  "position": "Elective",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU1001",
+  "program": "7194",
+  "position": "Subject 1",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0016",
+  "program": "7195",
+  "position": "GEDU0016",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0016/7",
+  "program": "7195",
+  "position": "GEDU0016/7",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0017",
+  "program": "7195",
+  "position": "GEDU0017",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "Elective",
+  "program": "7196",
+  "position": "Elective",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU1001",
+  "program": "7198",
+  "position": "Subject 1",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU1002",
+  "program": "7188",
+  "position": "Subject 2",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU1001",
+  "program": "7195",
+  "position": "Subject 1",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "Elective",
+  "program": "7196",
+  "position": "Elective",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU1001",
+  "program": "7196",
+  "position": "Subject 1",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU1001",
+  "program": "7197",
+  "position": "Subject 1",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0016",
+  "program": "7196",
+  "position": "GEDU0016",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0016/7",
+  "program": "7196",
+  "position": "GEDU0016/7",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0017",
+  "program": "7196",
+  "position": "GEDU0017",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "Elective",
+  "program": "7197",
+  "position": "Elective",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU1002",
+  "program": "7189",
+  "position": "Subject 2",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU1002",
+  "program": "7195",
+  "position": "Subject 2",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU1002",
+  "program": "7198",
+  "position": "Subject 2",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "Elective",
+  "program": "7197",
+  "position": "Elective",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU1001",
+  "program": "7198",
+  "position": "Subject 1",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "HLTH0002",
+  "program": "9031",
+  "position": "Subject 4",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "HLTH1021",
+  "program": "7189",
+  "position": "Subject 4",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0016",
+  "program": "7197",
+  "position": "GEDU0016",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0016/7",
+  "program": "7197",
+  "position": "GEDU0016/7",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0017",
+  "program": "7197",
+  "position": "GEDU0017",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "Elective",
+  "program": "7198",
+  "position": "Elective",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "HLTH1022",
+  "program": "7189",
+  "position": "Subject 5",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "MATH1040",
+  "program": "7193",
+  "position": "Subject 5",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "HUMN1068",
+  "program": "7188",
+  "position": "Subject 4",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "Elective",
+  "program": "7198",
+  "position": "Elective",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "HUMN1068",
+  "program": "7198",
+  "position": "Subject 4",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "MATH0017",
+  "program": "9031",
+  "position": "Subject 7",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "MATH1042",
+  "program": "7191",
+  "position": "Subject 4",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0016",
+  "program": "7198",
+  "position": "GEDU0016",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0016/7",
+  "program": "7198",
+  "position": "GEDU0016/7",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "GEDU0017",
+  "program": "7198",
+  "position": "GEDU0017",
+  "block": "SUM",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "NATS0002",
+  "program": "9031",
+  "position": "Subject 2",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "TEAC2067",
+  "program": "7197",
+  "position": "Subject 6",
+  "block": "SU1",
+  "comment": null,
+  "full_comment": null
+ },
+ {
+  "code": "PUBH1015",
+  "program": "7189",
+  "position": "Subject 3",
+  "block": "SU2",
+  "comment": null,
+  "full_comment": null
+ }
+]
