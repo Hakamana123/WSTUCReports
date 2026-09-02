@@ -113,12 +113,23 @@ def _is_outstanding(value) -> bool:
 
 
 def _elective_count(row) -> int:
+    """Outstanding elective count, clamped 0..2 (the calculator's mask range).
+
+    Reads ``Electives Needed`` first (the v2 file's column), then
+    ``Elective Completion`` (Grant's). Accepts a bare number, or a phrase like
+    ``"1 Elective Required"``; ``"No Elective Required"`` / ``"Not Applicable"``
+    / blank all mean 0.
+    """
     for col in ("Electives Needed", "Elective Completion"):
-        if col in row and pd.notna(row[col]):
-            try:
-                return max(0, min(2, int(float(str(row[col]).strip()))))
-            except (TypeError, ValueError):
-                return 0
+        if col not in row or pd.isna(row[col]):
+            continue
+        s = str(row[col]).strip()
+        try:
+            return max(0, min(2, int(float(s))))
+        except (TypeError, ValueError):
+            pass
+        m = re.match(r"\s*(\d+)", s)
+        return max(0, min(2, int(m.group(1)))) if m else 0
     return 0
 
 
@@ -162,19 +173,31 @@ def _resolve(token: str | None, program: str) -> str:
 
 
 def advise_row(row: pd.Series, planning_session: str) -> dict:
+    """One student -> Grant's calculator advice.
+
+    Keys: the five ``ADVICE_COLS``, ``COMPLETION_COL``, ``REASON_COL``, plus
+    ``ok`` (True only when a calculator row was found — callers use this to
+    decide whether to fall back to another engine) and ``miss`` (a short reason
+    when ``ok`` is False).
+    """
     program = str(row["PROGRAM_CD"]).split(".")[0]
     is_nursing = program in NURSING_PROGRAMS
 
     out = {c: "" for c in ADVICE_COLS}
     out[COMPLETION_COL] = ""
     out[REASON_COL] = ""
+    out["ok"] = False
+    out["miss"] = ""
+    out["total_needed"] = 0
 
     if program in UNSUPPORTED_PROGRAMS:
+        out["miss"] = f"program {program} not in calculator"
         out[REASON_COL] = f"Program {program} is not covered by the calculator — refer to coach."
         return out
 
     pattern = pattern_for(program, planning_session)
     if pattern is None:
+        out["miss"] = f"no {planning_session} offering pattern for program {program}"
         out[REASON_COL] = (
             f"No offering pattern for program {program} / {planning_session} "
             "in the reference data."
@@ -184,9 +207,15 @@ def advise_row(row: pd.Series, planning_session: str) -> dict:
     mask = status_mask(row, is_nursing)
     hit = _lookup("nursing" if is_nursing else "diploma").get((pattern, mask))
     if hit is None:
+        out["miss"] = f"no calculator row for {pattern} + {mask}"
         out[REASON_COL] = f"No calculator row for pattern {pattern} + status {mask}."
         return out
 
+    out["ok"] = True
+    try:
+        out["total_needed"] = int(hit.get("total_needed") or 0)
+    except (TypeError, ValueError):
+        out["total_needed"] = 0
     tokens = [hit.get("prep"), hit.get("b1"), hit.get("b2"), hit.get("b3"), hit.get("b4")]
     for col, tok in zip(ADVICE_COLS, tokens):
         out[col] = _resolve(tok, program)

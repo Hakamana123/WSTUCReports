@@ -1,99 +1,113 @@
 """
-Reregistration Advisory (v2 - clean rebuild, 2026-09-01)
-=======================================================
+Reregistration Advisory
+=======================
 
-Three steps:
+Grant's testing calculator picks each student's next-session subjects; the v2
+rule-tree wraps it with the progression-standing rules and the Coach View.
+
   1. Upload the progression workbook (sheet 'Query1').
-  2. The tool lists each student's outstanding subjects + elective count.
-  3. It advises next session's subjects from the student's commencement
-     cohort and pattern of study, and hands back the same workbook with five
-     '... Registration Advice' columns + an 'Advice Reason' column added
-     (the original registration columns are left as-is for comparison).
+  2. Pick the planning session you're advising for.
+  3. For every student the tool asks Grant's calculator for the Prep / Block
+     1-4 picks + Earliest Completion, then applies the 30cp Conditional
+     Enrolment cap / Exclusion / At Risk rules on top. Where the calculator
+     has no row (a session it doesn't cover, program 9034, or a status combo
+     Grant's tool also can't resolve) it falls back to the v2 rule-tree and
+     says so in 'Advice Source'.
+  4. Download the same workbook back with the advice columns + a readable
+     'Coach View' sheet.
 
-Logic lives in student_tracker/rereg_advice.py; design in
-docs/rereg_advice_v2_spec.md. The previous multi-stage version (and its
-student_tracker/pipeline/* modules) was retired here - see git history.
+Engines: student_tracker/rereg_merged.py (wiring), rereg_calc.py (Grant's
+calculator port), rereg_advice.py (v2 rule-tree + Coach View).
 """
 
 from __future__ import annotations
 
 import io
 
-import pandas as pd
 import streamlit as st
 
-from student_tracker import rereg_advice as ra
+from student_tracker import rereg_merged as rm
 
 st.set_page_config(page_title="Reregistration Advisory", layout="wide")
 
 st.title("Reregistration Advisory")
 st.caption(
-    "Upload the Autumn-to-Spring progression file. The tool recommends each "
-    "student's next-session subjects and returns the same workbook with "
-    "'... Registration Advice' columns added."
+    "Upload the progression file. Grant's calculator picks each student's "
+    "next-session subjects; the standing rules (30cp cap, Exclusion) and the "
+    "Coach View are layered on top."
 )
 
 with st.expander("How the advice is built", expanded=False):
     st.markdown(
         """
-- **Outstanding subjects** = the columns showing `1` (not the ones showing
-  `"CODE Completed"`). The subject code for each `1` is recovered from
-  classmates in the same program.
-- **Prep** — if the program has a prep subject still outstanding, the earliest
-  one is advised (one prep per session); any others are noted for later.
-- **Blocks 1–4** — the student's cohort subjects for this Spring come first
-  (from their commencement period), then any earlier outstanding subjects fill
-  the remaining blocks, each displacing one elective to a later session.
-- **Electives** — `+1 elective` per leftover block, down to `Electives Needed`.
-- **Standing** — `Conditional Enrolment` caps the load at 30cp: 3 subjects max
-  and the prep subject moves to Summer. `Exclusion` gets no advice. `At Risk`
-  and new starters get a normal full load.
-- **Carry** — anything not offered in Spring, or with no room, is named in the
-  reason as *carry to a later session*.
-- Cohort positions are only confirmed for `26 - Autumn Block 1/3` and
-  `26 - Spring Block 1`. Everyone else is planned earliest-outstanding-first
-  and flagged in the reason.
-- Spring offering rules: `student_tracker/spring_offerings.json` (currently only
-  Nursing is seeded — extend it from the handbook).
+- **Subjects** come from Grant's testing calculator: for the planning session
+  you choose it looks up the program's offering pattern and the student's
+  fail-status, and returns a Prep pick + Block 1-4 picks + an *Earliest
+  Completion*. Timetable clashes (a subject and its cohort subject in the same
+  slot), the "positions 1 & 2 always run in Summer" rule, and elective
+  placement are already handled inside the calculator.
+- **Standing** is applied on top (this is the v2 layer, not Grant's):
+  `Conditional Enrolment` caps the load at 30cp — the first 3 block picks are
+  kept, the rest deferred, and the prep subject moves to Summer. `Exclusion`
+  gets no advice. `At Risk` / `Good Standing` / blank get the full 4.
+- **Advice Source** on each row says which engine produced it —
+  `Grant calculator`, `Grant calculator + CE 30cp cap`, or `v2 rule-tree (…)`
+  with the reason the calculator was skipped.
+- **Coach View sheet** — identity + success coach + an at-a-glance status
+  (✓ = passed, ✗ = still to pass, a progress bar), then the advice. The full
+  workbook is the second sheet, original columns untouched.
+- Grant's calculator currently covers **26 AUT** and **25 SUM**. Any other
+  session runs entirely through the v2 rule-tree.
         """
     )
 
-uploaded = st.file_uploader(
-    "Progression workbook (.xlsx, sheet 'Query1')", type=["xlsx"], key="rereg_v2_upload"
-)
+col_a, col_b = st.columns([2, 3])
+with col_a:
+    session = st.selectbox(
+        "Planning session (advising for)",
+        rm.PLANNING_SESSIONS,
+        index=rm.PLANNING_SESSIONS.index(rm.DEFAULT_PLANNING_SESSION),
+    )
+with col_b:
+    uploaded = st.file_uploader(
+        "Progression workbook (.xlsx, sheet 'Query1')", type=["xlsx"], key="rereg_upload"
+    )
 
 if uploaded is None:
     st.info("Upload the workbook to generate advice.")
     st.stop()
 
 try:
-    df = ra.load_progression_file(io.BytesIO(uploaded.getvalue()))
+    df = rm.load_progression_file(io.BytesIO(uploaded.getvalue()))
 except ValueError as exc:
     st.error(f"Couldn't read this file: {exc}")
     st.stop()
 
-result = ra.build_advice(df)
-coach_view = ra.build_coach_view(result)
+result = rm.build_advice(df, session=session)
+coach_view = rm.build_coach_view(result)
 
-# --- summary ---------------------------------------------------------------
+# --- summary --------------------------------------------------------------
 total = len(result)
-flagged = int(result[ra.REASON_COL].str.contains("NOTE:", regex=False).sum())
-nothing = int(result[ra.REASON_COL].str.startswith("Nothing outstanding").sum())
-ce = int(result[ra.REASON_COL].str.contains("30cp cap", regex=False).sum())
-no_advice = int(result[ra.REASON_COL].str.contains("not eligible", regex=False).sum())
+src = result[rm.SOURCE_COL]
+from_calc = int(src.str.startswith("Grant calculator").sum())
+ce = int(src.str.contains("CE 30cp cap", regex=False).sum())
+excluded = int(src.str.contains("Exclusion", regex=False).sum())
+fallback = int(src.str.startswith("v2 rule-tree").sum())
+flagged = int(result[rm.REASON_COL].str.contains("NOTE:", regex=False).sum())
 
 c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("Students", f"{total:,}")
-c2.metric("Nothing outstanding", f"{nothing:,}")
+c2.metric("From Grant's calculator", f"{from_calc:,}")
 c3.metric("Conditional Enrolment (30cp)", f"{ce:,}")
-c4.metric("No advice (excluded)", f"{no_advice:,}")
+c4.metric("v2 fallback", f"{fallback:,}")
 c5.metric("Flagged for coach review", f"{flagged:,}")
+if excluded:
+    st.caption(f"{excluded:,} student(s) excluded — no advice.")
 
-# --- preview (the Coach View sheet) -------------------------------------
+# --- preview (the Coach View sheet) --------------------------------------
 st.caption(
-    "Preview of the **Coach View** sheet — identity, success coach, an "
-    "at-a-glance status, then the advice. The full workbook (with the "
-    "original columns + advice appended) is the second sheet."
+    "Preview of the **Coach View** sheet. The full workbook (original columns "
+    "+ advice appended) is the second sheet in the download."
 )
 view = coach_view
 
@@ -101,22 +115,28 @@ programs = sorted(coach_view["PROGRAM_CD"].dropna().astype(str).unique())
 pick = st.multiselect("Filter by program", programs, default=[])
 if pick:
     view = view[view["PROGRAM_CD"].astype(str).isin(pick)]
-only_flagged = st.checkbox("Only rows flagged for coach review", value=False)
+
+fcol1, fcol2 = st.columns(2)
+with fcol1:
+    only_flagged = st.checkbox("Only rows flagged for coach review", value=False)
+with fcol2:
+    only_fallback = st.checkbox("Only v2-fallback rows", value=False)
 if only_flagged:
-    view = view[view[ra.REASON_COL].str.contains("NOTE:", regex=False)]
+    view = view[view[rm.REASON_COL].str.contains("NOTE:", regex=False)]
+if only_fallback:
+    view = view[view[rm.SOURCE_COL].str.startswith("v2 rule-tree")]
 
 st.dataframe(view, use_container_width=True, hide_index=True)
 st.caption(
     f"Showing {len(view):,} of {total:,} students.  "
     "Progress key: ✓ = passed, ✗ = still to pass. "
-    "Groups: prep · core blocks (in fours) · electives. "
-    "Progress Bar is over all required subjects (prep + core + electives)."
+    "Groups: prep · core blocks (in fours) · electives."
 )
 
 st.download_button(
     "Download workbook (Coach View + full sheet)",
-    ra.to_workbook_bytes(result, coach_view),
-    "reregistration_advice.xlsx",
+    rm.to_workbook_bytes(result, coach_view),
+    f"reregistration_advice_{session.replace(' ', '_')}.xlsx",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     type="primary",
 )

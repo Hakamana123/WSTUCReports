@@ -355,7 +355,7 @@ def _bar(done: int, total: int) -> str:
 COACH_VIEW_SHEET = "Coach View"
 
 
-def _status(row: pd.Series) -> tuple[str, str, str]:
+def _status(row: pd.Series, is_outstanding=None, elective_count=None) -> tuple[str, str, str]:
     """(summary, grid, bar).
 
     - summary: plain count line, e.g. "Outstanding: 1 prep, 2 core, 2 electives"
@@ -363,14 +363,19 @@ def _status(row: pd.Series) -> tuple[str, str, str]:
     - bar: text progress bar over all required subjects
     ✓ = passed, ✗ = still to pass. Electives always count as outstanding (the
     file only gives a count of what's still needed).
+
+    ``is_outstanding`` overrides the slot test - the merged tool passes the
+    calculator's (more lenient) version so the grid matches its advice.
     """
+    _out = is_outstanding or _is_outstanding
+    _elec = elective_count or (lambda r: _parse_elective_count(r.get("Electives Needed")))
     prep_used = [s for s in PREP_SLOTS if pd.notna(row[s])]
     core_used = [s for s in MODULAR_SLOTS if pd.notna(row[s])]
 
-    prep_out = sum(_is_outstanding(row[s]) for s in prep_used)
-    core_out = sum(_is_outstanding(row[s]) for s in core_used)
-    elec_out = 0 if str(row["PROGRAM_CD"]) in NO_ELECTIVE_PROGRAMS \
-        else _parse_elective_count(row.get("Electives Needed"))
+    prep_out = sum(_out(row[s]) for s in prep_used)
+    core_out = sum(_out(row[s]) for s in core_used)
+    elec_out = 0 if str(row["PROGRAM_CD"]).split(".")[0] in NO_ELECTIVE_PROGRAMS \
+        else _elec(row)
 
     # summary
     parts = []
@@ -384,7 +389,7 @@ def _status(row: pd.Series) -> tuple[str, str, str]:
 
     # grid
     def marks(slots):
-        return "".join(OUTSTANDING_MARK if _is_outstanding(row[s]) else PASSED_MARK for s in slots)
+        return "".join(OUTSTANDING_MARK if _out(row[s]) else PASSED_MARK for s in slots)
 
     segs = []
     if prep_used:
