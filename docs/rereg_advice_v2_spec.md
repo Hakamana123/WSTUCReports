@@ -1,5 +1,27 @@
 # Re-registration advice — clean rebuild (v2)
 
+> **2026-09-02 update.** Page 4 no longer runs this rule-tree directly. It runs
+> `student_tracker/rereg_merged.py`, which uses **Grant's testing-calculator
+> port** (`student_tracker/rereg_calc.py`, an exact 100% reproduction of his
+> `2025 SUM for 2026 AUT testing calculator`) as the subject picker, and this
+> v2 logic as the wrapper:
+>
+> - **Grant's calculator** → Prep + Block 1–4 picks (priority-ordered) +
+>   `Earliest Completion`, for the chosen planning session. Offering pattern,
+>   timetable clash (position N vs N+4), "positions 1 & 2 always run in Summer",
+>   and elective placement are all handled inside it.
+> - **v2 standing wrapper** (below) → Exclusion = no advice; Conditional
+>   Enrolment = keep the first 3 block picks, defer the rest, prep → Summer;
+>   At Risk / blank = full load.
+> - **v2 rule-tree** (the rest of this doc) → fallback when the calculator has
+>   no row: a session it doesn't cover (only `26 AUT` + `25 SUM` are in REF;
+>   9031 Nursing only `26 AUT`), program 9034, or a status combo Grant's own
+>   tool also misses. The `Advice Source` column on every row records which
+>   engine produced it and, for fallbacks, why.
+>
+> The Coach View sheet is unchanged. The rest of this spec still describes the
+> fallback rule-tree and the shared Coach View / status logic.
+
 ## Goal
 One input file in, same file back out, with five new columns —
 `Prep / Block 1-4 Registration Advice` — holding the recommendation, plus an
