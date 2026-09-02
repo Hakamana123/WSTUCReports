@@ -58,25 +58,56 @@ _SRC_V2 = "v2 rule-tree ({})"
 _SRC_EXCLUDED = "standing: Exclusion (no advice)"
 
 
-def _apply_cap(blocks: list[str], max_blocks: int) -> tuple[list[str], list[str]]:
-    """Keep the first ``max_blocks`` non-empty picks **in their block
-    positions**; blank the later ones and return them as deferred.
+CE_CAP_CP = 30  # Conditional Enrolment credit-point cap
+_CP_MODULAR = 10
+_CP_PREP = 15
 
-    The calculator positions each pick in the timetable block the subject
-    actually runs in (a failed Subject 3 goes in Block 3, not Block 1), so the
-    positions must be preserved - only the count is capped.
+
+def _split_prep(prep_pick: str) -> list[str]:
+    """``"GEDU0016 and GEDU0017"`` -> ``["GEDU0016", "GEDU0017"]``."""
+    if not prep_pick or prep_pick == calc.NO_REGISTRATION:
+        return []
+    return [p.strip() for p in prep_pick.replace(" and ", ",").split(",") if p.strip()]
+
+
+def _ce_fill(
+    positioned: list[str], prep_pick: str, elec_need: int
+) -> tuple[list[str], list[str], str, str, int]:
+    """Conditional Enrolment: fill the 30cp cap in order **modular subjects ->
+    electives -> prep** (Josiah 2026-09-02). Modular = elective = 10cp, prep =
+    15cp. Modular picks keep their block position; anything over the cap is
+    deferred / sent to Summer.
+
+    Returns ``(blocks, modular_deferred, prep_now, prep_summer, electives_now)``.
     """
-    kept = list(blocks)
-    deferred: list[str] = []
-    seen = 0
-    for i, b in enumerate(kept):
-        if not b:
-            continue
-        seen += 1
-        if seen > max_blocks:
-            deferred.append(b)
-            kept[i] = ""
-    return kept, deferred
+    cp = 0
+    blocks = ["" for _ in positioned]
+    modular_deferred: list[str] = []
+    for i, b in enumerate(positioned):
+        if b and b != "+1 elective":
+            if cp + _CP_MODULAR <= CE_CAP_CP:
+                blocks[i] = b
+                cp += _CP_MODULAR
+            else:
+                modular_deferred.append(b)
+
+    electives_now = 0
+    for i in range(len(blocks)):
+        if not blocks[i] and electives_now < elec_need and cp + _CP_MODULAR <= CE_CAP_CP:
+            blocks[i] = "+1 elective"
+            cp += _CP_MODULAR
+            electives_now += 1
+
+    prep_now: list[str] = []
+    prep_summer: list[str] = []
+    for pc in _split_prep(prep_pick):
+        if cp + _CP_PREP <= CE_CAP_CP:
+            prep_now.append(pc)
+            cp += _CP_PREP
+        else:
+            prep_summer.append(pc)
+
+    return blocks, modular_deferred, " and ".join(prep_now), " and ".join(prep_summer), electives_now
 
 
 def advise_student_merged(row: pd.Series, slot_map: dict, offerings: dict, session: str) -> dict:
@@ -116,14 +147,16 @@ def advise_student_merged(row: pd.Series, slot_map: dict, offerings: dict, sessi
     prep_pick = "" if prep_pick == calc.NO_REGISTRATION else prep_pick
     positioned = ["" if c[col] == calc.NO_REGISTRATION else c[col] for col in ADVICE_COLS[1:]]
 
-    max_blocks = v2.STANDING_MAX_BLOCKS.get(outcome, v2.BLOCKS_PER_SESSION)
-    prep_to_summer = outcome in v2.STANDING_PREP_TO_SUMMER
-    capped = outcome in v2.STANDING_MAX_BLOCKS
+    capped = outcome in v2.STANDING_MAX_BLOCKS  # Conditional Enrolment
+    elec_need = calc._elective_count(row)
 
-    kept, deferred = _apply_cap(positioned, max_blocks) if capped else (positioned, [])
+    if capped:
+        kept, deferred, prep_now, prep_summer, elec_now = _ce_fill(positioned, prep_pick, elec_need)
+    else:
+        kept, deferred = list(positioned), []
+        prep_now, prep_summer = prep_pick, ""
+        elec_now = kept.count("+1 elective")
     named = [(i + 1, b) for i, b in enumerate(kept) if b]
-    prep_summer = prep_pick if (prep_pick and prep_to_summer) else ""
-    prep_now = "" if prep_to_summer else prep_pick
 
     out[ADVICE_COLS[0]] = prep_now
     for col, val in zip(ADVICE_COLS[1:], kept):
@@ -135,7 +168,7 @@ def advise_student_merged(row: pd.Series, slot_map: dict, offerings: dict, sessi
 
     bits: list[str] = []
     if capped and not nothing:
-        bits.append(f"{outcome}: 30cp cap - {max_blocks} subjects max this session")
+        bits.append(f"{outcome}: 30cp cap - failed subjects first, then electives, then prep")
     elif outcome == "At Risk" and not nothing:
         bits.append("At Risk (full load allowed - monitor)")
     if prep_now:
@@ -164,9 +197,7 @@ def advise_student_merged(row: pd.Series, slot_map: dict, offerings: dict, sessi
                 and pcode not in str(prep_now) and pcode not in str(prep_summer)
                 and pcode not in still):
             still.append(pcode)
-    elec_need = calc._elective_count(row)
-    elec_placed = [b for _, b in named].count("+1 elective") + deferred.count("+1 elective")
-    elec_more = max(0, elec_need - elec_placed)
+    elec_more = max(0, elec_need - elec_now)
     if elec_more:
         still.append(f"+{elec_more} elective")
     if still:
