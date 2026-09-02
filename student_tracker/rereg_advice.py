@@ -143,10 +143,13 @@ def derive_slot_map(df: pd.DataFrame) -> dict[str, dict[str, str]]:
 # Per-student advice                                                          #
 # --------------------------------------------------------------------------- #
 def _is_outstanding(value) -> bool:
-    """A slot is outstanding when it holds the bare 1 (str or int), not a code."""
+    """A slot is outstanding when it holds the bare 1, or a "… Currently
+    Registered" code (not passed yet -> still in the plan, per Josiah
+    2026-09-02). A "… Completed" code or blank is done."""
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return False
-    return str(value).strip() == "1"
+    s = str(value).strip()
+    return s == "1" or "Currently Registered" in s
 
 
 def _parse_elective_count(value) -> int:

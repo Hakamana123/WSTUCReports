@@ -100,18 +100,18 @@ def _summer_offering() -> dict:
 def _is_outstanding(value) -> bool:
     """True when the slot still needs to be passed.
 
-    Passed / currently-registered / blank all count as 0; the bare 1 (str or
-    int), or anything that isn't a "… Completed" / "… Currently Registered"
-    string, counts as outstanding.
+    Only ``"… Completed"`` and blank count as done. The bare ``1``, and
+    ``"… - Currently Registered"`` (not passed yet -> still needs to be in the
+    plan, per Josiah 2026-09-02), both count as outstanding.
     """
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return False
     s = str(value).strip()
     if s == "":
         return False
-    if s.endswith("Completed") or "Currently Registered" in s:
+    if s.endswith("Completed"):
         return False
-    return True  # "1", "1.0", etc.
+    return True  # "1", "1.0", "CODE - Currently Registered", "CODE Required"
 
 
 def _elective_count(row) -> int:
