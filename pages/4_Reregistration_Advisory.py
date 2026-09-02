@@ -32,42 +32,59 @@ st.set_page_config(page_title="Reregistration Advisory", layout="wide")
 
 st.title("Reregistration Advisory")
 st.caption(
-    "Upload the progression file. Grant's calculator picks each student's "
-    "next-session subjects; the standing rules (30cp cap, Exclusion) and the "
-    "Coach View are layered on top."
+    "Upload the progression file and pick the target session. Grant's "
+    "calculator drives 26 AUT; every other session uses the cohort-clock "
+    "rule-tree. Standing rules (30cp cap, Exclusion) and the Coach View are "
+    "layered on top."
 )
 
 with st.expander("How the advice is built", expanded=False):
     st.markdown(
         """
-- **Subjects** come from Grant's testing calculator: for the planning session
-  you choose it looks up the program's offering pattern and the student's
-  fail-status, and returns a Prep pick + Block 1-4 picks + an *Earliest
-  Completion*. Timetable clashes (a subject and its cohort subject in the same
-  slot), the "positions 1 & 2 always run in Summer" rule, and elective
-  placement are already handled inside the calculator.
-- **Standing** is applied on top (this is the v2 layer, not Grant's):
-  `Conditional Enrolment` caps the load at 30cp — the first 3 block picks are
-  kept, the rest deferred, and the prep subject moves to Summer. `Exclusion`
-  gets no advice. `At Risk` / `Good Standing` / blank get the full 4.
-- **Advice Source** on each row says which engine produced it —
-  `Grant calculator`, `Grant calculator + CE 30cp cap`, or `v2 rule-tree (…)`
-  with the reason the calculator was skipped.
-- **Coach View sheet** — identity + success coach + an at-a-glance status
-  (✓ = passed, ✗ = still to pass, a progress bar), then the advice. The full
-  workbook is the second sheet, original columns untouched.
-- Grant's calculator currently covers **26 AUT** and **25 SUM**. Any other
-  session runs entirely through the v2 rule-tree.
+- **Target session** is the session you're advising *for*. The teaching year
+  runs `AUT -> SPR -> SUM`; Autumn and Spring each move a student four subjects
+  along their pattern, Summer is catch-up only.
+- **26 AUT** is produced by Grant's testing calculator — offering pattern +
+  fail-status -> Prep / Block 1-4 picks + an *Earliest Completion*, with
+  timetable clashes, "positions 1 & 2 run every Summer", and elective
+  placement all handled inside it.
+- **Every other target** runs the v2 rule-tree: it works out where the
+  student's cohort has reached by that session (from their commencement),
+  advises the cohort's subjects first, then backfills earlier outstanding
+  ones — each displacing an elective to later.
+- **Standing** is applied on top: `Conditional Enrolment` caps the load at
+  30cp (3 subjects, prep -> Summer). `Exclusion` gets no advice. `At Risk` /
+  blank get the full load.
+- **Advice Source** on each row names the engine and, for the rule-tree, why
+  the calculator was skipped.
+- **Custom target** — tick the box to advise part-way through a session
+  (e.g. "as of Autumn Block 3" leaves only 2 blocks to fill).
+- **Summer / far-future targets** have no offering list wired in, so the
+  rule-tree may name subjects that don't actually run that session — treat
+  those as approximate and sanity-check.
         """
     )
 
 col_a, col_b = st.columns([2, 3])
 with col_a:
-    session = st.selectbox(
-        "Planning session (advising for)",
+    named = st.selectbox(
+        "Target session (advising for)",
         rm.PLANNING_SESSIONS,
         index=rm.PLANNING_SESSIONS.index(rm.DEFAULT_PLANNING_SESSION),
     )
+    custom = st.checkbox("Custom — part-way through a session", value=False)
+    if custom:
+        cc1, cc2 = st.columns(2)
+        with cc1:
+            c_year = st.selectbox("Year", ["2026", "2027", "2028"], index=1)
+        with cc2:
+            c_sess = st.selectbox("Session", ["AUT", "SPR", "SUM"], index=0)
+        c_block = st.slider("Advise from block", 1, 4, 1,
+                            help="Block 1 = whole session. Block 3 = only blocks 3–4 left.")
+        session = f"{c_year[2:]} {c_sess}" + (f" Block {c_block}" if c_block > 1 else "")
+    else:
+        session = named
+    st.caption(f"Target: **{session}**")
 with col_b:
     uploaded = st.file_uploader(
         "Progression workbook (.xlsx, sheet 'Query1')", type=["xlsx"], key="rereg_upload"

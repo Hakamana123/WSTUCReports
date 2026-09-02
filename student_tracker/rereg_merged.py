@@ -38,6 +38,7 @@ import pandas as pd
 
 from student_tracker import rereg_advice as v2
 from student_tracker import rereg_calc as calc
+from student_tracker import rereg_sessions as rs
 
 # Same five advice columns as v2, plus two of our own.
 ADVICE_COLS = v2.ADVICE_COLS
@@ -45,10 +46,11 @@ COMPLETION_COL = "Earliest Completion"
 REASON_COL = v2.REASON_COL           # "Advice Reason"
 SOURCE_COL = "Advice Source"
 
-# Planning sessions Grant's calculator has offering patterns for. Any other
-# session still works — every student just falls through to the v2 rule-tree.
-PLANNING_SESSIONS = ["26 AUT", "25 SUM"]
-DEFAULT_PLANNING_SESSION = "26 AUT"
+# Target sessions the page offers, in cycle order. Grant's calculator has
+# offering patterns for 26 AUT + 25 SUM; every other target runs the v2
+# rule-tree with the cohort clock advanced to that session.
+PLANNING_SESSIONS = rs.NAMED_TARGETS
+DEFAULT_PLANNING_SESSION = rs.DEFAULT_TARGET
 
 _SRC_CALC = "Grant calculator"
 _SRC_CALC_CE = "Grant calculator + CE 30cp cap"
@@ -80,12 +82,13 @@ def advise_student_merged(row: pd.Series, slot_map: dict, offerings: dict, sessi
         out[SOURCE_COL] = _SRC_EXCLUDED
         return out
 
-    # 2. Grant's calculator.
-    c = calc.advise_row(row, session)
+    # 2. Grant's calculator - only for the sessions it has offering patterns for.
+    c = calc.advise_row(row, session) if rs.uses_calculator(session) else {"ok": False, "miss": f"{session} not covered by the calculator"}
 
     if not c["ok"]:
-        # 4. Fall back to the v2 rule-tree, tagged with why the calculator passed.
-        adv = v2.advise_student(row, slot_map, offerings)
+        # 4. Fall back to the v2 rule-tree (cohort clock -> this target),
+        #    tagged with why the calculator didn't run.
+        adv = v2.advise_student(row, slot_map, offerings, target=session)
         out[ADVICE_COLS[0]] = adv.prep
         for col, val in zip(ADVICE_COLS[1:], adv.blocks):
             out[col] = val

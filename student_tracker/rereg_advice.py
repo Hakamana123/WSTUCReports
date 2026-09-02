@@ -29,6 +29,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from student_tracker import rereg_sessions as rs
+
 SHEET_NAME = "Query1"
 
 PREP_SLOTS = ["Prep 1 Status", "Prep 2 Status"]
@@ -166,7 +168,7 @@ class Advice:
     reason: str = ""
 
 
-def advise_student(row: pd.Series, slot_map: dict, offerings: dict) -> Advice:
+def advise_student(row: pd.Series, slot_map: dict, offerings: dict, target: str | None = None) -> Advice:
     program = str(row["PROGRAM_CD"])
     pmap = slot_map.get(program, {})
     prog_offer = offerings.get("programs", {}).get(program, {})
@@ -194,8 +196,11 @@ def advise_student(row: pd.Series, slot_map: dict, offerings: dict) -> Advice:
     if outcome in STANDING_NO_ADVICE:
         return Advice(reason=f"{outcome} - not eligible to re-register; refer to coach.")
 
-    max_blocks = STANDING_MAX_BLOCKS.get(outcome, BLOCKS_PER_SESSION)
+    session_cap = rs.available_blocks(target) if target else BLOCKS_PER_SESSION
+    max_blocks = min(STANDING_MAX_BLOCKS.get(outcome, BLOCKS_PER_SESSION), session_cap)
     prep_to_summer = outcome in STANDING_PREP_TO_SUMMER
+    if session_cap < BLOCKS_PER_SESSION:
+        notes.append(f"advising for {target} - only {session_cap} block(s) left this session")
 
     electives_needed = _parse_elective_count(row.get("Electives Needed"))
     if program in NO_ELECTIVE_PROGRAMS:
@@ -205,22 +210,21 @@ def advise_student(row: pd.Series, slot_map: dict, offerings: dict) -> Advice:
         return Advice(reason="Nothing outstanding - no re-registration needed; confirm completion.")
 
     # --- cohort clock ------------------------------------------------------
-    # Students who started in 2025 or earlier are past their expected finish, so
-    # "clear outstanding subjects earliest-first" is exactly right for them and
-    # needs no caveat. For 2026 starters we place them at their cohort's slot;
-    # an unrecognised 2026 commencement is flagged.
+    # Where has this student's cohort reached by the target session? The clock
+    # counts Autumn/Spring blocks from their commencement (Summer is catch-up
+    # only). A student past the core pattern, or with an unreadable
+    # commencement, falls to "clear outstanding subjects earliest-first".
     commencement = str(row["COMMENCEMENT_PERIOD"]).strip()
-    year_token = commencement.split(" - ")[0].strip()
-    start_slot = COHORT_START_SLOT.get(commencement)
-    if start_slot is None:
-        start_slot = 1
-        if year_token.isdigit() and int(year_token) < 26:
-            notes.append("continuing student - plan clears outstanding subjects earliest-first")
-        else:
-            notes.append(
-                f"commencement '{commencement}' not recognised - planned "
-                "earliest-outstanding-first, please sanity-check"
-            )
+    n_subject_slots = len(modular_used) or 6
+    if target:
+        start_slot, clock_note = rs.cohort_position(commencement, target, n_subject_slots)
+    else:
+        start_slot = COHORT_START_SLOT.get(commencement, 1)
+        clock_note = "" if commencement in COHORT_START_SLOT else (
+            "continuing student - plan clears outstanding subjects earliest-first"
+        )
+    if clock_note:
+        notes.append(clock_note)
 
     # --- order the outstanding modular subjects: cohort first, then backlog
     cohort_slots = [s for s in outstanding_mod if _slot_number(s) >= start_slot]
@@ -311,11 +315,15 @@ def advise_student(row: pd.Series, slot_map: dict, offerings: dict) -> Advice:
 # --------------------------------------------------------------------------- #
 # Whole-file entry point                                                      #
 # --------------------------------------------------------------------------- #
-def build_advice(df: pd.DataFrame, offerings: dict | None = None) -> pd.DataFrame:
+def build_advice(
+    df: pd.DataFrame, offerings: dict | None = None, target: str | None = None
+) -> pd.DataFrame:
     """Return a copy of ``df`` with the advice columns + a reason appended.
 
     The file's original "... Registration" columns (the student's current
     enrolment) are left untouched, so a coach can compare them side by side.
+    ``target`` (e.g. ``"27 AUT"`` or ``"27 AUT Block 3"``) drives the cohort
+    clock; ``None`` keeps the legacy Spring-2026 lookup table.
     """
     offerings = offerings or load_offerings()
     slot_map = derive_slot_map(df)
@@ -325,7 +333,7 @@ def build_advice(df: pd.DataFrame, offerings: dict | None = None) -> pd.DataFram
         out[col] = ""
 
     for idx, row in df.iterrows():
-        advice = advise_student(row, slot_map, offerings)
+        advice = advise_student(row, slot_map, offerings, target)
         out.at[idx, ADVICE_COLS[0]] = advice.prep
         for block_col, value in zip(ADVICE_COLS[1:], advice.blocks):
             out.at[idx, block_col] = value
