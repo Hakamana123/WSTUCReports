@@ -146,6 +146,31 @@ def advise_student_merged(row: pd.Series, slot_map: dict, offerings: dict, sessi
         bits.append("Register: " + ", ".join(f"Block {n} {b}" for n, b in named))
     if deferred:
         bits.append("Defer to a later session: " + ", ".join(deferred))
+
+    # Everything still outstanding that this session's advice doesn't touch -
+    # the calculator only plans four blocks, so a coach needs the rest spelled
+    # out (failed subjects that didn't fit, a second prep, unplaced electives).
+    prog_ref = calc._ref().get(program, {})
+    accounted = {b for _, b in named} | set(deferred) | {prep_now, prep_summer}
+    still: list[str] = []
+    for pos in range(1, 9):
+        code = prog_ref.get("subjects", {}).get(str(pos))
+        if code and calc._is_outstanding(row.get(f"Subject {pos} Status")) and code not in accounted:
+            still.append(code)
+    for pslot, pkey in (("Prep 1 Status", "prep1"), ("Prep 2 Status", "prep2")):
+        pcode = prog_ref.get(pkey)
+        if (pcode and calc._is_outstanding(row.get(pslot))
+                and pcode not in accounted
+                and pcode not in str(prep_now) and pcode not in str(prep_summer)
+                and pcode not in still):
+            still.append(pcode)
+    elec_need = calc._elective_count(row)
+    elec_placed = [b for _, b in named].count("+1 elective") + deferred.count("+1 elective")
+    elec_more = max(0, elec_need - elec_placed)
+    if elec_more:
+        still.append(f"+{elec_more} elective")
+    if still:
+        bits.append("Still to pass (later session): " + ", ".join(still))
     if nothing and c.get("total_needed", 0) > 0:
         bits.append(
             f"Nothing to register in {session} - {c['total_needed']} subject(s) "
