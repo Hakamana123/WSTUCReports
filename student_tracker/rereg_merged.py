@@ -66,33 +66,55 @@ def _passed_count(row: pd.Series, n_positions: int) -> int:
     )
 
 
+# Electives are not offered in Blocks 1 & 2 (Josiah 2026-09-02) - only 3 & 4.
+_ELECTIVE_BLOCKS = (2, 3)
+
+
+def _electives_to_b34(blocks: list[str]) -> list[str]:
+    """Move any elective sitting in Block 1/2 to an empty Block 3/4; if there's
+    no room it is dropped (and surfaces in "still to pass")."""
+    for i in (0, 1):
+        if blocks[i] == "+1 elective":
+            blocks[i] = ""
+            for j in _ELECTIVE_BLOCKS:
+                if not blocks[j]:
+                    blocks[j] = "+1 elective"
+                    break
+    return blocks
+
+
 def _positional_fallback(row: pd.Series, program: str, is_nursing: bool) -> tuple[list[str], str]:
     """Advice for a fail pattern Grant's calculator has no row for.
 
-    Each outstanding subject goes in the block it runs in (position P ->
-    block ``((P - 1) % 4) + 1``); electives fill the gaps. Passed >= 2 subjects
-    total -> keep the cohort (higher) subject when two land in one block;
-    passed <= 1 -> restart, keep the lower. Prep 1 before prep 2 (a second
-    outstanding prep surfaces in "still to pass").
+    Diploma: each outstanding subject goes in the block it runs in (position P
+    -> block ``((P - 1) % 4) + 1``); a block clash is won by the cohort (higher)
+    position when the student has passed >= 2 subjects, else by the lower
+    (restart). Nursing: the 8 subjects run strictly in sequence, so the first
+    four outstanding ones fill Blocks 1-4 in number order. Electives fill empty
+    Blocks 3 & 4 only. Prep 1 before prep 2.
     """
     prog_ref = calc._ref().get(program, {})
     subj = prog_ref.get("subjects", {})
     n_pos = 8 if is_nursing else 6
-    cohort = _passed_count(row, n_pos) >= 2
 
     out_positions = [
         p for p in range(1, n_pos + 1)
         if calc._is_outstanding(row.get(f"Subject {p} Status"))
     ]
     blocks = ["", "", "", ""]
-    for b in range(4):
-        contenders = sorted((p for p in out_positions if (p - 1) % 4 == b), reverse=cohort)
-        if contenders:
-            blocks[b] = subj.get(str(contenders[0]), "")
+    if is_nursing:
+        for i, p in enumerate(out_positions[:4]):
+            blocks[i] = subj.get(str(p), "")
+    else:
+        cohort = _passed_count(row, n_pos) >= 2
+        for b in range(4):
+            contenders = sorted((p for p in out_positions if (p - 1) % 4 == b), reverse=cohort)
+            if contenders:
+                blocks[b] = subj.get(str(contenders[0]), "")
 
     elec_need = calc._elective_count(row)
     placed = 0
-    for i in range(4):
+    for i in _ELECTIVE_BLOCKS:
         if not blocks[i] and placed < elec_need:
             blocks[i] = "+1 elective"
             placed += 1
@@ -142,7 +164,7 @@ def _ce_fill(
                 modular_deferred.append(b)
 
     electives_now = 0
-    for i in range(len(blocks)):
+    for i in _ELECTIVE_BLOCKS:  # electives only in Blocks 3 & 4
         if not blocks[i] and electives_now < elec_need and cp + _CP_MODULAR <= CE_CAP_CP:
             blocks[i] = "+1 elective"
             cp += _CP_MODULAR
@@ -219,6 +241,10 @@ def advise_student_merged(row: pd.Series, slot_map: dict, offerings: dict, sessi
         kept, deferred = list(positioned), []
         prep_now, prep_summer = prep_pick, ""
         elec_now = kept.count("+1 elective")
+
+    # electives are not offered in Blocks 1 & 2 (applies to Grant's picks too)
+    kept = _electives_to_b34(kept)
+    elec_now = kept.count("+1 elective")
     named = [(i + 1, b) for i, b in enumerate(kept) if b]
 
     out[ADVICE_COLS[0]] = prep_now
