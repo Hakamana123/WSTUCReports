@@ -58,42 +58,6 @@ _SRC_V2 = "v2 rule-tree ({})"
 _SRC_EXCLUDED = "standing: Exclusion (no advice)"
 
 
-# (early position, late position, block index) - the two blocks a diploma
-# student can have a position clash in.
-_SUMMER_PAIRS = ((1, 5, 0), (2, 6, 1))
-
-
-def _summer_swap(blocks: list[str], row: pd.Series, program: str) -> tuple[list[str], list[str]]:
-    """Positions 1 & 2 always run in Summer; 5 & 6 may not (Josiah 2026-09-02).
-
-    So when a position 5/6 subject is outstanding, do it now in its block
-    (1 or 2); if the position 1/2 subject would otherwise sit there, send that
-    one to Summer instead. Diploma programs only - nursing has no Summer prep
-    cycle, 9034 has no pattern. Anything else bumped out of the block (an
-    elective) is picked up by the caller's elective count reconciliation.
-
-    Returns ``(blocks, to_summer)``.
-    """
-    subj = calc._ref().get(program, {}).get("subjects", {})
-    if not subj:
-        return blocks, []
-
-    def outstanding(pos: int) -> bool:
-        return calc._is_outstanding(row.get(f"Subject {pos} Status"))
-
-    to_summer: list[str] = []
-    for early, late, blk in _SUMMER_PAIRS:
-        late_code = subj.get(str(late))
-        early_code = subj.get(str(early))
-        if not late_code or not outstanding(late):
-            continue
-        if blocks[blk] != late_code:
-            blocks[blk] = late_code
-        if early_code and outstanding(early) and early_code not in blocks:
-            to_summer.append(early_code)
-    return blocks, to_summer
-
-
 def _apply_cap(blocks: list[str], max_blocks: int) -> tuple[list[str], list[str]]:
     """Keep the first ``max_blocks`` non-empty picks **in their block
     positions**; blank the later ones and return them as deferred.
@@ -152,25 +116,12 @@ def advise_student_merged(row: pd.Series, slot_map: dict, offerings: dict, sessi
     prep_pick = "" if prep_pick == calc.NO_REGISTRATION else prep_pick
     positioned = ["" if c[col] == calc.NO_REGISTRATION else c[col] for col in ADVICE_COLS[1:]]
 
-    # Positions 1 & 2 always run in Summer; if 5/6 are outstanding, do them now
-    # and push 1/2 to Summer. Skip when the target session *is* Summer.
-    to_summer: list[str] = []
-    tgt = rs.parse_target(session)
-    if not (tgt and tgt[1] == "SUM"):
-        positioned, to_summer = _summer_swap(positioned, row, program)
-
     max_blocks = v2.STANDING_MAX_BLOCKS.get(outcome, v2.BLOCKS_PER_SESSION)
     prep_to_summer = outcome in v2.STANDING_PREP_TO_SUMMER
     capped = outcome in v2.STANDING_MAX_BLOCKS
 
     kept, deferred = _apply_cap(positioned, max_blocks) if capped else (positioned, [])
     named = [(i + 1, b) for i, b in enumerate(kept) if b]
-
-    # elective bookkeeping: what's needed vs what ended up in a block
-    elec_need = calc._elective_count(row)
-    elec_now = kept.count("+1 elective")
-    subj_deferred = [d for d in deferred if d != "+1 elective"]
-    elec_later = max(0, elec_need - elec_now)
     prep_summer = prep_pick if (prep_pick and prep_to_summer) else ""
     prep_now = "" if prep_to_summer else prep_pick
 
@@ -180,7 +131,7 @@ def advise_student_merged(row: pd.Series, slot_map: dict, offerings: dict, sessi
     completion = c[COMPLETION_COL]
     out[COMPLETION_COL] = "" if completion in ("", "Not Found") else completion
 
-    nothing = not named and not prep_now and not prep_summer and not to_summer
+    nothing = not named and not prep_now and not prep_summer
 
     bits: list[str] = []
     if capped and not nothing:
@@ -193,12 +144,8 @@ def advise_student_merged(row: pd.Series, slot_map: dict, offerings: dict, sessi
         bits.append(f"Prep in Summer: {prep_summer}")
     if named:
         bits.append("Register: " + ", ".join(f"Block {n} {b}" for n, b in named))
-    if to_summer:
-        bits.append("Take in Summer (always offered): " + ", ".join(to_summer))
-    if subj_deferred:
-        bits.append("Defer to a later session: " + ", ".join(subj_deferred))
-    if elec_later:
-        bits.append(f"{elec_later} elective(s) to a later session")
+    if deferred:
+        bits.append("Defer to a later session: " + ", ".join(deferred))
     if nothing and c.get("total_needed", 0) > 0:
         bits.append(
             f"Nothing to register in {session} - {c['total_needed']} subject(s) "
@@ -207,8 +154,7 @@ def advise_student_merged(row: pd.Series, slot_map: dict, offerings: dict, sessi
     elif nothing:
         bits.append("Nothing to register this session")
     if out[COMPLETION_COL]:
-        moved = subj_deferred or elec_later or prep_summer or to_summer
-        pushed = " (full-load estimate; timing may shift)" if moved else ""
+        pushed = " (full-load estimate; deferrals push this out)" if (deferred or prep_summer) else ""
         bits.append(f"Earliest completion {out[COMPLETION_COL]}{pushed}")
     status = str(row.get("STUDY_PATH_STATUS", "") or "")
     if status and status != "Active Study Path":
