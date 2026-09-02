@@ -83,7 +83,10 @@ def advise_student_merged(row: pd.Series, slot_map: dict, offerings: dict, sessi
         return out
 
     # 2. Grant's calculator - only for the sessions it has offering patterns for.
-    c = calc.advise_row(row, session) if rs.uses_calculator(session) else {"ok": False, "miss": f"{session} not covered by the calculator"}
+    if rs.uses_calculator(session):
+        c = calc.advise_row(row, session)
+    else:
+        c = {"ok": False, "miss": f"{session} not covered by the calculator"}
 
     if not c["ok"]:
         # 4. Fall back to the v2 rule-tree (cohort clock -> this target),

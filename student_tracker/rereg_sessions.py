@@ -155,9 +155,13 @@ def available_blocks(target_text, cap: int = BLOCKS_PER_SESSION) -> int:
 
 
 def uses_calculator(target_text) -> bool:
-    """True for the two sessions Grant's calculator has offering patterns for."""
+    """True for the two sessions Grant's calculator has offering patterns for.
+
+    Only for a whole-session target - the calculator has no part-way-through
+    logic, so ``"26 AUT Block 3"`` runs the rule-tree.
+    """
     tgt = parse_target(target_text)
     if tgt is None:
         return False
-    y, s, _ = tgt
-    return (y, s) in {(2026, "AUT"), (2025, "SUM")}
+    y, s, b = tgt
+    return b == 1 and (y, s) in {(2026, "AUT"), (2025, "SUM")}
