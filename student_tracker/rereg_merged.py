@@ -54,8 +54,58 @@ DEFAULT_PLANNING_SESSION = rs.DEFAULT_TARGET
 
 _SRC_CALC = "Grant calculator"
 _SRC_CALC_CE = "Grant calculator + CE 30cp cap"
+_SRC_POSITIONAL = "position-based (fail pattern not in calculator)"
 _SRC_V2 = "v2 rule-tree ({})"
 _SRC_EXCLUDED = "standing: Exclusion (no advice)"
+
+
+def _passed_count(row: pd.Series, n_positions: int) -> int:
+    return sum(
+        str(row.get(f"Subject {p} Status", "")).strip().endswith("Completed")
+        for p in range(1, n_positions + 1)
+    )
+
+
+def _positional_fallback(row: pd.Series, program: str, is_nursing: bool) -> tuple[list[str], str]:
+    """Advice for a fail pattern Grant's calculator has no row for.
+
+    Each outstanding subject goes in the block it runs in (position P ->
+    block ``((P - 1) % 4) + 1``); electives fill the gaps. Passed >= 2 subjects
+    total -> keep the cohort (higher) subject when two land in one block;
+    passed <= 1 -> restart, keep the lower. Prep 1 before prep 2 (a second
+    outstanding prep surfaces in "still to pass").
+    """
+    prog_ref = calc._ref().get(program, {})
+    subj = prog_ref.get("subjects", {})
+    n_pos = 8 if is_nursing else 6
+    cohort = _passed_count(row, n_pos) >= 2
+
+    out_positions = [
+        p for p in range(1, n_pos + 1)
+        if calc._is_outstanding(row.get(f"Subject {p} Status"))
+    ]
+    blocks = ["", "", "", ""]
+    for b in range(4):
+        contenders = sorted((p for p in out_positions if (p - 1) % 4 == b), reverse=cohort)
+        if contenders:
+            blocks[b] = subj.get(str(contenders[0]), "")
+
+    elec_need = calc._elective_count(row)
+    placed = 0
+    for i in range(4):
+        if not blocks[i] and placed < elec_need:
+            blocks[i] = "+1 elective"
+            placed += 1
+
+    prep_pick = ""
+    if not is_nursing:
+        preps = [
+            prog_ref.get(k) for slot, k in (("Prep 1 Status", "prep1"), ("Prep 2 Status", "prep2"))
+            if calc._is_outstanding(row.get(slot))
+        ]
+        if preps:
+            prep_pick = preps[0]
+    return blocks, prep_pick
 
 
 CE_CAP_CP = 30  # Conditional Enrolment credit-point cap
@@ -125,15 +175,33 @@ def advise_student_merged(row: pd.Series, slot_map: dict, offerings: dict, sessi
         out[SOURCE_COL] = _SRC_EXCLUDED
         return out
 
+    is_nursing = program in calc.NURSING_PROGRAMS
+    in_ref = bool(calc._ref().get(program, {}).get("subjects"))
+
     # 2. Grant's calculator - only for the sessions it has offering patterns for.
     if rs.uses_calculator(session):
         c = calc.advise_row(row, session)
     else:
         c = {"ok": False, "miss": f"{session} not covered by the calculator"}
 
-    if not c["ok"]:
-        # 4. Fall back to the v2 rule-tree (cohort clock -> this target),
-        #    tagged with why the calculator didn't run.
+    carried = ""
+    if c["ok"]:
+        # 3a. Calculator answered. Keep its block positions; only cap the count.
+        prep_pick = c[ADVICE_COLS[0]]
+        prep_pick = "" if prep_pick == calc.NO_REGISTRATION else prep_pick
+        positioned = ["" if c[col] == calc.NO_REGISTRATION else c[col] for col in ADVICE_COLS[1:]]
+        completion = c[COMPLETION_COL]
+        carried = c.get("carried_from", "")
+        source_base = _SRC_CALC
+    elif rs.uses_calculator(session) and in_ref:
+        # 3b. Calculator covers this session but not this fail pattern - place
+        #     each outstanding subject in its own block directly.
+        positioned, prep_pick = _positional_fallback(row, program, is_nursing)
+        completion = ""
+        source_base = _SRC_POSITIONAL
+    else:
+        # 4. Part-way target, program 9034, or program not in the reference
+        #    data -> v2 rule-tree.
         adv = v2.advise_student(row, slot_map, offerings, target=session)
         out[ADVICE_COLS[0]] = adv.prep
         for col, val in zip(ADVICE_COLS[1:], adv.blocks):
@@ -141,11 +209,6 @@ def advise_student_merged(row: pd.Series, slot_map: dict, offerings: dict, sessi
         out[REASON_COL] = adv.reason
         out[SOURCE_COL] = _SRC_V2.format(c["miss"])
         return out
-
-    # 3. Calculator answered. Keep its block POSITIONS; only cap the count.
-    prep_pick = c[ADVICE_COLS[0]]
-    prep_pick = "" if prep_pick == calc.NO_REGISTRATION else prep_pick
-    positioned = ["" if c[col] == calc.NO_REGISTRATION else c[col] for col in ADVICE_COLS[1:]]
 
     capped = outcome in v2.STANDING_MAX_BLOCKS  # Conditional Enrolment
     elec_need = calc._elective_count(row)
@@ -161,8 +224,8 @@ def advise_student_merged(row: pd.Series, slot_map: dict, offerings: dict, sessi
     out[ADVICE_COLS[0]] = prep_now
     for col, val in zip(ADVICE_COLS[1:], kept):
         out[col] = val
-    completion = c[COMPLETION_COL]
-    out[COMPLETION_COL] = "" if completion in ("", "Not Found") else completion
+    # a carried-forward pattern's completion estimate is stale (see rereg_calc)
+    out[COMPLETION_COL] = "" if completion in ("", "Not Found") or carried else completion
 
     nothing = not named and not prep_now and not prep_summer
 
@@ -216,7 +279,6 @@ def advise_student_merged(row: pd.Series, slot_map: dict, offerings: dict, sessi
     if status and status != "Active Study Path":
         bits.append(f"NOTE: {status} - confirm the student is returning before acting")
 
-    carried = c.get("carried_from", "")
     if carried:
         bits.append(
             f"ASSUMED: {carried} offering pattern used for {session} - "
@@ -224,7 +286,11 @@ def advise_student_merged(row: pd.Series, slot_map: dict, offerings: dict, sessi
         )
     out[REASON_COL] = " | ".join(bits)
 
-    src = _SRC_CALC_CE if capped else _SRC_CALC
+    src = source_base
+    if source_base == _SRC_CALC and capped:
+        src = _SRC_CALC_CE
+    if capped and source_base == _SRC_POSITIONAL:
+        src = source_base + " + CE 30cp cap"
     if carried:
         src += f" ({carried} pattern assumed)"
     out[SOURCE_COL] = src
