@@ -58,13 +58,25 @@ _SRC_V2 = "v2 rule-tree ({})"
 _SRC_EXCLUDED = "standing: Exclusion (no advice)"
 
 
-def _load_cap(ordered: list[str], max_blocks: int) -> tuple[list[str], list[str]]:
-    """Keep the first ``max_blocks`` priority picks; the rest are deferred.
+def _apply_cap(blocks: list[str], max_blocks: int) -> tuple[list[str], list[str]]:
+    """Keep the first ``max_blocks`` non-empty picks **in their block
+    positions**; blank the later ones and return them as deferred.
 
-    The calculator hands blocks back in priority order (cohort / clash-resolved
-    subjects first, electives last), so a straight slice is the right split.
+    The calculator positions each pick in the timetable block the subject
+    actually runs in (a failed Subject 3 goes in Block 3, not Block 1), so the
+    positions must be preserved - only the count is capped.
     """
-    return ordered[:max_blocks], ordered[max_blocks:]
+    kept = list(blocks)
+    deferred: list[str] = []
+    seen = 0
+    for i, b in enumerate(kept):
+        if not b:
+            continue
+        seen += 1
+        if seen > max_blocks:
+            deferred.append(b)
+            kept[i] = ""
+    return kept, deferred
 
 
 def advise_student_merged(row: pd.Series, slot_map: dict, offerings: dict, session: str) -> dict:
@@ -99,26 +111,27 @@ def advise_student_merged(row: pd.Series, slot_map: dict, offerings: dict, sessi
         out[SOURCE_COL] = _SRC_V2.format(c["miss"])
         return out
 
-    # 3. Calculator answered. Take its ordered picks; apply v2's standing cap.
+    # 3. Calculator answered. Keep its block POSITIONS; only cap the count.
     prep_pick = c[ADVICE_COLS[0]]
     prep_pick = "" if prep_pick == calc.NO_REGISTRATION else prep_pick
-    block_picks = [c[col] for col in ADVICE_COLS[1:] if c[col] != calc.NO_REGISTRATION]
+    positioned = ["" if c[col] == calc.NO_REGISTRATION else c[col] for col in ADVICE_COLS[1:]]
 
     max_blocks = v2.STANDING_MAX_BLOCKS.get(outcome, v2.BLOCKS_PER_SESSION)
     prep_to_summer = outcome in v2.STANDING_PREP_TO_SUMMER
     capped = outcome in v2.STANDING_MAX_BLOCKS
 
-    kept, deferred = _load_cap(block_picks, max_blocks)
+    kept, deferred = _apply_cap(positioned, max_blocks) if capped else (positioned, [])
+    named = [(i + 1, b) for i, b in enumerate(kept) if b]
     prep_summer = prep_pick if (prep_pick and prep_to_summer) else ""
     prep_now = "" if prep_to_summer else prep_pick
 
     out[ADVICE_COLS[0]] = prep_now
-    for col, val in zip(ADVICE_COLS[1:], kept + ["", "", "", ""]):
+    for col, val in zip(ADVICE_COLS[1:], kept):
         out[col] = val
     completion = c[COMPLETION_COL]
     out[COMPLETION_COL] = "" if completion in ("", "Not Found") else completion
 
-    nothing = not kept and not prep_now and not prep_summer
+    nothing = not named and not prep_now and not prep_summer
 
     bits: list[str] = []
     if capped and not nothing:
@@ -129,8 +142,8 @@ def advise_student_merged(row: pd.Series, slot_map: dict, offerings: dict, sessi
         bits.append(f"Prep: {prep_now}")
     if prep_summer:
         bits.append(f"Prep in Summer: {prep_summer}")
-    if kept:
-        bits.append("Register: " + ", ".join(kept))
+    if named:
+        bits.append("Register: " + ", ".join(f"Block {n} {b}" for n, b in named))
     if deferred:
         bits.append("Defer to a later session: " + ", ".join(deferred))
     if nothing and c.get("total_needed", 0) > 0:

@@ -178,12 +178,19 @@ def _resolve(token: str | None, program: str) -> str:
     if not token:
         return NO_REGISTRATION
     t = token.strip()
+    prog = _ref().get(str(program), {})
     if t.lower() == "elective":
         return "+1 elective"
+    if t.lower() == "both":  # owes both prep subjects
+        p1, p2 = prog.get("prep1"), prog.get("prep2")
+        return f"{p1} and {p2}" if p1 and p2 else t
+    if t in ("GEDU0016", "Prep 1"):
+        return prog.get("prep1", t)
+    if t in ("GEDU0017", "Prep 2"):
+        return prog.get("prep2", t)
     m = re.fullmatch(r"Subject (\d)", t)
     if m:
-        return _ref().get(str(program), {}).get("subjects", {}).get(m.group(1), t)
-    # GEDU0016 / GEDU0017 / "GEDU0016 and GEDU0017" pass through
+        return prog.get("subjects", {}).get(m.group(1), t)
     return t
 
 
