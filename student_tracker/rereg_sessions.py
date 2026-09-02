@@ -155,13 +155,28 @@ def available_blocks(target_text, cap: int = BLOCKS_PER_SESSION) -> int:
 
 
 def uses_calculator(target_text) -> bool:
-    """True for the two sessions Grant's calculator has offering patterns for.
+    """True when Grant's calculator should be tried for this target.
 
-    Only for a whole-session target - the calculator has no part-way-through
-    logic, so ``"26 AUT Block 3"`` runs the rule-tree.
+    26 AUT / 25 SUM have exact offering patterns; any other whole-session
+    Autumn / Spring / Summer target carries the pattern forward (Autumn &
+    Spring from 26 AUT, Summer from 25 SUM) on the assumption that the
+    offering is unchanged unless we're told otherwise. The calculator has no
+    part-way-through logic, so a ``Block 3`` target still runs the rule-tree.
     """
     tgt = parse_target(target_text)
     if tgt is None:
         return False
-    y, s, b = tgt
-    return b == 1 and (y, s) in {(2026, "AUT"), (2025, "SUM")}
+    _, s, b = tgt
+    return b == 1 and s in {"AUT", "SPR", "SUM"}
+
+
+def carry_base(target_text) -> str | None:
+    """The session whose offering pattern is assumed to still hold for a
+    session the calculator doesn't list exactly. ``None`` if not carryable."""
+    tgt = parse_target(target_text)
+    if tgt is None:
+        return None
+    _, s, b = tgt
+    if b != 1:
+        return None
+    return {"AUT": "26 AUT", "SPR": "26 AUT", "SUM": "25 SUM"}.get(s)

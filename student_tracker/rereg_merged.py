@@ -146,8 +146,19 @@ def advise_student_merged(row: pd.Series, slot_map: dict, offerings: dict, sessi
     status = str(row.get("STUDY_PATH_STATUS", "") or "")
     if status and status != "Active Study Path":
         bits.append(f"NOTE: {status} - confirm the student is returning before acting")
+
+    carried = c.get("carried_from", "")
+    if carried:
+        bits.append(
+            f"ASSUMED: {carried} offering pattern used for {session} - "
+            "sanity-check the subjects run that session; no completion estimate"
+        )
     out[REASON_COL] = " | ".join(bits)
-    out[SOURCE_COL] = _SRC_CALC_CE if capped else _SRC_CALC
+
+    src = _SRC_CALC_CE if capped else _SRC_CALC
+    if carried:
+        src += f" ({carried} pattern assumed)"
+    out[SOURCE_COL] = src
     return out
 
 

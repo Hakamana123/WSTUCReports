@@ -33,9 +33,9 @@ st.set_page_config(page_title="Reregistration Advisory", layout="wide")
 st.title("Reregistration Advisory")
 st.caption(
     "Upload the progression file and pick the target session. Grant's "
-    "calculator drives 26 AUT; every other session uses the cohort-clock "
-    "rule-tree. Standing rules (30cp cap, Exclusion) and the Coach View are "
-    "layered on top."
+    "calculator drives the subject picks (offering pattern carried forward "
+    "for sessions after 26 AUT); standing rules (30cp cap, Exclusion) and the "
+    "Coach View are layered on top."
 )
 
 with st.expander("How the advice is built", expanded=False):
@@ -44,24 +44,25 @@ with st.expander("How the advice is built", expanded=False):
 - **Target session** is the session you're advising *for*. The teaching year
   runs `AUT -> SPR -> SUM`; Autumn and Spring each move a student four subjects
   along their pattern, Summer is catch-up only.
-- **26 AUT** is produced by Grant's testing calculator — offering pattern +
-  fail-status -> Prep / Block 1-4 picks + an *Earliest Completion*, with
-  timetable clashes, "positions 1 & 2 run every Summer", and elective
-  placement all handled inside it.
-- **Every other target** runs the v2 rule-tree: it works out where the
-  student's cohort has reached by that session (from their commencement),
-  advises the cohort's subjects first, then backfills earlier outstanding
-  ones — each displacing an elective to later.
+- **Subjects** come from Grant's testing calculator: offering pattern +
+  fail-status -> Prep / Block 1-4 picks, with timetable clashes, "positions
+  1 & 2 run every Summer", and elective placement all handled inside it.
+- **Which pattern**: Grant computed `26 AUT` and `25 SUM` exactly. For any
+  later Autumn / Spring the `26 AUT` pattern is **assumed to still hold**;
+  for any later Summer, `25 SUM` — unless the reference data is updated. Those
+  rows are tagged *"… pattern assumed"* and carry no completion estimate.
+- **Rule-tree fallback** — used only when the calculator genuinely has no
+  answer (a status combo Grant's own tool misses, program 9034, part-way
+  targets, or Nursing outside Autumn). It places the student by cohort
+  position and advises earliest-outstanding-first.
 - **Standing** is applied on top: `Conditional Enrolment` caps the load at
   30cp (3 subjects, prep -> Summer). `Exclusion` gets no advice. `At Risk` /
   blank get the full load.
-- **Advice Source** on each row names the engine and, for the rule-tree, why
-  the calculator was skipped.
+- **Advice Source** on each row names the engine and, where relevant, which
+  pattern was assumed or why the calculator was skipped.
 - **Custom target** — tick the box to advise part-way through a session
-  (e.g. "as of Autumn Block 3" leaves only 2 blocks to fill).
-- **Summer / far-future targets** have no offering list wired in, so the
-  rule-tree may name subjects that don't actually run that session — treat
-  those as approximate and sanity-check.
+  (e.g. "as of Autumn Block 3" leaves only 2 blocks to fill; these always
+  use the rule-tree).
         """
     )
 
@@ -107,6 +108,7 @@ coach_view = rm.build_coach_view(result)
 total = len(result)
 src = result[rm.SOURCE_COL]
 from_calc = int(src.str.startswith("Grant calculator").sum())
+assumed = int(src.str.contains("pattern assumed", regex=False).sum())
 ce = int(src.str.contains("CE 30cp cap", regex=False).sum())
 excluded = int(src.str.contains("Exclusion", regex=False).sum())
 fallback = int(src.str.startswith("v2 rule-tree").sum())
@@ -114,9 +116,9 @@ flagged = int(result[rm.REASON_COL].str.contains("NOTE:", regex=False).sum())
 
 c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("Students", f"{total:,}")
-c2.metric("From Grant's calculator", f"{from_calc:,}")
+c2.metric("From calculator", f"{from_calc:,}", help=f"of which {assumed:,} on an assumed (carried-forward) pattern")
 c3.metric("Conditional Enrolment (30cp)", f"{ce:,}")
-c4.metric("v2 fallback", f"{fallback:,}")
+c4.metric("Rule-tree fallback", f"{fallback:,}")
 c5.metric("Flagged for coach review", f"{flagged:,}")
 if excluded:
     st.caption(f"{excluded:,} student(s) excluded — no advice.")

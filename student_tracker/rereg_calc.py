@@ -37,6 +37,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from student_tracker import rereg_sessions as rs
+
 _DATA = Path(__file__).with_name("rereg_data")
 
 SHEET_NAME = "Query1"
@@ -150,12 +152,25 @@ def status_mask(row: pd.Series, is_nursing: bool) -> str:
 # --------------------------------------------------------------------------- #
 # Advice                                                                      #
 # --------------------------------------------------------------------------- #
-def pattern_for(program: str, planning_session: str) -> str | None:
+def pattern_for(program: str, planning_session: str) -> tuple[str, str] | tuple[None, str]:
+    """``(pattern_string, carried_from)``.
+
+    ``carried_from`` is ``""`` when the session has its own pattern in the REF
+    data, or the base session ("26 AUT" / "25 SUM") when the pattern is being
+    assumed to carry forward unchanged. ``(None, reason)`` if there's nothing
+    to use.
+    """
     prog = _ref().get(str(program))
     if not prog:
-        return None
+        return None, f"program {program} not in calculator"
+    patterns = prog.get("patterns", {})
     key = PLANNING_SESSIONS.get(planning_session, planning_session)
-    return prog.get("patterns", {}).get(key)
+    if key in patterns:
+        return patterns[key], ""
+    base = rs.carry_base(planning_session)
+    if base and base in patterns:
+        return patterns[base], base
+    return None, f"no offering pattern for program {program} / {planning_session}"
 
 
 def _resolve(token: str | None, program: str) -> str:
@@ -189,20 +204,19 @@ def advise_row(row: pd.Series, planning_session: str) -> dict:
     out["ok"] = False
     out["miss"] = ""
     out["total_needed"] = 0
+    out["carried_from"] = ""
 
     if program in UNSUPPORTED_PROGRAMS:
         out["miss"] = f"program {program} not in calculator"
         out[REASON_COL] = f"Program {program} is not covered by the calculator — refer to coach."
         return out
 
-    pattern = pattern_for(program, planning_session)
+    pattern, carried_from = pattern_for(program, planning_session)
     if pattern is None:
-        out["miss"] = f"no {planning_session} offering pattern for program {program}"
-        out[REASON_COL] = (
-            f"No offering pattern for program {program} / {planning_session} "
-            "in the reference data."
-        )
+        out["miss"] = carried_from  # holds the reason string in this case
+        out[REASON_COL] = f"{carried_from} in the reference data."
         return out
+    out["carried_from"] = carried_from
 
     mask = status_mask(row, is_nursing)
     hit = _lookup("nursing" if is_nursing else "diploma").get((pattern, mask))
@@ -219,7 +233,9 @@ def advise_row(row: pd.Series, planning_session: str) -> dict:
     tokens = [hit.get("prep"), hit.get("b1"), hit.get("b2"), hit.get("b3"), hit.get("b4")]
     for col, tok in zip(ADVICE_COLS, tokens):
         out[col] = _resolve(tok, program)
-    out[COMPLETION_COL] = hit.get("earliest_completion") or ""
+    # The calculator's Earliest Completion is anchored to Grant's source file;
+    # it is only meaningful for the sessions he actually computed.
+    out[COMPLETION_COL] = "" if carried_from else (hit.get("earliest_completion") or "")
 
     named = [out[c] for c in ADVICE_COLS[1:] if out[c] != NO_REGISTRATION]
     bits = []
