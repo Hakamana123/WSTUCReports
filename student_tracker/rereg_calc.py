@@ -114,6 +114,16 @@ def _is_outstanding(value) -> bool:
     return True  # "1", "1.0", "CODE - Currently Registered", "CODE Required"
 
 
+def _outstanding_strict(value) -> bool:
+    """Like ``_is_outstanding`` but a "Currently Registered" subject counts as
+    done. Grant's Principle/Template classification was built this way, so the
+    classifier uses this; the advice engine uses the lenient version."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return False
+    s = str(value).strip()
+    return s != "" and not s.endswith("Completed") and "Currently Registered" not in s
+
+
 def _elective_count(row) -> int:
     """Outstanding elective count, clamped 0..2 (the calculator's mask range).
 
@@ -147,6 +157,87 @@ def status_mask(row: pd.Series, is_nursing: bool) -> str:
     s = [bit(f"Subject {i} Status") for i in range(1, 7)]
     e = _elective_count(row)
     return f"[{p[0]}+{p[1]}] + [{'+'.join(s[:4])}] + [{s[4]}+{s[5]}] + [{e}]"
+
+
+# --------------------------------------------------------------------------- #
+# Rereg Principle / messaging Template                                        #
+# --------------------------------------------------------------------------- #
+# From docs/rereg_principles_and_templates.md (reverse-engineered from Grant's
+# "2026 AB4 for 2026 SPR" file - the Autumn->Spring round, same as the file
+# Josiah runs). Principle -> Template is 1:1.
+_PRINCIPLE_TEMPLATE = {
+    "On Pattern": "Template 1a",
+    "Mostly Progressing": "Template 1c",
+    "Stay with Cohort": "Template 1c",
+    "Unsatisfactory progress in S1": "Template 1b",
+    "Start Again": "Template 1b",
+    "3+ Sessions": "Template 2",
+    "Overall lack of success": "Template 3",
+    "Complete": "Transition",
+    "Commencing": "Commencing",
+}
+
+
+def start_semester(commencement) -> str:
+    """``"25 - Spring Block 1"`` -> ``"25 SPR"``; anything 2024 or earlier ->
+    ``"24"`` (Grant buckets all pre-25 starts together)."""
+    m = re.match(r"\s*(\d{2})\s*-\s*(Autumn|Spring|Summer)", str(commencement or ""), re.I)
+    if not m:
+        return ""
+    yy = int(m.group(1))
+    if yy <= 24:
+        return "24"
+    return f"{yy} {m.group(2)[:3].upper()}"
+
+
+# Autumn->Spring round cohort buckets (docs section "Cohort age"):
+_CURRENT_COHORT = {"26 AUT", "25 SPR", "25 SUM"}
+_OLD_COHORT = {"25 AUT", "24"}
+
+
+def sem1_subject_count(row: pd.Series) -> int:
+    """How many first-semester subjects the student still owes:
+    ``(prep 1 outstanding ? 1 : 0) + (# of slots 1-4 outstanding)``
+    (docs A1). Not affected by prep 2, slots 5-6, or electives."""
+    p1 = 1 if _outstanding_strict(row.get("Prep 1 Status")) else 0
+    s14 = sum(_outstanding_strict(row.get(f"Subject {i} Status")) for i in range(1, 5))
+    return p1 + s14
+
+
+def total_outstanding(row: pd.Series, is_nursing: bool) -> int:
+    n = 9 if is_nursing else 7
+    subj = sum(_outstanding_strict(row.get(f"Subject {i} Status")) for i in range(1, n))
+    if is_nursing:
+        return subj
+    prep = sum(_outstanding_strict(row.get(f"Prep {i} Status")) for i in (1, 2))
+    return prep + subj + _elective_count(row)
+
+
+def classify(row: pd.Series, is_nursing: bool) -> tuple[str, str]:
+    """``(principle, template)`` for the Autumn->Spring round (docs A3).
+
+    Returns ``("", "")`` only when the commencement period is unreadable.
+    """
+    ss = start_semester(row.get("COMMENCEMENT_PERIOD"))
+    if not ss:
+        return "", ""
+
+    total = total_outstanding(row, is_nursing)
+    if total == 0:
+        prin = "Complete"
+    elif ss in _CURRENT_COHORT:
+        s1 = sem1_subject_count(row)
+        if s1 == 0:
+            prin = "On Pattern"
+        elif s1 <= 2:
+            prin = "Stay with Cohort" if is_nursing else "Mostly Progressing"
+        else:
+            prin = "Start Again" if is_nursing else "Unsatisfactory progress in S1"
+    elif ss in _OLD_COHORT:
+        prin = "3+ Sessions" if total <= 6 else "Overall lack of success"
+    else:  # 26 SPR or later - commenced the session being advised for (or after)
+        prin = "Commencing"
+    return prin, _PRINCIPLE_TEMPLATE.get(prin, "")
 
 
 # --------------------------------------------------------------------------- #

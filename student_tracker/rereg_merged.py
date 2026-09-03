@@ -45,6 +45,8 @@ ADVICE_COLS = v2.ADVICE_COLS
 COMPLETION_COL = "Earliest Completion"
 REASON_COL = v2.REASON_COL           # "Advice Reason"
 SOURCE_COL = "Advice Source"
+PRINCIPLE_COL = "Rereg Principle"
+TEMPLATE_COL = "Messaging Template"
 
 # Target sessions the page offers, in cycle order. Grant's calculator has
 # offering patterns for 26 AUT + 25 SUM; every other target runs the v2
@@ -186,19 +188,22 @@ def advise_student_merged(row: pd.Series, slot_map: dict, offerings: dict, sessi
     program = str(row["PROGRAM_CD"]).split(".")[0]
     outcome = str(row.get("Progression Outcome", "") or "").strip()
 
+    is_nursing = program in calc.NURSING_PROGRAMS
+    in_ref = bool(calc._ref().get(program, {}).get("subjects"))
+    principle, template = calc.classify(row, is_nursing)
+
     out = {c: "" for c in ADVICE_COLS}
     out[COMPLETION_COL] = ""
     out[REASON_COL] = ""
     out[SOURCE_COL] = ""
+    out[PRINCIPLE_COL] = principle
+    out[TEMPLATE_COL] = template
 
     # 1. Exclusion -> no advice, whichever engine would have run.
     if outcome in v2.STANDING_NO_ADVICE:
         out[REASON_COL] = f"{outcome} - not eligible to re-register; refer to coach."
         out[SOURCE_COL] = _SRC_EXCLUDED
         return out
-
-    is_nursing = program in calc.NURSING_PROGRAMS
-    in_ref = bool(calc._ref().get(program, {}).get("subjects"))
 
     # 2. Grant's calculator - only for the sessions it has offering patterns for.
     if rs.uses_calculator(session):
@@ -341,7 +346,7 @@ def build_advice(
     offerings = offerings or v2.load_offerings()
     slot_map = v2.derive_slot_map(df)
 
-    cols = [*ADVICE_COLS, COMPLETION_COL, REASON_COL, SOURCE_COL]
+    cols = [*ADVICE_COLS, COMPLETION_COL, PRINCIPLE_COL, TEMPLATE_COL, REASON_COL, SOURCE_COL]
     out = df.copy()
     for col in cols:
         out[col] = ""
@@ -369,6 +374,6 @@ def build_coach_view(advised: pd.DataFrame) -> pd.DataFrame:
     base["Progress Bar"] = [b for _, _, b in status]
     base["Progress"] = [g for _, g, _ in status]
 
-    for col in [*ADVICE_COLS, COMPLETION_COL, SOURCE_COL, REASON_COL]:
+    for col in [TEMPLATE_COL, PRINCIPLE_COL, *ADVICE_COLS, COMPLETION_COL, SOURCE_COL, REASON_COL]:
         base[col] = advised[col].values
     return base
