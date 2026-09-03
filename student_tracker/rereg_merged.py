@@ -198,6 +198,7 @@ def _is_owed(row: pd.Series, program: str, code: str) -> bool:
 
 
 _SRC_SUMMER = "Summer"
+_GREY = "‹"  # advice-cell prefix -> styled grey (shown for reference, not registered now)
 
 
 def _summer_advice(
@@ -206,54 +207,66 @@ def _summer_advice(
 ) -> dict:
     """Summer advice.
 
-    Preps always run in Summer, so advise any outstanding prep first. For
-    modular subjects: if a Summer offering list has been uploaded
-    (``summer_subjects`` = the set of subject codes that run), advise the
-    outstanding ones on it; otherwise fall back to the assumption that only
-    Subjects 1 & 2 run (Josiah 2026-09-03). Everything else waits for the next
-    Autumn. Conditional Enrolment keeps the 30cp cap.
+    Preps and Subjects 1 & 2 are confirmed to run in Summer; anything else is
+    unknown until a Summer offering list is uploaded (``summer_subjects``).
+    Every outstanding subject is shown in the block it runs in - plain if it's
+    being registered this Summer, **greyed** if it's only there for reference
+    (not offered / unknown / didn't fit). Conditional Enrolment keeps the 30cp
+    cap.
     """
     prog_ref = calc._ref().get(program, {})
     subj = prog_ref.get("subjects", {})
     capped = outcome in v2.STANDING_MAX_BLOCKS
     cp_cap = CE_CAP_CP if capped else 10 ** 6
     assumed = summer_subjects is None
+    n_pos = 8 if is_nursing else 6
 
-    if summer_subjects is None:
-        eligible_positions = [1, 2]
-    else:
-        eligible_positions = [
-            p for p in range(1, 9) if subj.get(str(p)) in summer_subjects
-        ]
+    def runs_in_summer(pos: int) -> bool:
+        code = subj.get(str(pos))
+        if summer_subjects is not None:
+            return code in summer_subjects
+        return pos in (1, 2)
 
-    prep_now, blocks, cp = [], ["", "", "", ""], 0
-    # preps first
+    # preps first (always run in Summer, diplomas only)
+    prep_now, cp = [], 0
     for slot, key in (("Prep 1 Status", "prep1"), ("Prep 2 Status", "prep2")):
         code = prog_ref.get(key)
         if not is_nursing and code and calc._is_outstanding(row.get(slot)) and cp + _CP_PREP <= cp_cap:
             prep_now.append(code)
             cp += _CP_PREP
-    # then the modular subjects that run in Summer
-    bi = 0
-    for pos in eligible_positions:
-        code = subj.get(str(pos))
-        if code and calc._is_outstanding(row.get(f"Subject {pos} Status")) and cp + _CP_MODULAR <= cp_cap and bi < 4:
+
+    blocks = ["", "", "", ""]
+    grey = [False, False, False, False]
+    register: list[str] = []
+    for bi in range(4):
+        cands = [
+            p for p in (bi + 1, bi + 5)
+            if subj.get(str(p)) and calc._is_outstanding(row.get(f"Subject {p} Status"))
+        ]
+        if not cands:
+            continue
+        offered = [p for p in cands if runs_in_summer(p)]
+        if offered and cp + _CP_MODULAR <= cp_cap:
+            code = subj[str(offered[0])]
             blocks[bi] = code
-            bi += 1
+            register.append(code)
             cp += _CP_MODULAR
+        else:
+            blocks[bi] = subj[str(cands[0])]
+            grey[bi] = True
 
     out[ADVICE_COLS[0]] = " and ".join(prep_now)
-    for col, val in zip(ADVICE_COLS[1:], blocks):
-        out[col] = val
+    for col, val, g in zip(ADVICE_COLS[1:], blocks, grey):
+        out[col] = (_GREY + val) if (val and g) else val
 
-    named = [b for b in blocks if b]
-    scheduled = set(prep_now) | set(named)
-
-    # everything still outstanding that Summer doesn't take -> next Autumn
+    scheduled = set(prep_now) | set(register)
+    # outstanding items with no block shown at all (a lost 1-vs-5 clash, a
+    # second prep) -> next Autumn
     still: list[str] = []
     for pos in range(1, 9):
         code = subj.get(str(pos))
-        if code and calc._is_outstanding(row.get(f"Subject {pos} Status")) and code not in scheduled:
+        if code and calc._is_outstanding(row.get(f"Subject {pos} Status")) \
+                and code not in scheduled and code not in blocks:
             still.append(code)
     for slot, key in (("Prep 1 Status", "prep1"), ("Prep 2 Status", "prep2")):
         code = prog_ref.get(key)
@@ -262,30 +275,33 @@ def _summer_advice(
     elec_need = calc._elective_count(row)
     if elec_need:
         still.append(f"+{elec_need} elective")
+    greyed = [b for b, g in zip(blocks, grey) if g]
 
     bits = []
     if capped:
         bits.append(f"{outcome}: 30cp cap")
     if prep_now:
         bits.append("Prep: " + " and ".join(prep_now))
-    if named:
-        bits.append("Register: " + ", ".join(named))
-    if not prep_now and not named:
-        bits.append(f"Nothing for this student runs in {session} - see next Autumn")
-    if assumed and (named or still):
+    if register:
+        bits.append("Register: " + ", ".join(register))
+    if not prep_now and not register:
+        bits.append(f"Nothing confirmed for this student runs in {session}")
+    if greyed:
+        bits.append("Grey = not offered in Summer (or unknown) - take next Autumn: " + ", ".join(greyed))
+    if assumed and (greyed or register):
         bits.append("ASSUMED: only prep + Subjects 1 & 2 run in Summer - upload the Summer offering list for real advice")
     if still:
-        bits.append(f"Then from {rs.advance(session, 1)}: " + ", ".join(still))
+        bits.append(f"Also still to pass: " + ", ".join(still))
 
-    # rough completion: subjects/preps left after Summer + electives, from the
-    # next Autumn onward at 4 (or 3 for CE) per session.
-    work = sum(1 for s in still if not s.startswith("+")) + elec_need
+    # rough completion: everything not registered this Summer (greyed blocks +
+    # unblocked items + electives), from the next Autumn at 4 (3 for CE)/session.
+    work = len(greyed) + sum(1 for s in still if not s.startswith("+")) + elec_need
     load = 3 if capped else 4
     if work:
         est = rs.advance(session, min(8, -(-work // load)))
         out[COMPLETION_COL] = f"{est} (est.)"
         bits.append(f"Earliest completion ~{est}")
-    elif prep_now or named:
+    elif prep_now or register:
         out[COMPLETION_COL] = f"{session} (est.)"
 
     out[REASON_COL] = " | ".join(bits)
@@ -401,8 +417,9 @@ def advise_student_merged(
         partway_carry = []
 
     out[ADVICE_COLS[0]] = prep_now
-    for col, val in zip(ADVICE_COLS[1:], kept):
-        out[col] = val
+    for i, (col, val) in enumerate(zip(ADVICE_COLS[1:], kept)):
+        # part-way: Blocks before from_block are shown greyed (in progress)
+        out[col] = (_GREY + val) if (val and from_block > 1 and i + 1 < from_block) else val
     # a carried-forward pattern's completion estimate is stale (see rereg_calc)
     out[COMPLETION_COL] = "" if completion in ("", "Not Found") or carried else completion
 
@@ -507,9 +524,39 @@ def advise_student_merged(
 # Whole-file entry points                                                     #
 # --------------------------------------------------------------------------- #
 load_progression_file = v2.load_progression_file
-to_workbook_bytes = v2.to_workbook_bytes
 COACH_VIEW_SHEET = v2.COACH_VIEW_SHEET
 SHEET_NAME = v2.SHEET_NAME
+
+
+def to_workbook_bytes(df: pd.DataFrame, coach_view: pd.DataFrame | None = None) -> bytes:
+    """Same as v2's, but any advice-block cell prefixed with the grey marker
+    (``_GREY``) is written as grey italic text - "shown for reference, not
+    being registered this session"."""
+    import io
+    from openpyxl.styles import Font
+
+    grey_font = Font(color="808080", italic=True)
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        sheets = []
+        if coach_view is not None:
+            coach_view.to_excel(writer, sheet_name=COACH_VIEW_SHEET, index=False)
+            sheets.append(COACH_VIEW_SHEET)
+        df.to_excel(writer, sheet_name=SHEET_NAME, index=False)
+        sheets.append(SHEET_NAME)
+
+        for name in sheets:
+            ws = writer.sheets[name]
+            block_cols = {
+                i for i, c in enumerate(next(ws.iter_rows(max_row=1, values_only=True)), 1)
+                if c in ADVICE_COLS[1:]
+            }
+            for rowcells in ws.iter_rows(min_row=2):
+                for cell in rowcells:
+                    if cell.column in block_cols and isinstance(cell.value, str) and cell.value.startswith(_GREY):
+                        cell.value = cell.value[len(_GREY):]
+                        cell.font = grey_font
+    return buffer.getvalue()
 
 
 def read_summer_offering(source) -> set[str]:

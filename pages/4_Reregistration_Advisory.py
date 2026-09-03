@@ -164,11 +164,14 @@ if only_flagged:
 if only_fallback:
     view = view[view[rm.SOURCE_COL].str.startswith("v2 rule-tree")]
 
-st.dataframe(view, use_container_width=True, hide_index=True)
+# the grey marker is only meaningful in the styled .xlsx - show it as (…) here
+preview = view.replace(f"^{rm._GREY}(.+)$", r"(\1)", regex=True)
+st.dataframe(preview, use_container_width=True, hide_index=True)
 st.caption(
     f"Showing {len(view):,} of {total:,} students.  "
-    "Progress key: ✓ = passed, ✗ = still to pass. "
-    "Groups: prep · core blocks (in fours) · electives."
+    "Progress key: ✓ = passed, ✗ = still to pass.  "
+    "A block subject in (brackets) here is greyed in the download — shown for "
+    "reference, not being registered this session."
 )
 
 st.download_button(
