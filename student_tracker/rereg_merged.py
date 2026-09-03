@@ -303,9 +303,29 @@ def advise_student_merged(row: pd.Series, slot_map: dict, offerings: dict, sessi
         )
     elif nothing:
         bits.append("Nothing to register this session")
-    if out[COMPLETION_COL]:
+
+    # Earliest completion: Grant's own date for 26 AUT; a rough projection
+    # (this session + ceil(work left / load) more sessions) for everything else.
+    mod_out = sum(calc._is_outstanding(row.get(f"Subject {i} Status")) for i in range(1, 9))
+    prep_out = sum(calc._is_outstanding(row.get(f"Prep {i} Status")) for i in (1, 2))
+    sched_mod = sum(1 for _, b in named if b != "+1 elective")
+    load = 3 if capped else 4
+    mod_left = max(0, (mod_out - sched_mod) + (elec_need - elec_now))
+    prep_left = max(0, prep_out - len(_split_prep(prep_now)))
+    sessions_after = min(8, max(-(-mod_left // load), prep_left))
+    estimate = rs.advance(session, sessions_after)
+
+    if out[COMPLETION_COL]:  # Grant's real date (26 AUT)
         pushed = " (full-load estimate; deferrals push this out)" if (deferred or prep_summer) else ""
         bits.append(f"Earliest completion {out[COMPLETION_COL]}{pushed}")
+    elif estimate and not nothing:
+        out[COMPLETION_COL] = f"{estimate} (est.)"
+        bits.append(
+            f"Earliest completion ~{estimate}"
+            + (f" ({sessions_after} more session(s) after this)" if sessions_after else " (this session)")
+        )
+    elif estimate and nothing and mod_left == 0 and prep_left == 0:
+        out[COMPLETION_COL] = f"{session} (est.)"
     status = str(row.get("STUDY_PATH_STATUS", "") or "")
     if status and status != "Active Study Path":
         bits.append(f"NOTE: {status} - confirm the student is returning before acting")
@@ -374,6 +394,8 @@ def build_coach_view(advised: pd.DataFrame) -> pd.DataFrame:
     base["Progress Bar"] = [b for _, _, b in status]
     base["Progress"] = [g for _, g, _ in status]
 
-    for col in [TEMPLATE_COL, PRINCIPLE_COL, *ADVICE_COLS, COMPLETION_COL, SOURCE_COL, REASON_COL]:
+    # Advice Source (which engine ran) is kept in the full sheet for debugging
+    # but left off the Coach View - a coach doesn't need it.
+    for col in [TEMPLATE_COL, PRINCIPLE_COL, *ADVICE_COLS, COMPLETION_COL, REASON_COL]:
         base[col] = advised[col].values
     return base

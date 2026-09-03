@@ -141,6 +141,25 @@ def cohort_position(
     return position, note
 
 
+def advance(target_text, steps: int) -> str:
+    """The teaching session ``steps`` advancing-sessions after ``target_text``.
+    ``AUT -> SPR -> AUT -> …`` (Summer is skipped). ``advance("26 SPR", 0)``
+    -> ``"26 SPR"``; ``advance("26 SPR", 1)`` -> ``"27 AUT"``.
+    """
+    tgt = parse_target(target_text)
+    if tgt is None:
+        return ""
+    y, s, _ = tgt
+    if s == "SUM":
+        y, s = y + 1, "AUT"
+    for _ in range(max(0, steps)):
+        if s == "AUT":
+            s = "SPR"
+        else:
+            y, s = y + 1, "AUT"
+    return f"{y % 100:02d} {s}"
+
+
 def available_blocks(target_text, cap: int = BLOCKS_PER_SESSION) -> int:
     """How many teaching blocks are left in the target session.
 
