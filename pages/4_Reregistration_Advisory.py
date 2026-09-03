@@ -91,6 +91,25 @@ with col_b:
         "Progression workbook (.xlsx, sheet 'Query1')", type=["xlsx"], key="rereg_upload"
     )
 
+summer_subjects = None
+if "SUM" in session.upper():
+    summer_file = st.file_uploader(
+        "Summer offering list (optional) — .xlsx or .csv with a column of subject codes",
+        type=["xlsx", "csv"], key="summer_upload",
+    )
+    if summer_file is not None:
+        summer_subjects = rm.read_summer_offering(summer_file)
+        st.caption(
+            f"Summer offering: {len(summer_subjects)} subjects "
+            f"({', '.join(sorted(summer_subjects)[:8])}{'…' if len(summer_subjects) > 8 else ''})"
+            if summer_subjects else "Couldn't read any subject codes from that file."
+        )
+    else:
+        st.caption(
+            "No Summer offering list — assuming only prep + Subjects 1 & 2 run. "
+            "Upload the list once it's known for real advice."
+        )
+
 if uploaded is None:
     st.info("Upload the workbook to generate advice.")
     st.stop()
@@ -101,7 +120,7 @@ except ValueError as exc:
     st.error(f"Couldn't read this file: {exc}")
     st.stop()
 
-result = rm.build_advice(df, session=session)
+result = rm.build_advice(df, session=session, summer_subjects=summer_subjects)
 coach_view = rm.build_coach_view(result)
 
 # --- summary --------------------------------------------------------------

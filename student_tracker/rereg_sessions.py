@@ -142,20 +142,19 @@ def cohort_position(
 
 
 def advance(target_text, steps: int) -> str:
-    """The teaching session ``steps`` advancing-sessions after ``target_text``.
-    ``AUT -> SPR -> AUT -> …`` (Summer is skipped). ``advance("26 SPR", 0)``
-    -> ``"26 SPR"``; ``advance("26 SPR", 1)`` -> ``"27 AUT"``.
+    """The teaching session ``steps`` sessions after ``target_text``.
+    ``AUT -> SPR -> AUT -> …``; from Summer the next session is the following
+    Autumn. ``advance("26 SPR", 0)`` -> ``"26 SPR"``; ``advance("26 SPR", 1)``
+    -> ``"27 AUT"``; ``advance("26 SUM", 1)`` -> ``"27 AUT"``.
     """
     tgt = parse_target(target_text)
     if tgt is None:
         return ""
     y, s, _ = tgt
-    if s == "SUM":
-        y, s = y + 1, "AUT"
     for _ in range(max(0, steps)):
         if s == "AUT":
             s = "SPR"
-        else:
+        else:  # SPR or SUM
             y, s = y + 1, "AUT"
     return f"{y % 100:02d} {s}"
 

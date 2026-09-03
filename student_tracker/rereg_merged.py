@@ -184,7 +184,107 @@ def _ce_fill(
     return blocks, modular_deferred, " and ".join(prep_now), " and ".join(prep_summer), electives_now
 
 
-def advise_student_merged(row: pd.Series, slot_map: dict, offerings: dict, session: str) -> dict:
+_SRC_SUMMER = "Summer"
+
+
+def _summer_advice(
+    out: dict, row: pd.Series, program: str, is_nursing: bool, session: str, outcome: str,
+    summer_subjects: set[str] | None = None,
+) -> dict:
+    """Summer advice.
+
+    Preps always run in Summer, so advise any outstanding prep first. For
+    modular subjects: if a Summer offering list has been uploaded
+    (``summer_subjects`` = the set of subject codes that run), advise the
+    outstanding ones on it; otherwise fall back to the assumption that only
+    Subjects 1 & 2 run (Josiah 2026-09-03). Everything else waits for the next
+    Autumn. Conditional Enrolment keeps the 30cp cap.
+    """
+    prog_ref = calc._ref().get(program, {})
+    subj = prog_ref.get("subjects", {})
+    capped = outcome in v2.STANDING_MAX_BLOCKS
+    cp_cap = CE_CAP_CP if capped else 10 ** 6
+    assumed = summer_subjects is None
+
+    if summer_subjects is None:
+        eligible_positions = [1, 2]
+    else:
+        eligible_positions = [
+            p for p in range(1, 9) if subj.get(str(p)) in summer_subjects
+        ]
+
+    prep_now, blocks, cp = [], ["", "", "", ""], 0
+    # preps first
+    for slot, key in (("Prep 1 Status", "prep1"), ("Prep 2 Status", "prep2")):
+        code = prog_ref.get(key)
+        if not is_nursing and code and calc._is_outstanding(row.get(slot)) and cp + _CP_PREP <= cp_cap:
+            prep_now.append(code)
+            cp += _CP_PREP
+    # then the modular subjects that run in Summer
+    bi = 0
+    for pos in eligible_positions:
+        code = subj.get(str(pos))
+        if code and calc._is_outstanding(row.get(f"Subject {pos} Status")) and cp + _CP_MODULAR <= cp_cap and bi < 4:
+            blocks[bi] = code
+            bi += 1
+            cp += _CP_MODULAR
+
+    out[ADVICE_COLS[0]] = " and ".join(prep_now)
+    for col, val in zip(ADVICE_COLS[1:], blocks):
+        out[col] = val
+
+    named = [b for b in blocks if b]
+    scheduled = set(prep_now) | set(named)
+
+    # everything still outstanding that Summer doesn't take -> next Autumn
+    still: list[str] = []
+    for pos in range(1, 9):
+        code = subj.get(str(pos))
+        if code and calc._is_outstanding(row.get(f"Subject {pos} Status")) and code not in scheduled:
+            still.append(code)
+    for slot, key in (("Prep 1 Status", "prep1"), ("Prep 2 Status", "prep2")):
+        code = prog_ref.get(key)
+        if code and calc._is_outstanding(row.get(slot)) and code not in scheduled:
+            still.append(code)
+    elec_need = calc._elective_count(row)
+    if elec_need:
+        still.append(f"+{elec_need} elective")
+
+    bits = []
+    if capped:
+        bits.append(f"{outcome}: 30cp cap")
+    if prep_now:
+        bits.append("Prep: " + " and ".join(prep_now))
+    if named:
+        bits.append("Register: " + ", ".join(named))
+    if not prep_now and not named:
+        bits.append(f"Nothing for this student runs in {session} - see next Autumn")
+    if assumed and (named or still):
+        bits.append("ASSUMED: only prep + Subjects 1 & 2 run in Summer - upload the Summer offering list for real advice")
+    if still:
+        bits.append(f"Then from {rs.advance(session, 1)}: " + ", ".join(still))
+
+    # rough completion: subjects/preps left after Summer + electives, from the
+    # next Autumn onward at 4 (or 3 for CE) per session.
+    work = sum(1 for s in still if not s.startswith("+")) + elec_need
+    load = 3 if capped else 4
+    if work:
+        est = rs.advance(session, min(8, -(-work // load)))
+        out[COMPLETION_COL] = f"{est} (est.)"
+        bits.append(f"Earliest completion ~{est}")
+    elif prep_now or named:
+        out[COMPLETION_COL] = f"{session} (est.)"
+
+    out[REASON_COL] = " | ".join(bits)
+    src = _SRC_SUMMER + (" (assumed offering)" if assumed else " (uploaded offering)")
+    out[SOURCE_COL] = src + (" + CE 30cp cap" if capped else "")
+    return out
+
+
+def advise_student_merged(
+    row: pd.Series, slot_map: dict, offerings: dict, session: str,
+    summer_subjects: set[str] | None = None,
+) -> dict:
     program = str(row["PROGRAM_CD"]).split(".")[0]
     outcome = str(row.get("Progression Outcome", "") or "").strip()
 
@@ -204,6 +304,12 @@ def advise_student_merged(row: pd.Series, slot_map: dict, offerings: dict, sessi
         out[REASON_COL] = f"{outcome} - not eligible to re-register; refer to coach."
         out[SOURCE_COL] = _SRC_EXCLUDED
         return out
+
+    # 1b. Summer target -> preps + whatever the Summer offering list says runs
+    #     (or just Subjects 1 & 2 when no list has been uploaded).
+    tgt = rs.parse_target(session)
+    if tgt and tgt[1] == "SUM":
+        return _summer_advice(out, row, program, is_nursing, session, outcome, summer_subjects)
 
     # 2. Grant's calculator - only for the sessions it has offering patterns for.
     if rs.uses_calculator(session):
@@ -357,10 +463,28 @@ COACH_VIEW_SHEET = v2.COACH_VIEW_SHEET
 SHEET_NAME = v2.SHEET_NAME
 
 
+def read_summer_offering(source) -> set[str]:
+    """Parse an uploaded Summer offering list -> the set of subject codes that
+    run. Accepts .xlsx or .csv; any column whose cells look like subject codes
+    (4 letters + 4 digits) is used."""
+    import io
+    import re as _re
+
+    raw = source if hasattr(source, "read") else source
+    try:
+        frames = [pd.read_excel(io.BytesIO(raw.getvalue()) if hasattr(raw, "getvalue") else raw,
+                                sheet_name=None)]
+        cells = pd.concat(frames[0].values(), ignore_index=True).astype(str).values.ravel()
+    except Exception:
+        cells = pd.read_csv(raw).astype(str).values.ravel()
+    return {c.strip().upper() for c in cells if _re.fullmatch(r"[A-Za-z]{4}\d{4}", c.strip())}
+
+
 def build_advice(
     df: pd.DataFrame,
     session: str = DEFAULT_PLANNING_SESSION,
     offerings: dict | None = None,
+    summer_subjects: set[str] | None = None,
 ) -> pd.DataFrame:
     """Copy of ``df`` with the advice + completion + reason + source columns."""
     offerings = offerings or v2.load_offerings()
@@ -372,7 +496,7 @@ def build_advice(
         out[col] = ""
 
     for idx, row in df.iterrows():
-        r = advise_student_merged(row, slot_map, offerings, session)
+        r = advise_student_merged(row, slot_map, offerings, session, summer_subjects)
         for col in cols:
             out.at[idx, col] = r[col]
     return out
