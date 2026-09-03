@@ -184,6 +184,19 @@ def _ce_fill(
     return blocks, modular_deferred, " and ".join(prep_now), " and ".join(prep_summer), electives_now
 
 
+def _is_owed(row: pd.Series, program: str, code: str) -> bool:
+    """Is ``code`` a subject / prep this student still needs to pass?"""
+    ref = calc._ref().get(program, {})
+    for pos, c in ref.get("subjects", {}).items():
+        if c == code:
+            return calc._is_outstanding(row.get(f"Subject {pos} Status"))
+    if code == ref.get("prep1"):
+        return calc._is_outstanding(row.get("Prep 1 Status"))
+    if code == ref.get("prep2"):
+        return calc._is_outstanding(row.get("Prep 2 Status"))
+    return False
+
+
 _SRC_SUMMER = "Summer"
 
 
@@ -311,9 +324,15 @@ def advise_student_merged(
     if tgt and tgt[1] == "SUM":
         return _summer_advice(out, row, program, is_nursing, session, outcome, summer_subjects)
 
+    # A part-way target ("26 AUT Block 3") uses the whole-session engines - the
+    # picks are already locked to the block each subject runs in - and only
+    # Blocks <from_block>..4 are actually registered now.
+    base = rs.base_session(session)
+    from_block = rs.target_block(session)
+
     # 2. Grant's calculator - only for the sessions it has offering patterns for.
     if rs.uses_calculator(session):
-        c = calc.advise_row(row, session)
+        c = calc.advise_row(row, base)
     else:
         c = {"ok": False, "miss": f"{session} not covered by the calculator"}
 
@@ -356,7 +375,30 @@ def advise_student_merged(
     # electives are not offered in Blocks 1 & 2 (applies to Grant's picks too)
     kept = _electives_to_b34(kept)
     elec_now = kept.count("+1 elective")
-    named = [(i + 1, b) for i, b in enumerate(kept) if b]
+
+    # Part-way target: only Blocks >= from_block are registered now. Force each
+    # remaining block to hold its own outstanding subject (the calculator
+    # sometimes leaves a backlog subject unplaced), then keep the earlier
+    # blocks displayed - the subjects that belong there.
+    prog_subj = calc._ref().get(program, {}).get("subjects", {})
+    if from_block > 1:
+        for bi in range(from_block - 1, 4):
+            for pos in (bi + 1, bi + 5):
+                code = prog_subj.get(str(pos))
+                if code and calc._is_outstanding(row.get(f"Subject {pos} Status")):
+                    kept[bi] = code
+                    break
+        elec_now = kept.count("+1 elective")
+    named_all = [(i + 1, b) for i, b in enumerate(kept) if b]
+    if from_block > 1:
+        named = [(n, b) for n, b in named_all if n >= from_block]
+        partway_carry = [
+            b for n, b in named_all
+            if n < from_block and b != "+1 elective" and _is_owed(row, program, b)
+        ]
+    else:
+        named = named_all
+        partway_carry = []
 
     out[ADVICE_COLS[0]] = prep_now
     for col, val in zip(ADVICE_COLS[1:], kept):
@@ -367,6 +409,8 @@ def advise_student_merged(
     nothing = not named and not prep_now and not prep_summer
 
     bits: list[str] = []
+    if from_block > 1:
+        bits.append(f"Advising from Block {from_block} - register Blocks {from_block}-4 only")
     if capped and not nothing:
         bits.append(f"{outcome}: 30cp cap - failed subjects first, then electives, then prep")
     elif outcome == "At Risk" and not nothing:
@@ -377,6 +421,11 @@ def advise_student_merged(
         bits.append(f"Prep in Summer: {prep_summer}")
     if named:
         bits.append("Register: " + ", ".join(f"Block {n} {b}" for n, b in named))
+    if partway_carry:
+        bits.append(
+            f"Blocks 1-{from_block - 1} already in progress; still owes "
+            + ", ".join(partway_carry) + " (take next Autumn)"
+        )
     if deferred:
         bits.append("Defer to a later session: " + ", ".join(deferred))
 
@@ -384,7 +433,7 @@ def advise_student_merged(
     # the calculator only plans four blocks, so a coach needs the rest spelled
     # out (failed subjects that didn't fit, a second prep, unplaced electives).
     prog_ref = calc._ref().get(program, {})
-    accounted = {b for _, b in named} | set(deferred) | {prep_now, prep_summer}
+    accounted = {b for _, b in named} | set(deferred) | set(partway_carry) | {prep_now, prep_summer}
     still: list[str] = []
     for pos in range(1, 9):
         code = prog_ref.get("subjects", {}).get(str(pos))

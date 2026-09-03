@@ -172,20 +172,33 @@ def available_blocks(target_text, cap: int = BLOCKS_PER_SESSION) -> int:
     return max(1, min(cap, BLOCKS_PER_SESSION - tb + 1))
 
 
+def base_session(target_text) -> str:
+    """``"26 AUT Block 3"`` -> ``"26 AUT"`` (drop the part-way block)."""
+    tgt = parse_target(target_text)
+    return f"{tgt[0] % 100:02d} {tgt[1]}" if tgt else str(target_text or "")
+
+
+def target_block(target_text) -> int:
+    """The block a part-way target starts from (1 for a whole session)."""
+    tgt = parse_target(target_text)
+    return tgt[2] if tgt else 1
+
+
 def uses_calculator(target_text) -> bool:
     """True when Grant's calculator should be tried for this target.
 
     26 AUT / 25 SUM have exact offering patterns; any other whole-session
     Autumn / Spring / Summer target carries the pattern forward (Autumn &
     Spring from 26 AUT, Summer from 25 SUM) on the assumption that the
-    offering is unchanged unless we're told otherwise. The calculator has no
-    part-way-through logic, so a ``Block 3`` target still runs the rule-tree.
+    offering is unchanged unless we're told otherwise. Part-way ("Block 3")
+    targets use the same engines - the calculator's picks are already locked
+    to the block each subject runs in.
     """
     tgt = parse_target(target_text)
     if tgt is None:
         return False
-    _, s, b = tgt
-    return b == 1 and s in {"AUT", "SPR", "SUM"}
+    _, s, _ = tgt
+    return s in {"AUT", "SPR", "SUM"}
 
 
 def carry_base(target_text) -> str | None:
@@ -194,7 +207,5 @@ def carry_base(target_text) -> str | None:
     tgt = parse_target(target_text)
     if tgt is None:
         return None
-    _, s, b = tgt
-    if b != 1:
-        return None
+    _, s, _ = tgt
     return {"AUT": "26 AUT", "SPR": "26 AUT", "SUM": "25 SUM"}.get(s)
