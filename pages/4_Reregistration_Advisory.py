@@ -165,8 +165,7 @@ if only_fallback:
     view = view[view[rm.SOURCE_COL].str.startswith("v2 rule-tree")]
 
 # the grey marker is only meaningful in the styled .xlsx - show it as (…) here
-preview = view.replace(f"^{rm._GREY}(.+)$", r"(\1)", regex=True)
-st.dataframe(preview, use_container_width=True, hide_index=True)
+st.dataframe(rm.strip_grey(view), use_container_width=True, hide_index=True)
 st.caption(
     f"Showing {len(view):,} of {total:,} students.  "
     "Progress key: ✓ = passed, ✗ = still to pass.  "

@@ -198,7 +198,13 @@ def _is_owed(row: pd.Series, program: str, code: str) -> bool:
 
 
 _SRC_SUMMER = "Summer"
-_GREY = "‹"  # advice-cell prefix -> styled grey (shown for reference, not registered now)
+GREY_MARK = "~"  # advice-cell prefix -> styled grey (for reference, not registered now)
+_GREY = GREY_MARK
+
+
+def strip_grey(df: pd.DataFrame) -> pd.DataFrame:
+    """A display copy with the grey marker turned into ``(brackets)``."""
+    return df.replace(r"^~(.+)$", r"(\1)", regex=True)
 
 
 def _summer_advice(
