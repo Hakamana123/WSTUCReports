@@ -47,6 +47,18 @@ REASON_COL = v2.REASON_COL           # "Advice Reason"
 SOURCE_COL = "Advice Source"
 PRINCIPLE_COL = "Rereg Principle"
 TEMPLATE_COL = "Messaging Template"
+WITHDRAWAL_COL = "Withdrawal Flag"
+_FAIL_GRADES = {"F", "FNS"}
+_WITHDRAW_TEXT = "ADVISE WITHDRAWAL"
+
+
+def _failed_earlier_blocks(row: pd.Series, from_block: int) -> bool:
+    """True when the student failed (F / FNS) every teaching block they've
+    completed this session so far - the mid-session withdrawal trigger."""
+    if from_block < 2:
+        return False
+    grades = [str(row.get(f"Block {b} Result", "") or "").strip().upper() for b in range(1, from_block)]
+    return bool(grades) and all(g in _FAIL_GRADES for g in grades)
 
 # Target sessions the page offers, in cycle order. Grant's calculator has
 # offering patterns for 26 AUT + 25 SUM; every other target runs the v2
@@ -333,6 +345,7 @@ def advise_student_merged(
     out[SOURCE_COL] = ""
     out[PRINCIPLE_COL] = principle
     out[TEMPLATE_COL] = template
+    out[WITHDRAWAL_COL] = ""
 
     # 1. Exclusion -> no advice, whichever engine would have run.
     if outcome in v2.STANDING_NO_ADVICE:
@@ -351,6 +364,9 @@ def advise_student_merged(
     # Blocks <from_block>..4 are actually registered now.
     base = rs.base_session(session)
     from_block = rs.target_block(session)
+    withdraw = _failed_earlier_blocks(row, from_block)
+    if withdraw:
+        out[WITHDRAWAL_COL] = _WITHDRAW_TEXT
 
     # 2. Grant's calculator - only for the sessions it has offering patterns for.
     if rs.uses_calculator(session):
@@ -432,6 +448,11 @@ def advise_student_merged(
     nothing = not named and not prep_now and not prep_summer
 
     bits: list[str] = []
+    if withdraw:
+        bits.append(
+            f"** {_WITHDRAW_TEXT} ** - failed Block(s) 1-{from_block - 1} this session; "
+            "advise the student to withdraw and restart next session"
+        )
     if from_block > 1:
         bits.append(f"Advising from Block {from_block} - register Blocks {from_block}-4 only")
     if capped and not nothing:
@@ -535,13 +556,15 @@ SHEET_NAME = v2.SHEET_NAME
 
 
 def to_workbook_bytes(df: pd.DataFrame, coach_view: pd.DataFrame | None = None) -> bytes:
-    """Same as v2's, but any advice-block cell prefixed with the grey marker
-    (``_GREY``) is written as grey italic text - "shown for reference, not
-    being registered this session"."""
+    """Same as v2's, plus two bits of styling: an advice-block cell prefixed
+    with the grey marker is written as grey italic text (for-reference, not
+    registered), and a row flagged ``ADVISE WITHDRAWAL`` gets its flag and
+    reason cells in red bold."""
     import io
     from openpyxl.styles import Font
 
     grey_font = Font(color="808080", italic=True)
+    red_font = Font(color="C00000", bold=True)
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         sheets = []
@@ -553,15 +576,18 @@ def to_workbook_bytes(df: pd.DataFrame, coach_view: pd.DataFrame | None = None) 
 
         for name in sheets:
             ws = writer.sheets[name]
-            block_cols = {
-                i for i, c in enumerate(next(ws.iter_rows(max_row=1, values_only=True)), 1)
-                if c in ADVICE_COLS[1:]
-            }
+            header = list(next(ws.iter_rows(max_row=1, values_only=True)))
+            block_cols = {i for i, c in enumerate(header, 1) if c in ADVICE_COLS[1:]}
+            flag_col = next((i for i, c in enumerate(header, 1) if c == WITHDRAWAL_COL), None)
+            red_cols = {i for i, c in enumerate(header, 1) if c in (WITHDRAWAL_COL, REASON_COL)}
             for rowcells in ws.iter_rows(min_row=2):
+                flagged = flag_col and str(rowcells[flag_col - 1].value or "").strip() == _WITHDRAW_TEXT
                 for cell in rowcells:
                     if cell.column in block_cols and isinstance(cell.value, str) and cell.value.startswith(_GREY):
                         cell.value = cell.value[len(_GREY):]
                         cell.font = grey_font
+                    elif flagged and cell.column in red_cols:
+                        cell.font = red_font
     return buffer.getvalue()
 
 
@@ -592,7 +618,8 @@ def build_advice(
     offerings = offerings or v2.load_offerings()
     slot_map = v2.derive_slot_map(df)
 
-    cols = [*ADVICE_COLS, COMPLETION_COL, PRINCIPLE_COL, TEMPLATE_COL, REASON_COL, SOURCE_COL]
+    cols = [*ADVICE_COLS, COMPLETION_COL, PRINCIPLE_COL, TEMPLATE_COL,
+            WITHDRAWAL_COL, REASON_COL, SOURCE_COL]
     out = df.copy()
     for col in cols:
         out[col] = ""
@@ -622,6 +649,6 @@ def build_coach_view(advised: pd.DataFrame) -> pd.DataFrame:
 
     # Advice Source (which engine ran) is kept in the full sheet for debugging
     # but left off the Coach View - a coach doesn't need it.
-    for col in [TEMPLATE_COL, PRINCIPLE_COL, *ADVICE_COLS, COMPLETION_COL, REASON_COL]:
+    for col in [WITHDRAWAL_COL, TEMPLATE_COL, PRINCIPLE_COL, *ADVICE_COLS, COMPLETION_COL, REASON_COL]:
         base[col] = advised[col].values
     return base

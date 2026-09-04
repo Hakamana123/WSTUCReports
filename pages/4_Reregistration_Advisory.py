@@ -73,18 +73,14 @@ with col_a:
         rm.PLANNING_SESSIONS,
         index=rm.PLANNING_SESSIONS.index(rm.DEFAULT_PLANNING_SESSION),
     )
-    custom = st.checkbox("Custom — part-way through a session", value=False)
-    if custom:
-        cc1, cc2 = st.columns(2)
-        with cc1:
-            c_year = st.selectbox("Year", ["2026", "2027", "2028"], index=1)
-        with cc2:
-            c_sess = st.selectbox("Session", ["AUT", "SPR", "SUM"], index=0)
-        c_block = st.slider("Advise from block", 1, 4, 1,
-                            help="Block 1 = whole session. Block 3 = only blocks 3–4 left.")
-        session = f"{c_year[2:]} {c_sess}" + (f" Block {c_block}" if c_block > 1 else "")
-    else:
-        session = named
+    part_block = st.checkbox(
+        "Mid-semester — advise from Block 3",
+        value=False,
+        help="Only Blocks 3–4 are registered now; Blocks 1–2 (already done this "
+             "session) show greyed. A student who failed both Block 1 and Block 2 "
+             "is flagged to withdraw.",
+    )
+    session = f"{named} Block 3" if part_block else named
     st.caption(f"Target: **{session}**")
 with col_b:
     uploaded = st.file_uploader(
@@ -164,8 +160,9 @@ if only_flagged:
 if only_fallback:
     view = view[view[rm.SOURCE_COL].str.startswith("v2 rule-tree")]
 
-# the grey marker is only meaningful in the styled .xlsx - show it as (…) here
-st.dataframe(rm.strip_grey(view), use_container_width=True, hide_index=True)
+# the grey marker (~) is only meaningful in the styled .xlsx - show it as (…) here
+preview = view.replace(r"^~(.+)$", r"(\1)", regex=True)
+st.dataframe(preview, use_container_width=True, hide_index=True)
 st.caption(
     f"Showing {len(view):,} of {total:,} students.  "
     "Progress key: ✓ = passed, ✗ = still to pass.  "
