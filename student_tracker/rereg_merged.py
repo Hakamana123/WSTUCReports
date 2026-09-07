@@ -50,6 +50,7 @@ TEMPLATE_COL = "Messaging Template"
 WITHDRAWAL_COL = "Withdrawal Flag"
 _FAIL_GRADES = {"F", "FNS"}
 _WITHDRAW_TEXT = "ADVISE WITHDRAWAL"
+_SRC_WITHDRAW = "mid-semester withdrawal (failed Blocks 1-2)"
 
 
 def _failed_earlier_blocks(row: pd.Series, from_block: int) -> bool:
@@ -364,9 +365,18 @@ def advise_student_merged(
     # Blocks <from_block>..4 are actually registered now.
     base = rs.base_session(session)
     from_block = rs.target_block(session)
-    withdraw = _failed_earlier_blocks(row, from_block)
-    if withdraw:
+
+    # Mid-semester withdrawal: failed every block completed so far this session
+    # -> no subject advice, just flag the student for the coach.
+    if _failed_earlier_blocks(row, from_block):
         out[WITHDRAWAL_COL] = _WITHDRAW_TEXT
+        out[REASON_COL] = (
+            f"** {_WITHDRAW_TEXT} ** - failed Block(s) 1-{from_block - 1} this session. "
+            f"Drop Block {from_block}-4 registrations; restart next semester as a "
+            "commencing student."
+        )
+        out[SOURCE_COL] = _SRC_WITHDRAW
+        return out
 
     # 2. Grant's calculator - only for the sessions it has offering patterns for.
     if rs.uses_calculator(session):
@@ -448,11 +458,6 @@ def advise_student_merged(
     nothing = not named and not prep_now and not prep_summer
 
     bits: list[str] = []
-    if withdraw:
-        bits.append(
-            f"** {_WITHDRAW_TEXT} ** - failed Block(s) 1-{from_block - 1} this session; "
-            "advise the student to withdraw and restart next session"
-        )
     if from_block > 1:
         bits.append(f"Advising from Block {from_block} - register Blocks {from_block}-4 only")
     if capped and not nothing:
