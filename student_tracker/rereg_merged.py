@@ -427,15 +427,31 @@ def advise_student_merged(
     # Part-way target: only Blocks >= from_block are registered now. Force each
     # remaining block to hold its own outstanding subject (the calculator
     # sometimes leaves a backlog subject unplaced), then keep the earlier
-    # blocks displayed - the subjects that belong there.
+    # blocks displayed - the subjects that belong there. For a Conditional
+    # Enrolment student the 30cp cap still binds: the in-progress Blocks
+    # 1..from_block-1 already eat into it, so only fill a remaining block that
+    # _ce_fill left empty while there is room left (an overwrite of an existing
+    # pick is credit-neutral). Anything skipped falls through to "still to pass".
     prog_subj = calc._ref().get(program, {}).get("subjects", {})
     if from_block > 1:
+        cp_used = 0
+        if capped:
+            cp_used = _CP_MODULAR * sum(1 for b in kept if b)
+            cp_used += _CP_PREP * len(_split_prep(prep_now))
         for bi in range(from_block - 1, 4):
-            for pos in (bi + 1, bi + 5):
-                code = prog_subj.get(str(pos))
-                if code and calc._is_outstanding(row.get(f"Subject {pos} Status")):
-                    kept[bi] = code
-                    break
+            forced = next(
+                (prog_subj[str(pos)] for pos in (bi + 1, bi + 5)
+                 if prog_subj.get(str(pos))
+                 and calc._is_outstanding(row.get(f"Subject {pos} Status"))),
+                None,
+            )
+            if forced is None:
+                continue
+            if capped and not kept[bi]:
+                if cp_used + _CP_MODULAR > CE_CAP_CP:
+                    continue  # cap reached - leave this block empty
+                cp_used += _CP_MODULAR
+            kept[bi] = forced
         elec_now = kept.count("+1 elective")
     named_all = [(i + 1, b) for i, b in enumerate(kept) if b]
     if from_block > 1:
