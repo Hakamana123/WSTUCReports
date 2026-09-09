@@ -50,7 +50,7 @@ TEMPLATE_COL = "Messaging Template"
 WITHDRAWAL_COL = "Withdrawal Flag"
 _FAIL_GRADES = {"F", "FNS"}
 _WITHDRAW_TEXT = "ADVISE WITHDRAWAL"
-_SRC_WITHDRAW = "mid-semester withdrawal (failed Blocks 1-2)"
+_SRC_WITHDRAW = "mid-semester withdrawal (commencing student, failed Blocks 1-2)"
 
 
 def _failed_earlier_blocks(row: pd.Series, from_block: int) -> bool:
@@ -60,6 +60,14 @@ def _failed_earlier_blocks(row: pd.Series, from_block: int) -> bool:
         return False
     grades = [str(row.get(f"Block {b} Result", "") or "").strip().upper() for b in range(1, from_block)]
     return bool(grades) and all(g in _FAIL_GRADES for g in grades)
+
+
+def _commenced_this_session(row: pd.Series, base: str) -> bool:
+    """True when the student started their course in the session being advised
+    for. The mid-semester withdrawal rule (Grant, 2026-09-09) is for commencing
+    students only - a continuing student who fails two blocks in a row is
+    advised to re-take, not withdraw."""
+    return calc.start_semester(row.get("COMMENCEMENT_PERIOD")) == base
 
 # Target sessions the page offers, in cycle order. Grant's calculator has
 # offering patterns for 26 AUT + 25 SUM; every other target runs the v2
@@ -366,13 +374,15 @@ def advise_student_merged(
     base = rs.base_session(session)
     from_block = rs.target_block(session)
 
-    # Mid-semester withdrawal: failed every block completed so far this session
-    # -> no subject advice, just flag the student for the coach.
-    if _failed_earlier_blocks(row, from_block):
+    # Mid-semester withdrawal (Stage 1): a *commencing* student who failed every
+    # block completed so far this session -> no subject advice, just flag them
+    # for the coach. A continuing student who fails two blocks in a row is
+    # advised to re-take (the normal engine below), not withdraw.
+    if _failed_earlier_blocks(row, from_block) and _commenced_this_session(row, base):
         out[WITHDRAWAL_COL] = _WITHDRAW_TEXT
         out[REASON_COL] = (
-            f"** {_WITHDRAW_TEXT} ** - failed Block(s) 1-{from_block - 1} this session. "
-            f"Drop Block {from_block}-4 registrations; restart next semester as a "
+            f"** {_WITHDRAW_TEXT} ** - commencing student, failed Block(s) 1-{from_block - 1} "
+            f"this session. Drop Block {from_block}-4 registrations; restart next semester as a "
             "commencing student."
         )
         out[SOURCE_COL] = _SRC_WITHDRAW
