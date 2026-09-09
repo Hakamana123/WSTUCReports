@@ -34,6 +34,8 @@ plus the readable 'Coach View' sheet from v2.
 
 from __future__ import annotations
 
+import re
+
 import pandas as pd
 
 from student_tracker import rereg_advice as v2
@@ -586,16 +588,36 @@ COACH_VIEW_SHEET = v2.COACH_VIEW_SHEET
 SHEET_NAME = v2.SHEET_NAME
 
 
+def _style_advice_sheet(ws) -> None:
+    """Apply the two bits of styling the advice output uses to one worksheet:
+    an advice-block cell prefixed with the grey marker becomes grey italic text
+    (for-reference, not registered) with the marker stripped, and a row flagged
+    ``ADVISE WITHDRAWAL`` gets its flag + reason cells in red bold."""
+    from openpyxl.styles import Font
+
+    grey_font = Font(color="808080", italic=True)
+    red_font = Font(color="C00000", bold=True)
+    header = list(next(ws.iter_rows(max_row=1, values_only=True)))
+    block_cols = {i for i, c in enumerate(header, 1) if c in ADVICE_COLS[1:]}
+    flag_col = next((i for i, c in enumerate(header, 1) if c == WITHDRAWAL_COL), None)
+    red_cols = {i for i, c in enumerate(header, 1) if c in (WITHDRAWAL_COL, REASON_COL)}
+    for rowcells in ws.iter_rows(min_row=2):
+        flagged = flag_col and str(rowcells[flag_col - 1].value or "").strip() == _WITHDRAW_TEXT
+        for cell in rowcells:
+            if cell.column in block_cols and isinstance(cell.value, str) and cell.value.startswith(_GREY):
+                cell.value = cell.value[len(_GREY):]
+                cell.font = grey_font
+            elif flagged and cell.column in red_cols:
+                cell.font = red_font
+
+
 def to_workbook_bytes(df: pd.DataFrame, coach_view: pd.DataFrame | None = None) -> bytes:
     """Same as v2's, plus two bits of styling: an advice-block cell prefixed
     with the grey marker is written as grey italic text (for-reference, not
     registered), and a row flagged ``ADVISE WITHDRAWAL`` gets its flag and
     reason cells in red bold."""
     import io
-    from openpyxl.styles import Font
 
-    grey_font = Font(color="808080", italic=True)
-    red_font = Font(color="C00000", bold=True)
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         sheets = []
@@ -606,20 +628,83 @@ def to_workbook_bytes(df: pd.DataFrame, coach_view: pd.DataFrame | None = None) 
         sheets.append(SHEET_NAME)
 
         for name in sheets:
-            ws = writer.sheets[name]
-            header = list(next(ws.iter_rows(max_row=1, values_only=True)))
-            block_cols = {i for i, c in enumerate(header, 1) if c in ADVICE_COLS[1:]}
-            flag_col = next((i for i, c in enumerate(header, 1) if c == WITHDRAWAL_COL), None)
-            red_cols = {i for i, c in enumerate(header, 1) if c in (WITHDRAWAL_COL, REASON_COL)}
-            for rowcells in ws.iter_rows(min_row=2):
-                flagged = flag_col and str(rowcells[flag_col - 1].value or "").strip() == _WITHDRAW_TEXT
-                for cell in rowcells:
-                    if cell.column in block_cols and isinstance(cell.value, str) and cell.value.startswith(_GREY):
-                        cell.value = cell.value[len(_GREY):]
-                        cell.font = grey_font
-                    elif flagged and cell.column in red_cols:
-                        cell.font = red_font
+            _style_advice_sheet(writer.sheets[name])
     return buffer.getvalue()
+
+
+# --------------------------------------------------------------------------- #
+# Split the Coach View: one file per success coach, one tab per template       #
+# --------------------------------------------------------------------------- #
+COACH_COL = "Coach"
+_NO_COACH = "(no coach)"
+_NO_TEMPLATE = "(no template)"
+_BAD_SHEET_CHARS = re.compile(r"[\[\]:*?/\\]")
+
+
+def _safe_filename(name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_-]+", "_", str(name)).strip("_") or "unnamed"
+
+
+def _safe_sheet_name(name: str) -> str:
+    return _BAD_SHEET_CHARS.sub("_", str(name)).strip()[:31] or "Sheet"
+
+
+def split_coach_view_by_coach(coach_view: pd.DataFrame) -> dict[str, bytes]:
+    """One ``.xlsx`` per success coach (the ``Coach`` column), and inside each
+    one worksheet per ``Messaging Template`` the coach actually has students on.
+
+    Coach View columns only, styled like the main workbook. A blank coach lands
+    in a ``no_coach.xlsx`` file; a blank template in a ``(no template)`` sheet,
+    so no student is silently dropped. Returns ``{filename: xlsx_bytes}``.
+    """
+    import io
+
+    if COACH_COL not in coach_view.columns:
+        raise ValueError(f"No '{COACH_COL}' column in the Coach View — nothing to split by.")
+
+    cv = coach_view.copy()
+    cv["_coach"] = cv[COACH_COL].fillna("").astype(str).str.strip().replace("", _NO_COACH)
+    if TEMPLATE_COL in cv.columns:
+        cv["_tmpl"] = cv[TEMPLATE_COL].fillna("").astype(str).str.strip().replace("", _NO_TEMPLATE)
+    else:
+        cv["_tmpl"] = _NO_TEMPLATE
+
+    out: dict[str, bytes] = {}
+    used_files: dict[str, int] = {}
+    for coach, group in cv.groupby("_coach", sort=True):
+        fname = _safe_filename(coach)
+        if fname in used_files:
+            used_files[fname] += 1
+            fname = f"{fname}_{used_files[fname]}"
+        else:
+            used_files[fname] = 1
+
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            used_sheets: set[str] = set()
+            for tmpl, sub in group.groupby("_tmpl", sort=True):
+                sheet = _safe_sheet_name(tmpl)
+                base, n = sheet, 1
+                while sheet.lower() in used_sheets:
+                    n += 1
+                    sheet = f"{base[:28]}_{n}"
+                used_sheets.add(sheet.lower())
+                sub.drop(columns=["_coach", "_tmpl"]).to_excel(writer, sheet_name=sheet, index=False)
+                _style_advice_sheet(writer.sheets[sheet])
+        out[f"{fname}.xlsx"] = buffer.getvalue()
+    return out
+
+
+def split_coach_view_zip_bytes(coach_view: pd.DataFrame) -> bytes:
+    """``split_coach_view_by_coach`` packed into a single ``.zip``."""
+    import io
+    import zipfile
+
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, data in sorted(split_coach_view_by_coach(coach_view).items()):
+            zf.writestr(name, data)
+    return zip_buf.getvalue()
 
 
 def read_summer_offering(source) -> set[str]:

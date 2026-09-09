@@ -177,3 +177,26 @@ st.download_button(
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     type="primary",
 )
+
+# --- split for distribution ---------------------------------------------------
+st.divider()
+if rm.COACH_COL not in coach_view.columns:
+    st.caption(
+        f"No '{rm.COACH_COL}' column in this file — can't split the Coach View by "
+        "success coach."
+    )
+else:
+    coaches = coach_view[rm.COACH_COL].fillna("").astype(str).str.strip()
+    n_files = coaches.replace("", "(no coach)").nunique()
+    n_blank = int((coaches == "").sum())
+    st.caption(
+        f"**Split for distribution** — one Coach View workbook per success coach "
+        f"({n_files} file(s)), with a tab per Messaging Template inside each."
+        + (f"  {n_blank} student(s) with no coach go into a `no_coach.xlsx` file." if n_blank else "")
+    )
+    st.download_button(
+        "Download Coach View split by coach (.zip)",
+        rm.split_coach_view_zip_bytes(coach_view),
+        f"reregistration_advice_{session.replace(' ', '_')}_by_coach.zip",
+        "application/zip",
+    )
