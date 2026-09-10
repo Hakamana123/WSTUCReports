@@ -191,7 +191,8 @@ else:
     n_blank = int((coaches == "").sum())
     st.caption(
         f"**Split for distribution** — one Coach View workbook per success coach "
-        f"({n_files} file(s)), with a tab per Messaging Template inside each."
+        f"({n_files} file(s)), with a tab per Messaging Template inside each. "
+        f"Advice columns show the subject name beside each code."
         + (f"  {n_blank} student(s) with no coach go into a `no_coach.xlsx` file." if n_blank else "")
     )
     st.download_button(

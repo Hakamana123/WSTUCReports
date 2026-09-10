@@ -34,7 +34,9 @@ plus the readable 'Coach View' sheet from v2.
 
 from __future__ import annotations
 
+import json
 import re
+from pathlib import Path
 
 import pandas as pd
 
@@ -639,6 +641,45 @@ COACH_COL = "Coach"
 _NO_COACH = "(no coach)"
 _NO_TEMPLATE = "(no template)"
 _BAD_SHEET_CHARS = re.compile(r"[\[\]:*?/\\]")
+_SUBJECT_CODE_RE = re.compile(r"\b[A-Z]{4}\d{4}\b")
+_SUBJECT_NAMES_PATH = Path(__file__).with_name("subject_names.json")
+
+
+def load_subject_names(path: Path | None = None) -> dict[str, str]:
+    """``{subject_code: subject_name}`` from ``subject_names.json`` (``_comment``
+    key dropped). Empty dict if the file is missing."""
+    try:
+        raw = json.loads((path or _SUBJECT_NAMES_PATH).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    return {k: v for k, v in raw.items() if not k.startswith("_")}
+
+
+def _name_subject_codes(text: str, names: dict[str, str]) -> str:
+    """Rewrite every ``ABCD1234`` token in ``text`` to ``ABCD1234 — Name``.
+
+    Leaves the grey marker prefix, ``+N elective`` placeholders, the ``and`` /
+    ``,`` joiners and anything not in ``names`` untouched.
+    """
+    if not text or not names:
+        return text
+    return _SUBJECT_CODE_RE.sub(
+        lambda m: f"{m.group(0)} — {names[m.group(0)]}" if m.group(0) in names else m.group(0),
+        text,
+    )
+
+
+def _add_subject_names(cv: pd.DataFrame, names: dict[str, str] | None = None) -> pd.DataFrame:
+    """Copy of ``cv`` with subject names appended to the codes in the five advice
+    columns. No-op if the name list is empty."""
+    names = load_subject_names() if names is None else names
+    cv = cv.copy()
+    if not names:
+        return cv
+    for col in ADVICE_COLS:
+        if col in cv.columns:
+            cv[col] = cv[col].map(lambda v: _name_subject_codes(v, names) if isinstance(v, str) else v)
+    return cv
 
 
 def _safe_filename(name: str) -> str:
@@ -655,14 +696,15 @@ def split_coach_view_by_coach(coach_view: pd.DataFrame) -> dict[str, bytes]:
 
     Coach View columns only, styled like the main workbook. A blank coach lands
     in a ``no_coach.xlsx`` file; a blank template in a ``(no template)`` sheet,
-    so no student is silently dropped. Returns ``{filename: xlsx_bytes}``.
+    so no student is silently dropped. The advice columns carry the subject name
+    beside each code (from ``subject_names.json``). Returns ``{filename: xlsx_bytes}``.
     """
     import io
 
     if COACH_COL not in coach_view.columns:
         raise ValueError(f"No '{COACH_COL}' column in the Coach View — nothing to split by.")
 
-    cv = coach_view.copy()
+    cv = _add_subject_names(coach_view)
     cv["_coach"] = cv[COACH_COL].fillna("").astype(str).str.strip().replace("", _NO_COACH)
     if TEMPLATE_COL in cv.columns:
         cv["_tmpl"] = cv[TEMPLATE_COL].fillna("").astype(str).str.strip().replace("", _NO_TEMPLATE)
