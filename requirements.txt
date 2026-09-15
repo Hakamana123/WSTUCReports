@@ -1,7 +1,9 @@
-streamlit
-xlrd
-openpyxl
-pyyaml
-plotly
-pdfplumber
-pandas
+# Pinned so Streamlit Cloud rebuilds are reproducible — an unpinned deploy
+# silently picks up new majors (e.g. pandas 3) on any redeploy.
+streamlit==1.63.0
+xlrd==2.0.2
+openpyxl==3.1.5
+pyyaml==6.0.3
+plotly==7.0.0
+pdfplumber==0.11.10
+pandas==3.0.5
