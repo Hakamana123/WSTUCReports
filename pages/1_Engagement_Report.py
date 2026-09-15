@@ -1,6 +1,6 @@
 """
-Maroon Red Student Engagement Report Builder
-============================================
+WSUTC Student Engagement Report Builder
+========================================
 Streamlit app for generating weekly engagement reports for GEDU0016 and GEDU0017
 (or any single Blackboard subject following the same export format).
 
@@ -2271,8 +2271,8 @@ def build_class_workbook(subject_code, students, login, hits, seg, current_week,
 # ===========================================================================
 # STREAMLIT UI
 # ===========================================================================
-st.set_page_config(page_title='Maroon Red Engagement Report', layout='wide', page_icon='\U0001f4ca')
-st.title('Maroon Red Student Engagement Report')
+st.set_page_config(page_title='WSUTC Engagement Report', layout='wide', page_icon='\U0001f4ca')
+st.title('WSUTC Student Engagement Report')
 st.caption('Upload Blackboard exports for one subject. Generates an Excel workbook with engagement segmentation.')
 
 with st.expander('Instructions', expanded=False):

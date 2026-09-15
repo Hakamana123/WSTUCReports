@@ -1,7 +1,7 @@
 """
 Engagement Trend
 ================
-Companion page for the Maroon Red Engagement Report Builder.
+Companion page for the WSUTC Engagement Report Builder.
 
 Reads the "Summary" tab from engagement report workbooks you've already
 generated (aggregate segment counts only - no student names, IDs, or emails)
