@@ -66,6 +66,17 @@ def _failed_earlier_blocks(row: pd.Series, from_block: int) -> bool:
     return bool(grades) and all(g in _FAIL_GRADES for g in grades)
 
 
+def _enrolled_earlier_blocks(row: pd.Series, from_block: int) -> dict[str, int]:
+    """``{subject_code: block}`` for subjects the student is already enrolled in
+    this session, in the blocks before ``from_block`` (the file's ``Block N code``
+    columns)."""
+    out: dict[str, int] = {}
+    for b in range(1, from_block):
+        for code in _SUBJECT_CODE_RE.findall(str(row.get(f"Block {b} code", "") or "")):
+            out.setdefault(code, b)
+    return out
+
+
 def _commenced_this_session(row: pd.Series, base: str) -> bool:
     """True when the student started their course in the session being advised
     for. The mid-semester withdrawal rule (Grant, 2026-09-09) is for commencing
@@ -449,6 +460,11 @@ def advise_student_merged(
     # _ce_fill left empty while there is room left (an overwrite of an existing
     # pick is credit-neutral). Anything skipped falls through to "still to pass".
     prog_subj = calc.subjects_for(program, session)
+    # A subject already being taken in Blocks 1..from_block-1 this session is
+    # never advised again in a later block (e.g. a transition session where the
+    # same subject runs in two blocks).
+    taking = _enrolled_earlier_blocks(row, from_block)
+    in_progress: list[tuple[int, str]] = []
     if from_block > 1:
         cp_used = 0
         if capped:
@@ -458,6 +474,7 @@ def advise_student_merged(
             forced = next(
                 (prog_subj[str(pos)] for pos in (bi + 1, bi + 5)
                  if prog_subj.get(str(pos))
+                 and prog_subj[str(pos)] not in taking
                  and calc._is_outstanding(srow.get(f"Subject {pos} Status"))),
                 None,
             )
@@ -468,6 +485,10 @@ def advise_student_merged(
                     continue  # cap reached - leave this block empty
                 cp_used += _CP_MODULAR
             kept[bi] = forced
+        for bi in range(from_block - 1, 4):
+            if kept[bi] in taking:
+                in_progress.append((taking[kept[bi]], kept[bi]))
+                kept[bi] = ""
         elec_now = kept.count("+1 elective")
     named_all = [(i + 1, b) for i, b in enumerate(kept) if b]
     if from_block > 1:
@@ -502,6 +523,11 @@ def advise_student_merged(
         bits.append(f"Prep in Summer: {prep_summer}")
     if named:
         bits.append("Register: " + ", ".join(f"Block {n} {b}" for n, b in named))
+    if in_progress:
+        bits.append(
+            "Already enrolled this session (not re-advised): "
+            + ", ".join(f"{code} (Block {blk})" for blk, code in sorted(in_progress))
+        )
     if partway_carry:
         bits.append(
             f"Blocks 1-{from_block - 1} already in progress; still owes "
@@ -514,7 +540,8 @@ def advise_student_merged(
     # the calculator only plans four blocks, so a coach needs the rest spelled
     # out (failed subjects that didn't fit, a second prep, unplaced electives).
     prog_ref = calc._ref().get(program, {})
-    accounted = {b for _, b in named} | set(deferred) | set(partway_carry) | {prep_now, prep_summer}
+    accounted = ({b for _, b in named} | set(deferred) | set(partway_carry)
+                 | {code for _, code in in_progress} | {prep_now, prep_summer})
     still: list[str] = []
     for pos in range(1, 9):
         code = prog_subj.get(str(pos))
@@ -532,9 +559,10 @@ def advise_student_merged(
         still.append(f"+{elec_more} elective")
     if still:
         bits.append("Still to pass (later session): " + ", ".join(still))
-    if nothing and c.get("total_needed", 0) > 0:
+    not_offered = c.get("total_needed", 0) - len(in_progress)
+    if nothing and not_offered > 0:
         bits.append(
-            f"Nothing to register in {session} - {c['total_needed']} subject(s) "
+            f"Nothing to register in {session} - {not_offered} subject(s) "
             "still to pass are not offered this session"
         )
     elif nothing:
