@@ -110,7 +110,7 @@ def _electives_to_b34(blocks: list[str]) -> list[str]:
     return blocks
 
 
-def _positional_fallback(row: pd.Series, program: str, is_nursing: bool) -> tuple[list[str], str]:
+def _positional_fallback(row: pd.Series, program: str, is_nursing: bool, session: str) -> tuple[list[str], str]:
     """Advice for a fail pattern Grant's calculator has no row for.
 
     Diploma: each outstanding subject goes in the block it runs in (position P
@@ -121,7 +121,7 @@ def _positional_fallback(row: pd.Series, program: str, is_nursing: bool) -> tupl
     Blocks 3 & 4 only. Prep 1 before prep 2.
     """
     prog_ref = calc._ref().get(program, {})
-    subj = prog_ref.get("subjects", {})
+    subj = calc.subjects_for(program, session)
     n_pos = 8 if is_nursing else 6
 
     out_positions = [
@@ -209,10 +209,10 @@ def _ce_fill(
     return blocks, modular_deferred, " and ".join(prep_now), " and ".join(prep_summer), electives_now
 
 
-def _is_owed(row: pd.Series, program: str, code: str) -> bool:
+def _is_owed(row: pd.Series, program: str, code: str, session: str) -> bool:
     """Is ``code`` a subject / prep this student still needs to pass?"""
     ref = calc._ref().get(program, {})
-    for pos, c in ref.get("subjects", {}).items():
+    for pos, c in calc.subjects_for(program, session).items():
         if c == code:
             return calc._is_outstanding(row.get(f"Subject {pos} Status"))
     if code == ref.get("prep1"):
@@ -246,7 +246,7 @@ def _summer_advice(
     cap.
     """
     prog_ref = calc._ref().get(program, {})
-    subj = prog_ref.get("subjects", {})
+    subj = calc.subjects_for(program, session)
     capped = outcome in v2.STANDING_MAX_BLOCKS
     cp_cap = CE_CAP_CP if capped else 10 ** 6
     assumed = summer_subjects is None
@@ -351,6 +351,8 @@ def advise_student_merged(
     is_nursing = program in calc.NURSING_PROGRAMS
     in_ref = bool(calc._ref().get(program, {}).get("subjects"))
     principle, template = calc.classify(row, is_nursing)
+    # statuses in the position order the program runs in for this session
+    srow = calc.remap_statuses(row, program, session, slot_map)
 
     out = {c: "" for c in ADVICE_COLS}
     out[COMPLETION_COL] = ""
@@ -370,7 +372,7 @@ def advise_student_merged(
     #     (or just Subjects 1 & 2 when no list has been uploaded).
     tgt = rs.parse_target(session)
     if tgt and tgt[1] == "SUM":
-        return _summer_advice(out, row, program, is_nursing, session, outcome, summer_subjects)
+        return _summer_advice(out, srow, program, is_nursing, session, outcome, summer_subjects)
 
     # A part-way target ("26 AUT Block 3") uses the whole-session engines - the
     # picks are already locked to the block each subject runs in - and only
@@ -394,7 +396,7 @@ def advise_student_merged(
 
     # 2. Grant's calculator - only for the sessions it has offering patterns for.
     if rs.uses_calculator(session):
-        c = calc.advise_row(row, base)
+        c = calc.advise_row(srow, base)
     else:
         c = {"ok": False, "miss": f"{session} not covered by the calculator"}
 
@@ -410,7 +412,7 @@ def advise_student_merged(
     elif rs.uses_calculator(session) and in_ref:
         # 3b. Calculator covers this session but not this fail pattern - place
         #     each outstanding subject in its own block directly.
-        positioned, prep_pick = _positional_fallback(row, program, is_nursing)
+        positioned, prep_pick = _positional_fallback(srow, program, is_nursing, session)
         completion = ""
         source_base = _SRC_POSITIONAL
     else:
@@ -446,7 +448,7 @@ def advise_student_merged(
     # 1..from_block-1 already eat into it, so only fill a remaining block that
     # _ce_fill left empty while there is room left (an overwrite of an existing
     # pick is credit-neutral). Anything skipped falls through to "still to pass".
-    prog_subj = calc._ref().get(program, {}).get("subjects", {})
+    prog_subj = calc.subjects_for(program, session)
     if from_block > 1:
         cp_used = 0
         if capped:
@@ -456,7 +458,7 @@ def advise_student_merged(
             forced = next(
                 (prog_subj[str(pos)] for pos in (bi + 1, bi + 5)
                  if prog_subj.get(str(pos))
-                 and calc._is_outstanding(row.get(f"Subject {pos} Status"))),
+                 and calc._is_outstanding(srow.get(f"Subject {pos} Status"))),
                 None,
             )
             if forced is None:
@@ -472,7 +474,7 @@ def advise_student_merged(
         named = [(n, b) for n, b in named_all if n >= from_block]
         partway_carry = [
             b for n, b in named_all
-            if n < from_block and b != "+1 elective" and _is_owed(row, program, b)
+            if n < from_block and b != "+1 elective" and _is_owed(srow, program, b, session)
         ]
     else:
         named = named_all
@@ -515,8 +517,8 @@ def advise_student_merged(
     accounted = {b for _, b in named} | set(deferred) | set(partway_carry) | {prep_now, prep_summer}
     still: list[str] = []
     for pos in range(1, 9):
-        code = prog_ref.get("subjects", {}).get(str(pos))
-        if code and calc._is_outstanding(row.get(f"Subject {pos} Status")) and code not in accounted:
+        code = prog_subj.get(str(pos))
+        if code and calc._is_outstanding(srow.get(f"Subject {pos} Status")) and code not in accounted:
             still.append(code)
     for pslot, pkey in (("Prep 1 Status", "prep1"), ("Prep 2 Status", "prep2")):
         pcode = prog_ref.get(pkey)
@@ -540,7 +542,7 @@ def advise_student_merged(
 
     # Earliest completion: Grant's own date for 26 AUT; a rough projection
     # (this session + ceil(work left / load) more sessions) for everything else.
-    mod_out = sum(calc._is_outstanding(row.get(f"Subject {i} Status")) for i in range(1, 9))
+    mod_out = sum(calc._is_outstanding(srow.get(f"Subject {i} Status")) for i in range(1, 9))
     prep_out = sum(calc._is_outstanding(row.get(f"Prep {i} Status")) for i in (1, 2))
     sched_mod = sum(1 for _, b in named if b != "+1 elective")
     load = 3 if capped else 4

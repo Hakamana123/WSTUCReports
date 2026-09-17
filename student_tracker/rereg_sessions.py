@@ -80,6 +80,12 @@ def _slot_index(year: int, sess: str) -> int:
     return year * 3 + SESSION_ORDER.index(sess)
 
 
+def session_index(text) -> int | None:
+    """Orderable index for ``'26 SPR'`` / ``'26 SPR Block 3'``; ``None`` if unreadable."""
+    tgt = parse_target(text)
+    return _slot_index(tgt[0], tgt[1]) if tgt else None
+
+
 def _blocks_completed(commencement: tuple[int, str, int], target: tuple[int, str, int]) -> int:
     """Teaching blocks the cohort works through from ``commencement`` up to the
     point ``target`` begins (Autumn/Spring only)."""

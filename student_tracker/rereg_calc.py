@@ -22,6 +22,11 @@ Flow per student:  program + planning session → offering pattern (REF)
                    (pattern, bitmask) → advice by position (Manual/Nursing Text)
                    positions → subject codes (REF)
 
+A program's subject order can change from a given session on (REF
+``from_session``: 7191 and 7197 from 26 SPR). For those sessions the positions
+resolve to the new codes, the student's statuses are re-ordered to match
+(``remap_statuses``), and the entry's own offering pattern is used.
+
 Both of Josiah's 2026-09-02 rules are already baked into Manual/Nursing Text:
 positions 1 & 2 always run in Summer, and a clash between position N and N+4
 (same timetable slot) is resolved in favour of the cohort subject with the
@@ -243,17 +248,73 @@ def classify(row: pd.Series, is_nursing: bool) -> tuple[str, str]:
 # --------------------------------------------------------------------------- #
 # Advice                                                                      #
 # --------------------------------------------------------------------------- #
+def _order_change(program: str, session: str) -> tuple[str, dict] | None:
+    """``(start_session, change)`` for the latest ``from_session`` entry in REF
+    that has taken effect by ``session`` - a program whose subject order was
+    changed from that session on. ``None`` if the original order still holds."""
+    changes = _ref().get(str(program), {}).get("from_session", {})
+    target = rs.session_index(session)
+    if not changes or target is None:
+        return None
+    live = [(rs.session_index(start), start) for start in changes]
+    live = [(i, start) for i, start in live if i is not None and i <= target]
+    if not live:
+        return None
+    start = max(live)[1]
+    return start, changes[start]
+
+
+def subjects_for(program: str, session: str) -> dict:
+    """``{position: subject_code}`` for ``program`` as it runs in ``session``."""
+    change = _order_change(program, session)
+    if change and "subjects" in change[1]:
+        return change[1]["subjects"]
+    return _ref().get(str(program), {}).get("subjects", {})
+
+
+def remap_statuses(row: pd.Series, program: str, session: str, slot_map: dict) -> pd.Series:
+    """Re-order a student's ``Subject N Status`` cells into the position order
+    ``program`` runs in for ``session``.
+
+    Each position is matched to the file's own column for that subject by code
+    (``slot_map``, derived from classmates' "CODE Completed" cells), so this is
+    right whichever order the progression file itself uses. A code the file
+    doesn't reveal falls back to its position in the original REF order.
+    Returns ``row`` untouched when the program's order hasn't changed.
+    """
+    if not _order_change(program, session):
+        return row
+    file_slots = next(
+        (slots for key, slots in slot_map.items() if str(key).split(".")[0] == program), {}
+    )
+    code_to_col = {
+        code: label for label, code in file_slots.items() if label.startswith("Subject ")
+    }
+    base = {code: f"Subject {pos} Status" for pos, code in _ref()[program]["subjects"].items()}
+
+    out = row.copy()
+    for pos, code in subjects_for(program, session).items():
+        src = code_to_col.get(code) or base.get(code)
+        if src:
+            out[f"Subject {pos} Status"] = row.get(src)
+    return out
+
+
 def pattern_for(program: str, planning_session: str) -> tuple[str, str] | tuple[None, str]:
     """``(pattern_string, carried_from)``.
 
     ``carried_from`` is ``""`` when the session has its own pattern in the REF
     data, or the base session ("26 AUT" / "25 SUM") when the pattern is being
-    assumed to carry forward unchanged. ``(None, reason)`` if there's nothing
-    to use.
+    assumed to carry forward unchanged - or the session a changed subject order
+    took effect from. ``(None, reason)`` if there's nothing to use.
     """
     prog = _ref().get(str(program))
     if not prog:
         return None, f"program {program} not in calculator"
+    change = _order_change(program, planning_session)
+    tgt = rs.parse_target(planning_session)
+    if change and "pattern" in change[1] and tgt and tgt[1] != "SUM":
+        return change[1]["pattern"], change[0]
     patterns = prog.get("patterns", {})
     key = PLANNING_SESSIONS.get(planning_session, planning_session)
     if key in patterns:
@@ -264,7 +325,7 @@ def pattern_for(program: str, planning_session: str) -> tuple[str, str] | tuple[
     return None, f"no offering pattern for program {program} / {planning_session}"
 
 
-def _resolve(token: str | None, program: str) -> str:
+def _resolve(token: str | None, program: str, session: str) -> str:
     """A Manual-Text position token -> a real cell value."""
     if not token:
         return NO_REGISTRATION
@@ -281,7 +342,7 @@ def _resolve(token: str | None, program: str) -> str:
         return prog.get("prep2", t)
     m = re.fullmatch(r"Subject (\d)", t)
     if m:
-        return prog.get("subjects", {}).get(m.group(1), t)
+        return subjects_for(program, session).get(m.group(1), t)
     return t
 
 
@@ -330,7 +391,7 @@ def advise_row(row: pd.Series, planning_session: str) -> dict:
         out["total_needed"] = 0
     tokens = [hit.get("prep"), hit.get("b1"), hit.get("b2"), hit.get("b3"), hit.get("b4")]
     for col, tok in zip(ADVICE_COLS, tokens):
-        out[col] = _resolve(tok, program)
+        out[col] = _resolve(tok, program, planning_session)
     # The calculator's Earliest Completion is anchored to Grant's source file;
     # it is only meaningful for the sessions he actually computed.
     out[COMPLETION_COL] = "" if carried_from else (hit.get("earliest_completion") or "")
