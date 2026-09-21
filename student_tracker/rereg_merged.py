@@ -783,9 +783,12 @@ def split_coach_view_by_coach(coach_view: pd.DataFrame) -> dict[str, bytes]:
 
     # Paused students go on their own tab per coach - the "are you studying with
     # us?" list - instead of being scattered across the template tabs with only a
-    # note at the tail of the reason text to tell them apart.
+    # note at the tail of the reason text to tell them apart. Commencing students
+    # are the exception: the Commencing tab keeps the whole intake, paused or not
+    # (their advice is still greyed and STUDY_PATH_STATUS shows on the row).
     if STUDY_PATH_COL in cv.columns:
-        cv.loc[cv[STUDY_PATH_COL].map(is_paused), "_tmpl"] = _PAUSED_TAB
+        paused = cv[STUDY_PATH_COL].map(is_paused) & cv["_tmpl"].ne("Commencing")
+        cv.loc[paused, "_tmpl"] = _PAUSED_TAB
 
     out: dict[str, bytes] = {}
     used_files: dict[str, int] = {}

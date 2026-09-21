@@ -147,8 +147,9 @@ no_outcome = int((coach_view[rm.STUDY_STATUS_COL] == rm.NO_OUTCOME).sum())
 if paused:
     st.caption(
         f"**{paused:,} paused** (Deferred / Leave of Absence) — still get subject "
-        "advice, but confirm they're returning first. They're on their own "
-        f"*{rm._PAUSED_TAB}* tab in the per-coach split."
+        "advice (greyed), but confirm they're returning first. In the per-coach "
+        f"split they're on their own *{rm._PAUSED_TAB}* tab, except commencing "
+        "students, who stay on the Commencing tab."
     )
 if no_outcome:
     st.warning(
@@ -224,7 +225,8 @@ else:
     st.caption(
         f"**Split for distribution** — one Coach View workbook per success coach "
         f"({n_files} file(s)), with a tab per Messaging Template inside each "
-        f"plus a *{rm._PAUSED_TAB}* tab for Deferred / Leave-of-Absence students. "
+        f"plus a *{rm._PAUSED_TAB}* tab for Deferred / Leave-of-Absence students "
+        f"(commencing students stay on the Commencing tab). "
         f"Advice columns show the subject name beside each code."
         + (f"  {n_blank} student(s) with no coach go into a `no_coach.xlsx` file." if n_blank else "")
     )
