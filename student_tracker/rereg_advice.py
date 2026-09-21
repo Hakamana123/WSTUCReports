@@ -423,7 +423,7 @@ def _status(row: pd.Series, is_outstanding=None, elective_count=None) -> tuple[s
 COACH_VIEW_COLUMNS = [
     "STUDENT_ID", "FIRST_NAME", "LAST_NAME", "PREFERRED_NAME",
     "INSTITUTION_EMAIL_ADDRESS", "Coach", "PROGRAM_CD", "COMMENCEMENT_PERIOD",
-    "Progression Outcome",
+    "STUDY_PATH_STATUS", "Progression Outcome",
 ]
 
 

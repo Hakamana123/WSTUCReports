@@ -116,6 +116,7 @@ except ValueError as exc:
     st.error(f"Couldn't read this file: {exc}")
     st.stop()
 
+dropped = int(df.attrs.get("duplicates_dropped", 0))
 result = rm.build_advice(df, session=session, summer_subjects=summer_subjects)
 coach_view = rm.build_coach_view(result)
 
@@ -137,6 +138,37 @@ c4.metric("Rule-tree fallback", f"{fallback:,}")
 c5.metric("Flagged for coach review", f"{flagged:,}")
 if excluded:
     st.caption(f"{excluded:,} student(s) excluded — no advice.")
+
+paused = (
+    int(coach_view[rm.STUDY_PATH_COL].map(rm.is_paused).sum())
+    if rm.STUDY_PATH_COL in coach_view.columns else 0
+)
+no_outcome = int((coach_view[rm.STUDY_STATUS_COL] == rm.NO_OUTCOME).sum())
+if paused:
+    st.caption(
+        f"**{paused:,} paused** (Deferred / Leave of Absence) — still get subject "
+        "advice, but confirm they're returning first. They're on their own "
+        f"*{rm._PAUSED_TAB}* tab in the per-coach split."
+    )
+if no_outcome:
+    st.warning(
+        f"{no_outcome:,} student(s) have **no Progression Outcome** in the file "
+        "but commenced before this session — they should have one. Shown as "
+        f"*{rm.NO_OUTCOME}* in Study Status; not assumed to be Good Standing."
+    )
+
+if dropped:
+    st.caption(
+        f"{dropped} exact duplicate row(s) dropped on load — same student, same "
+        "program, every column identical. Genuine second-program enrolments are kept."
+    )
+dual = int((coach_view[rm.OTHER_ENROL_COL].astype(str) != "").sum()) if rm.OTHER_ENROL_COL in coach_view.columns else 0
+if dual:
+    st.caption(
+        f"{dual} row(s) belong to students enrolled in a **second program** — see "
+        f"the *{rm.OTHER_ENROL_COL}* column. Two coaches may be advising the same "
+        "student, and one enrolment may never have been withdrawn."
+    )
 
 # --- preview (the Coach View sheet) --------------------------------------
 st.caption(
@@ -191,7 +223,8 @@ else:
     n_blank = int((coaches == "").sum())
     st.caption(
         f"**Split for distribution** — one Coach View workbook per success coach "
-        f"({n_files} file(s)), with a tab per Messaging Template inside each. "
+        f"({n_files} file(s)), with a tab per Messaging Template inside each "
+        f"plus a *{rm._PAUSED_TAB}* tab for Deferred / Leave-of-Absence students. "
         f"Advice columns show the subject name beside each code."
         + (f"  {n_blank} student(s) with no coach go into a `no_coach.xlsx` file." if n_blank else "")
     )
