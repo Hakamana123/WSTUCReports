@@ -62,6 +62,7 @@ OTHER_ENROL_COL = "Other Enrolment"
 STUDY_PATH_COL = "STUDY_PATH_STATUS"
 ACTIVE_STATUS = "Active Study Path"
 _PAUSED_TAB = "Paused - check enrolment"
+_COMMENCING_TAB = "Commencing"
 
 # Progression Outcome is blank for ~a quarter of a mid-semester file. A
 # commencing student legitimately has no decision yet; anyone older should have
@@ -787,7 +788,7 @@ def split_coach_view_by_coach(coach_view: pd.DataFrame) -> dict[str, bytes]:
     # are the exception: the Commencing tab keeps the whole intake, paused or not
     # (their advice is still greyed and STUDY_PATH_STATUS shows on the row).
     if STUDY_PATH_COL in cv.columns:
-        paused = cv[STUDY_PATH_COL].map(is_paused) & cv["_tmpl"].ne("Commencing")
+        paused = cv[STUDY_PATH_COL].map(is_paused) & cv["_tmpl"].ne(_COMMENCING_TAB)
         cv.loc[paused, "_tmpl"] = _PAUSED_TAB
 
     out: dict[str, bytes] = {}
@@ -803,7 +804,13 @@ def split_coach_view_by_coach(coach_view: pd.DataFrame) -> dict[str, bytes]:
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
             used_sheets: set[str] = set()
-            for tmpl, sub in group.groupby("_tmpl", sort=True):
+            tabs = dict(tuple(group.groupby("_tmpl")))
+            # Every coach file gets a Commencing tab, empty (headers only) if the
+            # coach has no commencing students, so the files all look the same.
+            if TEMPLATE_COL in cv.columns and _COMMENCING_TAB not in tabs:
+                tabs[_COMMENCING_TAB] = group.iloc[0:0]
+            for tmpl in sorted(tabs):
+                sub = tabs[tmpl]
                 sheet = _safe_sheet_name(tmpl)
                 base, n = sheet, 1
                 while sheet.lower() in used_sheets:
