@@ -52,6 +52,23 @@ SOURCE_COL = "Advice Source"
 PRINCIPLE_COL = "Rereg Principle"
 TEMPLATE_COL = "Messaging Template"
 WITHDRAWAL_COL = "Withdrawal Flag"
+STUDY_STATUS_COL = "Study Status"
+OTHER_ENROL_COL = "Other Enrolment"
+
+# Deferred / Leave of Absence are the "are you studying with us?" group:
+# enrolled on paper, paused in practice, so the subject advice on their row is
+# provisional until they confirm they're coming back. The raw STUDY_PATH_STATUS
+# column carries this straight from the extract - no relabelling needed.
+STUDY_PATH_COL = "STUDY_PATH_STATUS"
+ACTIVE_STATUS = "Active Study Path"
+_PAUSED_TAB = "Paused - check enrolment"
+
+# Progression Outcome is blank for ~a quarter of a mid-semester file. A
+# commencing student legitimately has no decision yet; anyone older should have
+# one, so they are called out for review rather than defaulted to Good Standing.
+NOT_ASSESSED = "Not yet assessed (commencing)"
+NOT_ASSESSED_PAUSED = "Not assessed (paused)"
+NO_OUTCOME = "No outcome recorded - review"
 _FAIL_GRADES = {"F", "FNS"}
 _WITHDRAW_TEXT = "ADVISE WITHDRAWAL"
 _SRC_WITHDRAW = "mid-semester withdrawal (commencing student, failed Blocks 1-2)"
@@ -241,6 +258,15 @@ _GREY = GREY_MARK
 def strip_grey(df: pd.DataFrame) -> pd.DataFrame:
     """A display copy with the grey marker turned into ``(brackets)``."""
     return df.replace(r"^~(.+)$", r"(\1)", regex=True)
+
+
+def _grey_cell(value) -> str:
+    """Mark one advice cell for-reference-only. Idempotent; leaves a blank and
+    the "no registration needed" sentinel alone - neither is a pick to action."""
+    text = "" if pd.isna(value) else str(value).strip()
+    if not text or text.startswith(GREY_MARK) or text == calc.NO_REGISTRATION:
+        return text
+    return GREY_MARK + text
 
 
 def _summer_advice(
@@ -615,7 +641,21 @@ def advise_student_merged(
 # --------------------------------------------------------------------------- #
 # Whole-file entry points                                                     #
 # --------------------------------------------------------------------------- #
-load_progression_file = v2.load_progression_file
+def load_progression_file(source) -> pd.DataFrame:
+    """v2's loader, with exact duplicate rows dropped.
+
+    A student listed twice under the SAME program with every column identical is
+    an extract artefact, not a dual enrolment: advising them twice double-counts
+    them and puts the same row on a coach's tab twice. Rows that differ anywhere
+    - a genuine second program - are kept, because those are two real study
+    paths needing separate advice.
+
+    The number dropped is recorded in ``df.attrs["duplicates_dropped"]``.
+    """
+    df = v2.load_progression_file(source)
+    deduped = df.drop_duplicates().reset_index(drop=True)
+    deduped.attrs["duplicates_dropped"] = len(df) - len(deduped)
+    return deduped
 COACH_VIEW_SHEET = v2.COACH_VIEW_SHEET
 SHEET_NAME = v2.SHEET_NAME
 
@@ -630,7 +670,7 @@ def _style_advice_sheet(ws) -> None:
     grey_font = Font(color="808080", italic=True)
     red_font = Font(color="C00000", bold=True)
     header = list(next(ws.iter_rows(max_row=1, values_only=True)))
-    block_cols = {i for i, c in enumerate(header, 1) if c in ADVICE_COLS[1:]}
+    block_cols = {i for i, c in enumerate(header, 1) if c in ADVICE_COLS}
     flag_col = next((i for i, c in enumerate(header, 1) if c == WITHDRAWAL_COL), None)
     red_cols = {i for i, c in enumerate(header, 1) if c in (WITHDRAWAL_COL, REASON_COL)}
     for rowcells in ws.iter_rows(min_row=2):
@@ -741,6 +781,12 @@ def split_coach_view_by_coach(coach_view: pd.DataFrame) -> dict[str, bytes]:
     else:
         cv["_tmpl"] = _NO_TEMPLATE
 
+    # Paused students go on their own tab per coach - the "are you studying with
+    # us?" list - instead of being scattered across the template tabs with only a
+    # note at the tail of the reason text to tell them apart.
+    if STUDY_PATH_COL in cv.columns:
+        cv.loc[cv[STUDY_PATH_COL].map(is_paused), "_tmpl"] = _PAUSED_TAB
+
     out: dict[str, bytes] = {}
     used_files: dict[str, int] = {}
     for coach, group in cv.groupby("_coach", sort=True):
@@ -816,7 +862,83 @@ def build_advice(
         r = advise_student_merged(row, slot_map, offerings, session, summer_subjects)
         for col in cols:
             out.at[idx, col] = r[col]
+
+    # A paused student's picks are provisional: what they WOULD take, not a
+    # registration to action, so they are greyed the same way an already-running
+    # block subject is. The subjects stay visible - a coach needs them for the
+    # "are you coming back?" conversation.
+    if STUDY_PATH_COL in out.columns:
+        paused = out[STUDY_PATH_COL].map(is_paused)
+        for col in ADVICE_COLS:
+            out.loc[paused, col] = out.loc[paused, col].map(_grey_cell)
     return out
+
+
+def _other_enrolments(advised: pd.DataFrame) -> list[str]:
+    """Per row: a note naming the student's OTHER enrolment(s), or ``""``.
+
+    After the loader drops exact duplicates, a student with more than one row is
+    genuinely in two programs - so a coach can see that someone else is advising
+    the same person, and that one of the two may simply never have been
+    withdrawn from.
+    """
+    if "STUDENT_ID" not in advised.columns:
+        return [""] * len(advised)
+
+    def col(name):
+        return (advised[name] if name in advised.columns
+                else pd.Series([""] * len(advised), index=advised.index))
+
+    rows = list(zip(advised["STUDENT_ID"], col("PROGRAM_CD"), col(COACH_COL)))
+    by_id: dict = {}
+    for i, (sid, _, _) in enumerate(rows):
+        by_id.setdefault(sid, []).append(i)
+
+    notes = []
+    for i, (sid, _, _) in enumerate(rows):
+        others = [j for j in by_id[sid] if j != i]
+        if not others:
+            notes.append("")
+            continue
+        bits = []
+        for j in others:
+            _, prog, coach = rows[j]
+            prog = "" if pd.isna(prog) else str(prog).strip()
+            coach = "" if pd.isna(coach) else str(coach).strip()
+            bits.append(f"program {prog}" + (f" ({coach})" if coach else "") if prog else (coach or "another program"))
+        notes.append("Also enrolled: " + "; ".join(bits))
+    return notes
+
+
+def is_paused(status) -> bool:
+    """True for a student who is enrolled but not currently studying (Deferred /
+    Leave of Absence), read straight off ``STUDY_PATH_STATUS``.
+
+    Anything that isn't the recognised active value counts as paused, so a new
+    status in a future extract lands on the check-enrolment tab rather than
+    being assumed reachable. A blank (or a file with no such column) is treated
+    as active, leaving the output as it was before this column existed.
+    """
+    text = "" if pd.isna(status) else str(status).strip()
+    return bool(text) and text != ACTIVE_STATUS
+
+
+def _study_status(outcome, template, status=None) -> str:
+    """``Progression Outcome`` -> a label with no silent blanks.
+
+    A blank is only a *problem* for an active student who commenced before this
+    session - they sat the progression round and should have a decision. A
+    commencing student has no decision yet, and a Deferred / Leave-of-Absence
+    student was never in the round, so neither is flagged for review.
+    """
+    text = "" if pd.isna(outcome) else str(outcome).strip()
+    if text:
+        return text
+    if str(template or "").strip() == "Commencing":
+        return NOT_ASSESSED
+    if is_paused(status):
+        return NOT_ASSESSED_PAUSED
+    return NO_OUTCOME
 
 
 def build_coach_view(advised: pd.DataFrame) -> pd.DataFrame:
@@ -826,6 +948,20 @@ def build_coach_view(advised: pd.DataFrame) -> pd.DataFrame:
     v2's) so the ✓/✗ marks line up with the advice the calculator produced.
     """
     base = advised[[c for c in v2.COACH_VIEW_COLUMNS if c in advised.columns]].copy()
+
+    outcomes = (
+        advised["Progression Outcome"] if "Progression Outcome" in advised.columns
+        else pd.Series([None] * len(advised), index=advised.index)
+    )
+    statuses = (
+        advised[STUDY_PATH_COL] if STUDY_PATH_COL in advised.columns
+        else pd.Series([None] * len(advised), index=advised.index)
+    )
+    base[STUDY_STATUS_COL] = [
+        _study_status(o, t, s)
+        for o, t, s in zip(outcomes, advised[TEMPLATE_COL], statuses)
+    ]
+    base[OTHER_ENROL_COL] = _other_enrolments(advised)
 
     status = [
         v2._status(r, is_outstanding=calc._is_outstanding, elective_count=calc._elective_count)
