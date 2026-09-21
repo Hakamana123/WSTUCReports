@@ -809,7 +809,8 @@ def split_coach_view_by_coach(coach_view: pd.DataFrame) -> dict[str, bytes]:
             # coach has no commencing students, so the files all look the same.
             if TEMPLATE_COL in cv.columns and _COMMENCING_TAB not in tabs:
                 tabs[_COMMENCING_TAB] = group.iloc[0:0]
-            for tmpl in sorted(tabs):
+            # Commencing always opens the file; the rest follow alphabetically.
+            for tmpl in sorted(tabs, key=lambda t: (t != _COMMENCING_TAB, t)):
                 sub = tabs[tmpl]
                 sheet = _safe_sheet_name(tmpl)
                 base, n = sheet, 1
