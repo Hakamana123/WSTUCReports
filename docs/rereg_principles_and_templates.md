@@ -63,6 +63,12 @@ or electives.
 | Overall lack of success | Template 3 |
 | Complete | Transition |
 
+> **The tool swaps 1b and 1c.** This doc keeps Grant's labels throughout. The
+> tool (`_PRINCIPLE_TEMPLATE` in `rereg_calc.py`) labels *Mostly Progressing /
+> Stay with Cohort* as **Template 1b** and *Unsatisfactory progress in S1 /
+> Start Again* as **Template 1c**, to match the coaching team's messaging
+> templates (2026 SB2 -> SB3 & SB4). Principles and advice are unchanged.
+
 ### A3. Choosing the Principle
 
 ```

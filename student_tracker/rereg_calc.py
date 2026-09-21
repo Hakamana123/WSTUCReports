@@ -170,12 +170,18 @@ def status_mask(row: pd.Series, is_nursing: bool) -> str:
 # From docs/rereg_principles_and_templates.md (reverse-engineered from Grant's
 # "2026 AB4 for 2026 SPR" file - the Autumn->Spring round, same as the file
 # Josiah runs). Principle -> Template is 1:1.
+#
+# 1b and 1c are the OTHER way round from Grant's file, to match the coaching
+# team's messaging templates (2026 SB2 -> SB3 & SB4): there, 1B is the student
+# who has missed a subject or two but is roughly on track, and 1C is the one
+# restarting semester 1. The principles and the advice are unchanged; only the
+# label (and so the coach's tab and email) differs.
 _PRINCIPLE_TEMPLATE = {
     "On Pattern": "Template 1a",
-    "Mostly Progressing": "Template 1c",
-    "Stay with Cohort": "Template 1c",
-    "Unsatisfactory progress in S1": "Template 1b",
-    "Start Again": "Template 1b",
+    "Mostly Progressing": "Template 1b",
+    "Stay with Cohort": "Template 1b",
+    "Unsatisfactory progress in S1": "Template 1c",
+    "Start Again": "Template 1c",
     "3+ Sessions": "Template 2",
     "Overall lack of success": "Template 3",
     "Complete": "Transition",
