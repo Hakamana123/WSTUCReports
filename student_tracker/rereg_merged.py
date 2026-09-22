@@ -88,28 +88,20 @@ def _block_passed(result) -> bool:
 
 
 def _failed_earlier_blocks(row: pd.Series, from_block: int) -> bool:
-    """Mid-session withdrawal trigger: the student sat every teaching block so
-    far this session and passed none of them.
+    """Mid-session withdrawal trigger: a commencing student who has passed none
+    of the teaching blocks up to this point in the session.
 
-    'Not passed' is wider than a fail grade - a blank result counts too (the
-    student was enrolled but has no pass), which catches someone who dropped or
-    disengaged, not just an outright fail. A block the student was never
-    enrolled in (no ``Block N code``) doesn't count against them - there was
-    nothing to pass - so a student registered only in later blocks isn't
-    flagged."""
+    'Not passed' is deliberately wide - a fail (F / FNS), a withdrawal (W), an
+    E, or a blank result all count. A blank means no pass is recorded, whether
+    the student failed, dropped, or never engaged; for a commencing student at
+    mid-semester that is still a "hasn't passed their first blocks" situation,
+    so they are flagged for the coach to follow up."""
     if from_block < 2:
         return False
-
-    def enrolled_in(b: int) -> bool:
-        code = row.get(f"Block {b} code")
-        return not pd.isna(code) and str(code).strip() != ""
-
-    enrolled = [b for b in range(1, from_block) if enrolled_in(b)]
-    # Must have actually sat both earlier blocks; otherwise it's not a
-    # "failed Blocks 1-2" situation.
-    if len(enrolled) < from_block - 1:
-        return False
-    return all(not _block_passed(row.get(f"Block {b} Result")) for b in enrolled)
+    return all(
+        not _block_passed(row.get(f"Block {b} Result"))
+        for b in range(1, from_block)
+    )
 
 
 def _enrolled_earlier_blocks(row: pd.Series, from_block: int) -> dict[str, int]:
