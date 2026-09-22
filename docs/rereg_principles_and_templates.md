@@ -22,6 +22,47 @@ Findings are split by how solid they are:
 
 ---
 
+## Coach-facing summary — every template, at a glance
+
+The table below uses the **tool's** template labels (the ones a coach sees on
+the tabs), which swap 1b and 1c relative to Grant's file — see the note under
+A2. Counts are from the `20260915 Mid Semester Re-reg` file, target
+`26 SPR Block 3`.
+
+| Template / Tab | When (who it's for) | Rule | What the student gets |
+|---|---|---|---|
+| **Commencing** (717) | Commenced *this* Spring (2026) | Commencement period = 26 SPR or later | On-pattern registration — **or** the withdrawal flag below |
+| ↳ *Advise Withdrawal flag* (66) | Commencing student, **mid-block** | Failed **both** Spring Block 1 **and** Block 2 this session | Red flag (Column P) → "de-register from B3/B4, restart in Autumn 2027" email |
+| **Template 1A** (1,537) | Current cohort (26 AUT / 25 SPR / 25 SUM) | **0** first-semester subjects still unpassed — on pattern | Next pattern subjects into Prep + Blocks 3/4; electives where needed |
+| **Template 1B** (480) | Current cohort | **1–2** first-semester subjects unpassed — roughly on track | Stay-with-cohort advice + catch-up subject into B3/B4; check-in |
+| **Template 1C** (518) | Current cohort | **3+** first-semester subjects unpassed — start again | Restart message ("best option is Autumn 2027") **+** subject advice for those who press on |
+| **Template 2** (236) | Old cohort (25 AUT or earlier) | **≤6** subjects left overall — off-pattern but nearly done | Light load: outstanding offered subjects in order; often just prep or one elective |
+| **Template 3** (165) | Old cohort | **7+** subjects left — suspected ghost students | Outreach to gauge intention + full semester-1 restart advice (CE capped at 3) |
+| **Transition** (136) | Any cohort, **finishing** | **Nothing** left to pass (diploma complete) | No new registration; if a Prep is still outstanding, remind to take it in Summer |
+| **Paused – check enrolment** (167 on tab) | Any student not currently studying | Study path status (Column I) = **Deferred** or **Leave of Absence** | **No comms** — advice greyed/provisional until they confirm return |
+
+Reading notes:
+
+- **"When"** is *which cohort / stage*, not a calendar date — the whole file is
+  produced at one re-registration point. The only genuinely time-specific row is
+  the Advise Withdrawal flag, a *mid-block* early warning.
+- **1A → 1B → 1C** is one ladder for the current cohort, split purely by how much
+  of **semester 1** is still unpassed (0 / 1–2 / 3+). Failing this Spring's blocks
+  only moves a student up the ladder if it leaves first-semester subjects
+  outstanding — a continuing student who failed both Spring blocks but had already
+  cleared semester 1 stays on 1A.
+- **2 vs 3** is the same idea for the *old* cohort, split by total subjects left
+  (≤6 vs 7+).
+- **Advise Withdrawal (mid-block)** and **1C (end of semester)** are the same
+  "step back and restart" situation caught at two different moments.
+- **Paused** overrides tab placement for everyone **except** commencing students,
+  who stay on the Commencing tab with their advice greyed.
+- Counts are by Column Q (Messaging Template); the Paused tab pulls 167 of those
+  onto its own sheet. One student with an unreadable commencement period carries a
+  blank template (the "Parameter Missing" edge case).
+
+---
+
 ## Vocabulary
 
 `All Subjects` bitmask (Grant's notation), `1` = still to pass, `0` = passed:
