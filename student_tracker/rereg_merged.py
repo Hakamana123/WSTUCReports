@@ -442,7 +442,15 @@ def advise_student_merged(
     # block completed so far this session -> no subject advice, just flag them
     # for the coach. A continuing student who fails two blocks in a row is
     # advised to re-take (the normal engine below), not withdraw.
-    if _failed_earlier_blocks(row, from_block) and _commenced_this_session(row, base):
+    #
+    # UPPAP (program 9034) is excluded: its pattern doesn't start at Block 1, so
+    # "hasn't cleared Block 1/2" doesn't mean the same thing - those students are
+    # not registered in Blocks 1/2 by design, not because they failed to.
+    if (
+        program not in calc.UNSUPPORTED_PROGRAMS
+        and _failed_earlier_blocks(row, from_block)
+        and _commenced_this_session(row, base)
+    ):
         out[WITHDRAWAL_COL] = _WITHDRAW_TEXT
         out[REASON_COL] = (
             f"** {_WITHDRAW_TEXT} ** - commencing student, failed Block(s) 1-{from_block - 1} "
