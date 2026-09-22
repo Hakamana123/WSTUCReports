@@ -70,18 +70,46 @@ _COMMENCING_TAB = "Commencing"
 NOT_ASSESSED = "Not yet assessed (commencing)"
 NOT_ASSESSED_PAUSED = "Not assessed (paused)"
 NO_OUTCOME = "No outcome recorded - review"
-_FAIL_GRADES = {"F", "FNS"}
+_PASS_GRADE_LETTERS = set("ABCDHP")  # first letter of a pass grade (A/B/C/C+/D/H/P)
 _WITHDRAW_TEXT = "ADVISE WITHDRAWAL"
 _SRC_WITHDRAW = "mid-semester withdrawal (commencing student, failed Blocks 1-2)"
 
 
+def _block_passed(result) -> bool:
+    """True when a ``Block N Result`` cell shows a pass. A block can carry more
+    than one comma-separated grade (a student in two subjects that block); the
+    block counts as passed if *any* part is a pass grade. Everything else -
+    F / FNS / W / E and a blank (no grade recorded) - is 'not passed'."""
+    return any(
+        part.strip()[:1].upper() in _PASS_GRADE_LETTERS
+        for part in str(result or "").split(",")
+        if part.strip()
+    )
+
+
 def _failed_earlier_blocks(row: pd.Series, from_block: int) -> bool:
-    """True when the student failed (F / FNS) every teaching block they've
-    completed this session so far - the mid-session withdrawal trigger."""
+    """Mid-session withdrawal trigger: the student sat every teaching block so
+    far this session and passed none of them.
+
+    'Not passed' is wider than a fail grade - a blank result counts too (the
+    student was enrolled but has no pass), which catches someone who dropped or
+    disengaged, not just an outright fail. A block the student was never
+    enrolled in (no ``Block N code``) doesn't count against them - there was
+    nothing to pass - so a student registered only in later blocks isn't
+    flagged."""
     if from_block < 2:
         return False
-    grades = [str(row.get(f"Block {b} Result", "") or "").strip().upper() for b in range(1, from_block)]
-    return bool(grades) and all(g in _FAIL_GRADES for g in grades)
+
+    def enrolled_in(b: int) -> bool:
+        code = row.get(f"Block {b} code")
+        return not pd.isna(code) and str(code).strip() != ""
+
+    enrolled = [b for b in range(1, from_block) if enrolled_in(b)]
+    # Must have actually sat both earlier blocks; otherwise it's not a
+    # "failed Blocks 1-2" situation.
+    if len(enrolled) < from_block - 1:
+        return False
+    return all(not _block_passed(row.get(f"Block {b} Result")) for b in enrolled)
 
 
 def _enrolled_earlier_blocks(row: pd.Series, from_block: int) -> dict[str, int]:
