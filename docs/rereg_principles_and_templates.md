@@ -53,6 +53,15 @@ Reading notes:
   cleared semester 1 stays on 1A.
 - **2 vs 3** is the same idea for the *old* cohort, split by total subjects left
   (≤6 vs 7+).
+- **Greyed advice cells** mean "for reference, not a registration to action this
+  session" and come up two ways. (1) *Mid-semester report* (advising from Block
+  3): the earlier blocks have already started, so their cells show the subject
+  the student is **currently enrolled in** for that block, greyed — Blocks 1-2 in
+  progress, Blocks 3-4 the ones to register now. What they still owe from the
+  early blocks is in the Advice Reason ("still owes X, Y — take next Autumn"), not
+  the greyed cell. (2) *Paused student*: every advice cell is greyed, because the
+  whole plan is provisional until they confirm they're returning. In the download
+  the grey shows as grey italic; in the on-screen preview as `(brackets)`.
 - **Advise Withdrawal (mid-block)** and **1C (end of semester)** are the same
   "step back and restart" situation caught at two different moments.
 - **1C's email is meeting-led, not subject-led.** Unlike 1A / 1B / 2 / 3 - whose
