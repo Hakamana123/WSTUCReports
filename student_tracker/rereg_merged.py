@@ -556,10 +556,25 @@ def advise_student_merged(
         named = named_all
         partway_carry = []
 
+    # For a mid-semester target the earlier blocks have already started, so their
+    # advice cells show the subject the student is *actually taking* in that block
+    # (greyed, for reference), not a pattern subject they can no longer register
+    # in. What they still owe from those blocks is carried in the reason text.
+    enrolled_now: dict[int, str] = {}
+    if from_block > 1:
+        for b in range(1, from_block):
+            codes = _SUBJECT_CODE_RE.findall(str(row.get(f"Block {b} code", "") or ""))
+            if codes:
+                enrolled_now[b] = ", ".join(codes)
+
     out[ADVICE_COLS[0]] = prep_now
     for i, (col, val) in enumerate(zip(ADVICE_COLS[1:], kept)):
-        # part-way: Blocks before from_block are shown greyed (in progress)
-        out[col] = (_GREY + val) if (val and from_block > 1 and i + 1 < from_block) else val
+        block_no = i + 1
+        if from_block > 1 and block_no < from_block:
+            current = enrolled_now.get(block_no, "")
+            out[col] = (_GREY + current) if current else ""
+        else:
+            out[col] = val
     # a carried-forward pattern's completion estimate is stale (see rereg_calc)
     out[COMPLETION_COL] = "" if completion in ("", "Not Found") or carried else completion
 
