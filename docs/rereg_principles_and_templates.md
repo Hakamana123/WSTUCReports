@@ -39,7 +39,7 @@ A2. Counts are from the `20260915 Mid Semester Re-reg` file, target
 | **Template 2** (236) | Old cohort (25 AUT or earlier) | **≤6** subjects left overall — off-pattern but nearly done | Light load: outstanding offered subjects in order; often just prep or one elective |
 | **Template 3** (165) | Old cohort | **7+** subjects left — suspected ghost students | Outreach to gauge intention + full semester-1 restart advice (CE capped at 3) |
 | **Transition** (136) | Any cohort, **finishing** | **Nothing** left to pass (diploma complete) | No new registration; if a Prep is still outstanding, remind to take it in Summer |
-| **Paused – check enrolment** (167 on tab) | Any student not currently studying | Study path status (Column I) = **Deferred** or **Leave of Absence** | **No comms** — advice greyed/provisional until they confirm return |
+| **Paused – check enrolment** (214 on tab) | Any student not currently studying | Study path status (Column I) = **Deferred** or **Leave of Absence** | **No comms** — advice greyed/provisional until they confirm return; commencing paused students also appear on the Commencing tab |
 
 Reading notes:
 
@@ -55,11 +55,24 @@ Reading notes:
   (≤6 vs 7+).
 - **Advise Withdrawal (mid-block)** and **1C (end of semester)** are the same
   "step back and restart" situation caught at two different moments.
-- **Paused** overrides tab placement for everyone **except** commencing students,
-  who stay on the Commencing tab with their advice greyed.
-- Counts are by Column Q (Messaging Template); the Paused tab pulls 167 of those
-  onto its own sheet. One student with an unreadable commencement period carries a
-  blank template (the "Parameter Missing" edge case).
+- **1C's email is meeting-led, not subject-led.** Unlike 1A / 1B / 2 / 3 - whose
+  emails list the Prep / B3 / B4 picks via merge fields - the 1C email
+  recommends a restart in Autumn 2027 and invites the student to a meeting for
+  the "if you'd rather continue" conversation, without listing subjects. The
+  tool still computes their Block 3/4 picks (columns V/W); they just reach the
+  student through the meeting rather than the email. This is a wording choice on
+  the document side and may change over time (a future 1C email could carry the
+  subjects, or stay subject-free).
+- **Paused** students all appear on the Paused tab (the coach's complete
+  check-enrolment list). A *commencing* paused student also stays on the
+  Commencing tab, which keeps the whole intake, so they show on both; every
+  other paused student only moves to the Paused tab. Their advice is greyed
+  either way.
+- Counts are by Column Q (Messaging Template). The Paused tab holds every paused
+  student (Deferred / LoA), so the per-coach split totals more than the input row
+  count - the commencing paused students are counted on both their tabs. One
+  student with an unreadable commencement period carries a blank template (the
+  "Parameter Missing" edge case).
 
 ---
 
