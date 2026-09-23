@@ -810,14 +810,23 @@ def split_coach_view_by_coach(coach_view: pd.DataFrame) -> dict[str, bytes]:
     else:
         cv["_tmpl"] = _NO_TEMPLATE
 
-    # Paused students go on their own tab per coach - the "are you studying with
-    # us?" list - instead of being scattered across the template tabs with only a
-    # note at the tail of the reason text to tell them apart. Commencing students
-    # are the exception: the Commencing tab keeps the whole intake, paused or not
-    # (their advice is still greyed and STUDY_PATH_STATUS shows on the row).
+    # Paused students go on the "are you studying with us?" tab - the
+    # check-enrolment worklist - instead of being scattered across the template
+    # tabs with only a note at the tail of the reason text to tell them apart.
+    #
+    # Commencing paused students are a special case: the Commencing tab keeps the
+    # whole intake (paused or not), so they STAY there and are ALSO repeated on
+    # the Paused tab, which is the coach's complete outreach list. Every other
+    # paused student is simply moved onto the Paused tab.
     if STUDY_PATH_COL in cv.columns:
-        paused = cv[STUDY_PATH_COL].map(is_paused) & cv["_tmpl"].ne(_COMMENCING_TAB)
-        cv.loc[paused, "_tmpl"] = _PAUSED_TAB
+        paused = cv[STUDY_PATH_COL].map(is_paused)
+        commencing_paused = paused & cv["_tmpl"].eq(_COMMENCING_TAB)
+        # a copy of each paused commencing student for the Paused tab
+        dup = cv[commencing_paused].copy()
+        dup["_tmpl"] = _PAUSED_TAB
+        # everyone else paused just moves onto the Paused tab
+        cv.loc[paused & ~commencing_paused, "_tmpl"] = _PAUSED_TAB
+        cv = pd.concat([cv, dup], ignore_index=True)
 
     out: dict[str, bytes] = {}
     used_files: dict[str, int] = {}

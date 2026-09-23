@@ -148,8 +148,8 @@ if paused:
     st.caption(
         f"**{paused:,} paused** (Deferred / Leave of Absence) — still get subject "
         "advice (greyed), but confirm they're returning first. In the per-coach "
-        f"split they're on their own *{rm._PAUSED_TAB}* tab, except commencing "
-        "students, who stay on the Commencing tab."
+        f"split they're all on the *{rm._PAUSED_TAB}* tab; commencing ones also "
+        "stay on the Commencing tab, so they appear in both."
     )
 if no_outcome:
     st.warning(
@@ -226,7 +226,7 @@ else:
         f"**Split for distribution** — one Coach View workbook per success coach "
         f"({n_files} file(s)), with a tab per Messaging Template inside each "
         f"plus a *{rm._PAUSED_TAB}* tab for Deferred / Leave-of-Absence students "
-        f"(commencing students stay on the Commencing tab). "
+        f"(commencing paused students appear there and on the Commencing tab). "
         f"Advice columns show the subject name beside each code."
         + (f"  {n_blank} student(s) with no coach go into a `no_coach.xlsx` file." if n_blank else "")
     )
