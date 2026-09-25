@@ -107,7 +107,9 @@ if is_summer:
     )
     if summer_file is not None:
         summer_offering = rm.read_summer_offering_campus(summer_file)
-        summer_subjects = set(summer_offering)
+        # the full engine now takes the campus/block dict so it can place each
+        # subject in its Summer block (SU1/SU2) at the student's campus
+        summer_subjects = summer_offering or None
         st.caption(
             f"Summer offering: {len(summer_subjects)} subjects "
             f"({', '.join(sorted(summer_subjects)[:8])}{'…' if len(summer_subjects) > 8 else ''})"

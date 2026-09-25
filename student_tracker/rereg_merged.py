@@ -290,31 +290,63 @@ def _grey_cell(value) -> str:
     return GREY_MARK + text
 
 
+def _normalize_summer_offering(summer) -> dict | None:
+    """A Summer offering as ``{code: {"campuses": set, "block": str}}``, or None.
+
+    Accepts the campus/block dict from :func:`read_summer_offering_campus`, an
+    older ``{code: campuses}`` dict, a plain set of codes (all campuses, no
+    block), or ``None`` (no list uploaded). This lets the engine stay campus-
+    and block-aware while still accepting a bare code set.
+    """
+    if summer is None:
+        return None
+    if isinstance(summer, dict):
+        norm = {}
+        for code, v in summer.items():
+            if isinstance(v, dict):
+                norm[code] = {"campuses": set(v.get("campuses") or KNOWN_CAMPUSES),
+                              "block": v.get("block", "")}
+            else:
+                norm[code] = {"campuses": set(v) if v else set(KNOWN_CAMPUSES), "block": ""}
+        return norm
+    return {c: {"campuses": set(KNOWN_CAMPUSES), "block": ""} for c in summer}
+
+
 def _summer_advice(
     out: dict, row: pd.Series, program: str, is_nursing: bool, session: str, outcome: str,
-    summer_subjects: set[str] | None = None,
+    summer_subjects=None,
 ) -> dict:
     """Summer advice.
 
-    Preps and Subjects 1 & 2 are confirmed to run in Summer; anything else is
-    unknown until a Summer offering list is uploaded (``summer_subjects``).
-    Every outstanding subject is shown in the block it runs in - plain if it's
-    being registered this Summer, **greyed** if it's only there for reference
-    (not offered / unknown / didn't fit). Conditional Enrolment keeps the 30cp
-    cap.
+    Preps always run in Summer (diplomas only); every other subject runs only if
+    it's on the uploaded offering list, **at the student's campus**, and is
+    placed in the Summer block (SU1 / SU2) that list gives it - at most one
+    subject per Summer block. A subject that's offered but whose Summer block is
+    already taken, or that isn't offered at their campus, is greyed for reference
+    (take next Autumn). With no list uploaded, only prep + Subjects 1 & 2 are
+    assumed to run. Conditional Enrolment keeps the 30cp cap.
     """
+    offering = _normalize_summer_offering(summer_subjects)
+    assumed = offering is None
+    campus = "" if pd.isna(row.get("CAMP_CODE")) else str(row.get("CAMP_CODE")).strip()
     prog_ref = calc._ref().get(program, {})
     subj = calc.subjects_for(program, session)
     capped = outcome in v2.STANDING_MAX_BLOCKS
     cp_cap = CE_CAP_CP if capped else 10 ** 6
-    assumed = summer_subjects is None
     n_pos = 8 if is_nursing else 6
 
-    def runs_in_summer(pos: int) -> bool:
+    def offered_block(pos: int) -> tuple[bool, str]:
+        """``(offered at this student's campus, Summer block)`` for the subject at
+        ``pos``. With no list uploaded, fall back to 'Subjects 1 & 2 run'."""
         code = subj.get(str(pos))
-        if summer_subjects is not None:
-            return code in summer_subjects
-        return pos in (1, 2)
+        if not code:
+            return (False, "")
+        if offering is None:
+            return (pos in (1, 2), "")
+        entry = offering.get(code)
+        if entry and campus in entry["campuses"]:
+            return (True, entry["block"])
+        return (False, "")
 
     # preps first (always run in Summer, diplomas only)
     prep_now, cp = [], 0
@@ -326,7 +358,10 @@ def _summer_advice(
 
     blocks = ["", "", "", ""]
     grey = [False, False, False, False]
+    btag = ["", "", "", ""]
+    deferred = [False, False, False, False]  # greyed because offered but Summer block full / cap
     register: list[str] = []
+    used_su: set[str] = set()  # a student takes at most one subject per Summer block
     for bi in range(4):
         cands = [
             p for p in (bi + 1, bi + 5)
@@ -334,19 +369,38 @@ def _summer_advice(
         ]
         if not cands:
             continue
-        offered = [p for p in cands if runs_in_summer(p)]
-        if offered and cp + _CP_MODULAR <= cp_cap:
-            code = subj[str(offered[0])]
+        pick = None
+        offered_but_stuck = False
+        for p in cands:
+            ok, blk = offered_block(p)
+            if not ok:
+                continue
+            if (blk and blk in used_su) or cp + _CP_MODULAR > cp_cap:
+                offered_but_stuck = True  # it runs at their campus, just can't fit now
+                continue
+            pick = (subj[str(p)], blk)
+            break
+        if pick:
+            code, blk = pick
             blocks[bi] = code
+            btag[bi] = blk
             register.append(code)
+            if blk:
+                used_su.add(blk)
             cp += _CP_MODULAR
         else:
             blocks[bi] = subj[str(cands[0])]
             grey[bi] = True
+            deferred[bi] = offered_but_stuck
 
     out[ADVICE_COLS[0]] = " and ".join(prep_now)
-    for col, val, g in zip(ADVICE_COLS[1:], blocks, grey):
-        out[col] = (_GREY + val) if (val and g) else val
+    for col, val, g, tag in zip(ADVICE_COLS[1:], blocks, grey, btag):
+        if not val:
+            out[col] = ""
+        elif g:
+            out[col] = _GREY + val
+        else:
+            out[col] = f"{val} ({tag})" if tag else val
 
     scheduled = set(prep_now) | set(register)
     # outstanding items with no block shown at all (a lost 1-vs-5 clash, a
@@ -365,18 +419,31 @@ def _summer_advice(
     if elec_need:
         still.append(f"+{elec_need} elective")
     greyed = [b for b, g in zip(blocks, grey) if g]
+    # split the greyed reference subjects: some run in Summer but couldn't fit
+    # (their block/cap is full), the rest simply aren't offered at their campus
+    deferred_full = [b for b, g, d in zip(blocks, grey, deferred) if g and d]
+    not_offered = [b for b, g, d in zip(blocks, grey, deferred) if g and not d]
+
+    # registered subjects with their Summer block, in SU1-then-SU2 order
+    reg_by_block = [(btag[i], b) for i, b in enumerate(blocks) if b and not grey[i]]
+    reg_display = [f"{code} ({blk})" if blk else code
+                   for blk, code in sorted(reg_by_block, key=lambda x: x[0])]
 
     bits = []
     if capped:
         bits.append(f"{outcome}: 30cp cap")
     if prep_now:
         bits.append("Prep: " + " and ".join(prep_now))
-    if register:
-        bits.append("Register: " + ", ".join(register))
+    if reg_display:
+        bits.append("Register: " + ", ".join(reg_display))
     if not prep_now and not register:
         bits.append(f"Nothing confirmed for this student runs in {session}")
-    if greyed:
-        bits.append("Grey = not offered in Summer (or unknown) - take next Autumn: " + ", ".join(greyed))
+    if deferred_full:
+        bits.append("Runs in Summer but only one subject per block fits - take later: "
+                    + ", ".join(deferred_full))
+    if not_offered:
+        bits.append("Grey = not offered in Summer at their campus - take next Autumn: "
+                    + ", ".join(not_offered))
     if assumed and (greyed or register):
         bits.append("ASSUMED: only prep + Subjects 1 & 2 run in Summer - upload the Summer offering list for real advice")
     if still:
