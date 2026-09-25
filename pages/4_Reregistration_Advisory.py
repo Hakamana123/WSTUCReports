@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import io
 
+import pandas as pd
 import streamlit as st
 
 from student_tracker import rereg_merged as rm
@@ -88,18 +89,32 @@ with col_b:
     )
 
 summer_subjects = None
-if "SUM" in session.upper():
+summer_offering = {}
+is_summer = "SUM" in session.upper()
+summer_mode = "Full re-registration advice"
+if is_summer:
+    summer_mode = st.radio(
+        "Summer output",
+        ["Full re-registration advice", "Early advice — candidate shortlist"],
+        help="**Full** runs the normal Summer engine (per-student subjects + preps). "
+             "**Early advice** is the SB3 targeting list: students a confirmed Summer "
+             "subject could get back on pattern or help finish sooner — nothing else.",
+    )
     summer_file = st.file_uploader(
-        "Summer offering list (optional) — .xlsx or .csv with a column of subject codes",
+        "Summer offering list (.xlsx or .csv) — a column of subject codes; add campus "
+        "codes (BK CA KW PC LP) beside each for the early-advice campus check",
         type=["xlsx", "csv"], key="summer_upload",
     )
     if summer_file is not None:
-        summer_subjects = rm.read_summer_offering(summer_file)
+        summer_offering = rm.read_summer_offering_campus(summer_file)
+        summer_subjects = set(summer_offering)
         st.caption(
             f"Summer offering: {len(summer_subjects)} subjects "
             f"({', '.join(sorted(summer_subjects)[:8])}{'…' if len(summer_subjects) > 8 else ''})"
             if summer_subjects else "Couldn't read any subject codes from that file."
         )
+    elif summer_mode.startswith("Early"):
+        st.warning("Upload the confirmed Summer offering list to build the early-advice shortlist.")
     else:
         st.caption(
             "No Summer offering list — assuming only prep + Subjects 1 & 2 run. "
@@ -114,6 +129,57 @@ try:
     df = rm.load_progression_file(io.BytesIO(uploaded.getvalue()))
 except ValueError as exc:
     st.error(f"Couldn't read this file: {exc}")
+    st.stop()
+
+# --- Summer early-advice mode --------------------------------------------------
+# A separate targeting output, not the full engine: who a confirmed Summer subject
+# could get back on pattern (failed an early subject) or help finish sooner.
+if is_summer and summer_mode.startswith("Early"):
+    st.header("Summer early advice — candidate shortlist")
+    if not summer_offering:
+        st.info("Upload the confirmed Summer offering list above to build the shortlist.")
+        st.stop()
+    shortlist = rm.summer_early_advice(df, summer_offering, session=session)
+    if not len(shortlist):
+        st.warning("No students match — none have 1–2 outstanding subjects that a listed "
+                   "Summer subject covers at their campus.")
+        st.stop()
+
+    restore = int((shortlist[rm.EARLY_GROUP_COL] == rm.EARLY_GROUP_RESTORE).sum())
+    finish = int((shortlist[rm.EARLY_GROUP_COL] == rm.EARLY_GROUP_FINISH).sum())
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Candidates", f"{len(shortlist):,}")
+    m2.metric(rm.EARLY_GROUP_RESTORE, f"{restore:,}", help="Failed an early subject — Summer restores their pattern")
+    m3.metric(rm.EARLY_GROUP_FINISH, f"{finish:,}", help="Near the end — Summer brings completion forward")
+    st.caption(
+        "Students with 1–2 outstanding subjects, at least one offered in Summer at their "
+        "campus. Messaging stays general (the confirmed offerings); this is the *who to contact* list."
+    )
+
+    view = shortlist
+    groups = st.multiselect("Filter by group", [rm.EARLY_GROUP_RESTORE, rm.EARLY_GROUP_FINISH], default=[])
+    if groups:
+        view = view[view[rm.EARLY_GROUP_COL].isin(groups)]
+    coaches_pick = st.multiselect("Filter by coach", sorted(shortlist[rm.COACH_COL].dropna().astype(str).unique()), default=[])
+    if coaches_pick:
+        view = view[view[rm.COACH_COL].astype(str).isin(coaches_pick)]
+    st.dataframe(view, use_container_width=True, hide_index=True)
+    st.caption(f"Showing {len(view):,} of {len(shortlist):,} candidates.")
+
+    import io as _io
+    buf = _io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+        shortlist.to_excel(w, sheet_name="Summer early advice", index=False)
+    d1, d2 = st.columns(2)
+    d1.download_button(
+        "Download shortlist (.xlsx)", buf.getvalue(),
+        f"summer_early_advice_{session.replace(' ', '_')}.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary",
+    )
+    d2.download_button(
+        "Download split by coach (.zip)", rm.summer_early_by_coach_zip(shortlist),
+        f"summer_early_advice_{session.replace(' ', '_')}_by_coach.zip", "application/zip",
+    )
     st.stop()
 
 dropped = int(df.attrs.get("duplicates_dropped", 0))

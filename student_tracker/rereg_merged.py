@@ -905,6 +905,141 @@ def read_summer_offering(source) -> set[str]:
     return {c.strip().upper() for c in cells if _re.fullmatch(r"[A-Za-z]{4}\d{4}", c.strip())}
 
 
+# Campus codes the College uses; a Summer offering row lists the campuses a
+# subject runs at with these. Anything not one of these isn't read as a campus.
+KNOWN_CAMPUSES = {"BK", "CA", "KW", "PC", "LP", "ON", "BL"}
+
+
+def read_summer_offering_campus(source) -> dict[str, set[str]]:
+    """Parse an uploaded Summer offering list -> ``{subject_code: {campuses}}``.
+
+    Same lenient scan as ``read_summer_offering``, but per row: the subject code
+    (4 letters + 4 digits) is mapped to whatever campus codes appear in the same
+    row. A subject listed with no campus codes is taken to run **everywhere**
+    (all ``KNOWN_CAMPUSES``), so a campus-free list behaves like the flat one.
+    """
+    import io
+    import re as _re
+
+    raw = source if hasattr(source, "read") else source
+    try:
+        sheets = pd.read_excel(io.BytesIO(raw.getvalue()) if hasattr(raw, "getvalue") else raw,
+                               sheet_name=None)
+        frame = pd.concat(sheets.values(), ignore_index=True)
+    except Exception:
+        frame = pd.read_csv(raw)
+
+    out: dict[str, set[str]] = {}
+    for _, row in frame.astype(str).iterrows():
+        # a cell may hold several tokens ("BK CA KW"), so split before matching
+        tokens = [t.strip() for cell in row.values for t in _re.split(r"[\s,;/]+", str(cell))]
+        codes = [t.upper() for t in tokens if _re.fullmatch(r"[A-Za-z]{4}\d{4}", t)]
+        camps = {t.upper() for t in tokens if t.upper() in KNOWN_CAMPUSES}
+        for code in codes:
+            out.setdefault(code, set()).update(camps)
+    # a subject with no campuses named runs everywhere
+    return {code: (camps or set(KNOWN_CAMPUSES)) for code, camps in out.items()}
+
+
+# --------------------------------------------------------------------------- #
+# Summer early advice - a targeting list, NOT the full Summer engine           #
+# --------------------------------------------------------------------------- #
+# An "early indicator" (out in SB3, before Summer offerings/results are final):
+# which students could use a confirmed Summer subject to either get back on
+# pattern (they failed an early subject) or finish sooner (near the end, one
+# subject left). Deliberately narrow - not everyone is advised for Summer.
+EARLY_GROUP_RESTORE = "Get back on pattern"
+EARLY_GROUP_FINISH = "Finish sooner"
+EARLY_GROUP_COL = "Group"
+EARLY_CATCHUP_COL = "Summer 1 catch-up"
+EARLY_OUTSTANDING_COL = "Outstanding subjects"
+_EARLY_MAX_OUTSTANDING = 2  # "off-pattern due to failing one or two subjects"
+
+
+def summer_early_advice(
+    df: pd.DataFrame, offering: dict[str, set[str]], session: str = "26 SUM",
+) -> pd.DataFrame:
+    """Shortlist of students a confirmed Summer offering could help.
+
+    A candidate has **1-2 outstanding core subjects** (currently-registered
+    counts as done, so fresh commencers with everything ahead are excluded) and
+    at least one of those is **offered in Summer at their campus** (``offering``
+    is ``{code: {campuses}}`` from :func:`read_summer_offering_campus`). Each is
+    grouped: *Get back on pattern* when the catch-up subject is an early one
+    (position 1-2, they're behind), else *Finish sooner* (a later subject, they
+    are near the end). Returns one row per candidate; empty frame if none.
+    """
+    names = load_subject_names()
+
+    def label(code: str) -> str:
+        return f"{code} — {names[code]}" if code in names else code
+
+    rows = []
+    for _, r in df.iterrows():
+        program = str(r["PROGRAM_CD"]).split(".")[0]
+        campus = "" if pd.isna(r.get("CAMP_CODE")) else str(r.get("CAMP_CODE")).strip()
+        n_pos = 8 if program in calc.NURSING_PROGRAMS else 6
+        pattern = calc.subjects_for(program, session)
+        outstanding = [
+            (pos, pattern.get(str(pos)))
+            for pos in range(1, n_pos + 1)
+            if pattern.get(str(pos)) and calc._outstanding_strict(r.get(f"Subject {pos} Status"))
+        ]
+        if not 1 <= len(outstanding) <= _EARLY_MAX_OUTSTANDING:
+            continue
+        catch = [(pos, code) for pos, code in outstanding
+                 if code in offering and campus in offering[code]]
+        if not catch:
+            continue
+        group = EARLY_GROUP_RESTORE if min(p for p, _ in catch) <= 2 else EARLY_GROUP_FINISH
+        rows.append({
+            "STUDENT_ID": r["STUDENT_ID"],
+            "FIRST_NAME": r.get("FIRST_NAME"), "LAST_NAME": r.get("LAST_NAME"),
+            "PREFERRED_NAME": r.get("PREFERRED_NAME"),
+            "INSTITUTION_EMAIL_ADDRESS": r.get("INSTITUTION_EMAIL_ADDRESS"),
+            COACH_COL: r.get("Coach"), "PROGRAM_CD": program, "CAMP_CODE": campus,
+            "COMMENCEMENT_PERIOD": r.get("COMMENCEMENT_PERIOD"),
+            EARLY_GROUP_COL: group,
+            EARLY_CATCHUP_COL: ", ".join(label(c) for _, c in catch),
+            EARLY_OUTSTANDING_COL: ", ".join(c for _, c in outstanding),
+            "# outstanding": len(outstanding),
+        })
+    cols = ["STUDENT_ID", "FIRST_NAME", "LAST_NAME", "PREFERRED_NAME",
+            "INSTITUTION_EMAIL_ADDRESS", COACH_COL, "PROGRAM_CD", "CAMP_CODE",
+            "COMMENCEMENT_PERIOD", EARLY_GROUP_COL, EARLY_CATCHUP_COL,
+            EARLY_OUTSTANDING_COL, "# outstanding"]
+    out = pd.DataFrame(rows, columns=cols)
+    if len(out):
+        out = out.sort_values([EARLY_GROUP_COL, COACH_COL, "LAST_NAME"]).reset_index(drop=True)
+    return out
+
+
+def summer_early_by_coach_zip(shortlist: pd.DataFrame) -> bytes:
+    """The early-advice shortlist as a ``.zip`` of one ``.xlsx`` per coach, a tab
+    per group, so each SSC gets their own candidates."""
+    import io
+    import zipfile
+
+    cv = shortlist.copy()
+    cv["_coach"] = cv[COACH_COL].fillna("").astype(str).str.strip().replace("", _NO_COACH)
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for coach, group in cv.groupby("_coach", sort=True):
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                wrote = False
+                for grp_name in (EARLY_GROUP_RESTORE, EARLY_GROUP_FINISH):
+                    sub = group[group[EARLY_GROUP_COL] == grp_name].drop(columns=["_coach"])
+                    if len(sub):
+                        sub.to_excel(writer, sheet_name=_safe_sheet_name(grp_name), index=False)
+                        wrote = True
+                if not wrote:
+                    group.iloc[0:0].drop(columns=["_coach"]).to_excel(
+                        writer, sheet_name="No candidates", index=False)
+            zf.writestr(f"{_safe_filename(coach)}.xlsx", buffer.getvalue())
+    return zip_buf.getvalue()
+
+
 def build_advice(
     df: pd.DataFrame,
     session: str = DEFAULT_PLANNING_SESSION,
