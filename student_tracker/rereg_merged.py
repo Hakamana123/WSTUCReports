@@ -910,13 +910,15 @@ def read_summer_offering(source) -> set[str]:
 KNOWN_CAMPUSES = {"BK", "CA", "KW", "PC", "LP", "ON", "BL"}
 
 
-def read_summer_offering_campus(source) -> dict[str, set[str]]:
-    """Parse an uploaded Summer offering list -> ``{subject_code: {campuses}}``.
+def read_summer_offering_campus(source) -> dict[str, dict]:
+    """Parse an uploaded Summer offering list -> ``{code: {"campuses", "block"}}``.
 
     Same lenient scan as ``read_summer_offering``, but per row: the subject code
     (4 letters + 4 digits) is mapped to whatever campus codes appear in the same
-    row. A subject listed with no campus codes is taken to run **everywhere**
-    (all ``KNOWN_CAMPUSES``), so a campus-free list behaves like the flat one.
+    row, plus the Summer block it runs in if the row names one (``SU1`` / ``SU2``
+    / "Summer block 1" / "Summer 2" -> ``"SU1"`` / ``"SU2"``). A subject listed
+    with no campus codes runs **everywhere** (all ``KNOWN_CAMPUSES``); with no
+    block named, ``block`` is ``""``. So a bare code list still works.
     """
     import io
     import re as _re
@@ -929,16 +931,24 @@ def read_summer_offering_campus(source) -> dict[str, set[str]]:
     except Exception:
         frame = pd.read_csv(raw)
 
-    out: dict[str, set[str]] = {}
+    camps_by: dict[str, set[str]] = {}
+    block_by: dict[str, str] = {}
     for _, row in frame.astype(str).iterrows():
+        line = " ".join(str(c) for c in row.values)
         # a cell may hold several tokens ("BK CA KW"), so split before matching
         tokens = [t.strip() for cell in row.values for t in _re.split(r"[\s,;/]+", str(cell))]
         codes = [t.upper() for t in tokens if _re.fullmatch(r"[A-Za-z]{4}\d{4}", t)]
         camps = {t.upper() for t in tokens if t.upper() in KNOWN_CAMPUSES}
+        bm = _re.search(r"su\s*([12])\b|summer\s*(?:block\s*)?([12])\b", line, _re.I)
+        block = f"SU{bm.group(1) or bm.group(2)}" if bm else ""
         for code in codes:
-            out.setdefault(code, set()).update(camps)
-    # a subject with no campuses named runs everywhere
-    return {code: (camps or set(KNOWN_CAMPUSES)) for code, camps in out.items()}
+            camps_by.setdefault(code, set()).update(camps)
+            if block and not block_by.get(code):
+                block_by[code] = block
+    return {
+        code: {"campuses": (camps or set(KNOWN_CAMPUSES)), "block": block_by.get(code, "")}
+        for code, camps in camps_by.items()
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -971,8 +981,18 @@ def summer_early_advice(
     """
     names = load_subject_names()
 
+    def campuses_of(code: str) -> set:
+        entry = offering.get(code)
+        return entry["campuses"] if isinstance(entry, dict) else (entry or set())
+
+    def block_of(code: str) -> str:
+        entry = offering.get(code)
+        return entry.get("block", "") if isinstance(entry, dict) else ""
+
     def label(code: str) -> str:
-        return f"{code} — {names[code]}" if code in names else code
+        base = f"{code} — {names[code]}" if code in names else code
+        blk = block_of(code)
+        return f"{base} ({blk})" if blk else base
 
     rows = []
     for _, r in df.iterrows():
@@ -988,7 +1008,7 @@ def summer_early_advice(
         if not 1 <= len(outstanding) <= _EARLY_MAX_OUTSTANDING:
             continue
         catch = [(pos, code) for pos, code in outstanding
-                 if code in offering and campus in offering[code]]
+                 if code in offering and campus in campuses_of(code)]
         if not catch:
             continue
         group = EARLY_GROUP_RESTORE if min(p for p, _ in catch) <= 2 else EARLY_GROUP_FINISH
