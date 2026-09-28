@@ -80,6 +80,24 @@ Why each student gets the template they do is in
 In the per-coach files, S–W also carry the subject name after each code
 (`GEDU1001 — Name`).
 
+### Mid-semester report: registration check
+
+On a mid-semester report three extra columns sit beside the Block 3 and 4
+advice, so from V onwards the letters shift:
+
+| Col | Column | What it tells you |
+|---|---|---|
+| V | Block 3 Registration Advice | As above. |
+| W | Block 3 Registered | What the student is **actually registered in** for Block 3 right now. |
+| X | Block 4 Registration Advice | As above. |
+| Y | Block 4 Registered | What they're actually registered in for Block 4. |
+| Z | Registration Check | `OK` = already registered as advised, no message needed. Otherwise a to-do per block: `register EDUC1013`, `register an elective`, `drop BLDG1019` (registered, but nothing is advised, e.g. over the Conditional Enrolment cap or advised to withdraw), `check: registered X, advised Y`, or `check X (a course subject, elective advised)`. Paused and Excluded students say so instead. |
+| AA | Earliest Completion | As X above. |
+| AB | Advice Reason | As Y above. |
+
+Any registered subject that isn't one of the program's own subjects or preps
+counts as an elective.
+
 ---
 
 ## Withdrawal Flag (column P)

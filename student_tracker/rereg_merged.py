@@ -54,6 +54,12 @@ TEMPLATE_COL = "Messaging Template"
 WITHDRAWAL_COL = "Withdrawal Flag"
 STUDY_STATUS_COL = "Study Status"
 OTHER_ENROL_COL = "Other Enrolment"
+# Mid-semester only: what the student is actually registered in for the blocks
+# still to come (shown beside that block's advice in the Coach View), and
+# whether it matches the advice.
+REG_CHECK_COL = "Registration Check"
+REGISTERED_COLS = {3: "Block 3 Registered", 4: "Block 4 Registered"}
+REG_OK = "OK"
 
 # Deferred / Leave of Absence are the "are you studying with us?" group:
 # enrolled on paper, paused in practice, so the subject advice on their row is
@@ -1035,7 +1041,7 @@ def _add_subject_names(cv: pd.DataFrame, names: dict[str, str] | None = None) ->
     cv = cv.copy()
     if not names:
         return cv
-    for col in ADVICE_COLS:
+    for col in [*ADVICE_COLS, *REGISTERED_COLS.values()]:
         if col in cv.columns:
             cv[col] = cv[col].map(lambda v: _name_subject_codes(v, names) if isinstance(v, str) else v)
     return cv
@@ -1334,7 +1340,63 @@ def build_advice(
         paused = out[STUDY_PATH_COL].map(is_paused)
         for col in ADVICE_COLS:
             out.loc[paused, col] = out.loc[paused, col].map(_grey_cell)
+
+    from_block = rs.target_block(session)
+    if from_block > 1:
+        for b in range(from_block, 5):
+            out[REGISTERED_COLS[b]] = [
+                ", ".join(_SUBJECT_CODE_RE.findall(str(v or ""))) if not pd.isna(v) else ""
+                for v in out.get(f"Block {b} code", pd.Series([""] * len(out), index=out.index))
+            ]
+        out[REG_CHECK_COL] = [
+            _registration_check(row, session, from_block) for _, row in out.iterrows()
+        ]
     return out
+
+
+def _block_reg_check(advice, registered: list[str], pattern: set[str]) -> str:
+    """One block: ``""`` when the registration matches the advice, else what
+    the coach needs to do about it."""
+    adv = "" if pd.isna(advice) else str(advice).strip()
+    if not adv or adv.startswith(_GREY) or adv == calc.NO_REGISTRATION:
+        return f"drop {', '.join(registered)}" if registered else ""
+    if adv == "+1 elective":
+        if not registered:
+            return "register an elective"
+        if all(c in pattern for c in registered):
+            return f"check {', '.join(registered)} (a course subject, elective advised)"
+        return ""
+    wanted = _SUBJECT_CODE_RE.findall(adv)
+    if not registered:
+        return f"register {', '.join(wanted)}"
+    if set(wanted) & set(registered):
+        return ""
+    return f"check: registered {', '.join(registered)}, advised {', '.join(wanted)}"
+
+
+def _registration_check(row: pd.Series, session: str, from_block: int) -> str:
+    """Mid-semester: does what the student is registered in for Blocks
+    from_block..4 match the advice? ``OK``, or a short to-do per block.
+
+    Any registered subject that isn't one of the program's own subjects or
+    preps is taken to be an elective."""
+    registered = {
+        b: _SUBJECT_CODE_RE.findall(str(row.get(f"Block {b} code", "") or ""))
+        for b in range(from_block, 5)
+    }
+    if str(row.get(SOURCE_COL, "")).startswith(_SRC_EXCLUDED):
+        regs = [c for b in registered.values() for c in b]
+        return f"Excluded - registered in {', '.join(regs)}" if regs else "Excluded"
+    if is_paused(row.get(STUDY_PATH_COL)):
+        return "Paused - confirm they're returning first"
+    program = str(row["PROGRAM_CD"]).split(".")[0]
+    ref = calc._ref().get(program, {})
+    pattern = set(calc.subjects_for(program, session).values()) | {ref.get("prep1"), ref.get("prep2")}
+    todo = [
+        f"B{b}: {msg}" for b in range(from_block, 5)
+        if (msg := _block_reg_check(row.get(ADVICE_COLS[b]), registered[b], pattern))
+    ]
+    return "; ".join(todo) if todo else REG_OK
 
 
 def _other_enrolments(advised: pd.DataFrame) -> list[str]:
@@ -1436,6 +1498,15 @@ def build_coach_view(advised: pd.DataFrame) -> pd.DataFrame:
 
     # Advice Source (which engine ran) is kept in the full sheet for debugging
     # but left off the Coach View - a coach doesn't need it.
-    for col in [WITHDRAWAL_COL, TEMPLATE_COL, PRINCIPLE_COL, *ADVICE_COLS, COMPLETION_COL, REASON_COL]:
+    # Mid-semester: each block still to register gets what the student is
+    # actually registered in beside the advice, then the Registration Check.
+    advice_cols: list[str] = []
+    for i, col in enumerate(ADVICE_COLS):
+        advice_cols.append(col)
+        if REGISTERED_COLS.get(i) in advised.columns:
+            advice_cols.append(REGISTERED_COLS[i])
+    if REG_CHECK_COL in advised.columns:
+        advice_cols.append(REG_CHECK_COL)
+    for col in [WITHDRAWAL_COL, TEMPLATE_COL, PRINCIPLE_COL, *advice_cols, COMPLETION_COL, REASON_COL]:
         base[col] = advised[col].values
     return base

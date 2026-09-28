@@ -212,6 +212,12 @@ c4.metric("Rule-tree fallback", f"{fallback:,}")
 c5.metric("Flagged for coach review", f"{flagged:,}")
 if excluded:
     st.caption(f"{excluded:,} student(s) excluded — no advice.")
+if rm.REG_CHECK_COL in result.columns:
+    ok = int((result[rm.REG_CHECK_COL] == rm.REG_OK).sum())
+    st.caption(
+        f"Registration check (Blocks 3–4): **{ok:,}** already registered as advised; "
+        f"**{total - ok:,}** need a look (register, drop, check — or paused / excluded)."
+    )
 flags = result.loc[result[rm.WITHDRAWAL_COL].ne(""), rm.WITHDRAWAL_COL].value_counts()
 if not flags.empty:
     st.caption(
