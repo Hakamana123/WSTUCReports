@@ -319,17 +319,28 @@ def _split_prep(prep_pick: str) -> list[str]:
     return [p.strip() for p in prep_pick.replace(" and ", ",").split(",") if p.strip()]
 
 
+def _preps_in_progress(row: pd.Series, program: str) -> list[str]:
+    """The program's prep codes the student is enrolled in right now (a
+    ``Prep N Status`` of ``"… Currently Registered"``)."""
+    ref = calc._ref().get(program, {})
+    return [
+        ref[key] for slot, key in (("Prep 1 Status", "prep1"), ("Prep 2 Status", "prep2"))
+        if ref.get(key) and "Currently Registered" in str(row.get(slot) or "")
+    ]
+
+
 def _ce_fill(
-    positioned: list[str], prep_pick: str, elec_need: int
+    positioned: list[str], prep_pick: str, elec_need: int, cp_start: int = 0
 ) -> tuple[list[str], list[str], str, str, int]:
     """Conditional Enrolment: fill the 30cp cap in order **modular subjects ->
     electives -> prep** (Josiah 2026-09-02). Modular = elective = 10cp, prep =
     15cp. Modular picks keep their block position; anything over the cap is
-    deferred / sent to Summer.
+    deferred / sent to Summer. ``cp_start`` is credit already used this
+    session outside the picks (a prep the student is enrolled in now).
 
     Returns ``(blocks, modular_deferred, prep_now, prep_summer, electives_now)``.
     """
-    cp = 0
+    cp = cp_start
     blocks = ["" for _ in positioned]
     modular_deferred: list[str] = []
     for i, b in enumerate(positioned):
@@ -691,8 +702,16 @@ def advise_student_merged(
     capped = outcome in v2.STANDING_MAX_BLOCKS  # Conditional Enrolment
     elec_need = calc._elective_count(row)
 
+    # Mid-semester, a prep the student is enrolled in right now ("Currently
+    # Registered") is part of this session's load: it counts 15cp toward the
+    # Conditional Enrolment cap, and isn't advised again or sent to Summer.
+    prep_enrolled = _preps_in_progress(row, program) if capped and from_block > 1 else []
+    if prep_enrolled:
+        prep_pick = " and ".join(p for p in _split_prep(prep_pick) if p not in prep_enrolled)
+
     if capped:
-        kept, deferred, prep_now, prep_summer, elec_now = _ce_fill(positioned, prep_pick, elec_need)
+        kept, deferred, prep_now, prep_summer, elec_now = _ce_fill(
+            positioned, prep_pick, elec_need, cp_start=_CP_PREP * len(prep_enrolled))
     else:
         kept, deferred = list(positioned), []
         prep_now, prep_summer = prep_pick, ""
@@ -720,7 +739,7 @@ def advise_student_merged(
         cp_used = 0
         if capped:
             cp_used = _CP_MODULAR * sum(1 for b in kept if b)
-            cp_used += _CP_PREP * len(_split_prep(prep_now))
+            cp_used += _CP_PREP * (len(_split_prep(prep_now)) + len(prep_enrolled))
         for bi in range(from_block - 1, 4):
             forced = next(
                 (prog_subj[str(pos)] for pos in (bi + 1, bi + 5)
@@ -772,6 +791,8 @@ def advise_student_merged(
         bits.append(f"{outcome}: 30cp cap - failed subjects first, then electives, then prep")
     elif outcome == "At Risk" and not nothing:
         bits.append("At Risk (full load allowed - monitor)")
+    if prep_enrolled:
+        bits.append(f"Prep in progress: {' and '.join(prep_enrolled)} (counted in the 30cp cap)")
     if prep_now:
         bits.append(f"Prep: {prep_now}")
     if prep_summer:
@@ -796,7 +817,8 @@ def advise_student_merged(
     # out (failed subjects that didn't fit, a second prep, unplaced electives).
     prog_ref = calc._ref().get(program, {})
     accounted = ({b for _, b in named} | set(deferred) | set(partway_carry)
-                 | {code for _, code in in_progress} | {prep_now, prep_summer})
+                 | {code for _, code in in_progress} | {prep_now, prep_summer}
+                 | set(prep_enrolled))
     still: list[str] = []
     for pos in range(1, 9):
         code = prog_subj.get(str(pos))
@@ -815,7 +837,12 @@ def advise_student_merged(
     if still:
         bits.append("Still to pass (later session): " + ", ".join(still))
     not_offered = c.get("total_needed", 0) - len(in_progress)
-    if nothing and not_offered > 0:
+    if nothing and prep_enrolled:
+        bits.append(
+            f"Nothing more to register in {session} - {outcome} 30cp cap reached "
+            "(the prep in progress plus this session's blocks)"
+        )
+    elif nothing and not_offered > 0:
         bits.append(
             f"Nothing to register in {session} - {not_offered} subject(s) "
             "still to pass are not offered this session"
@@ -830,7 +857,7 @@ def advise_student_merged(
     sched_mod = sum(1 for _, b in named if b != "+1 elective")
     load = 3 if capped else 4
     mod_left = max(0, (mod_out - sched_mod) + (elec_need - elec_now))
-    prep_left = max(0, prep_out - len(_split_prep(prep_now)))
+    prep_left = max(0, prep_out - len(_split_prep(prep_now)) - len(prep_enrolled))
     sessions_after = min(8, max(-(-mod_left // load), prep_left))
     estimate = rs.advance(session, sessions_after)
 
