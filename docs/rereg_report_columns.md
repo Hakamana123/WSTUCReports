@@ -99,12 +99,15 @@ The Advice Reason starts with a line explaining which case applies.
 
 ## Rules worth knowing
 
-- **Conditional Enrolment = 30 credit points per semester, max.** The cap
-  includes anything already taken in Blocks 1–2 this session and, on a
-  mid-semester report, a prep they're doing right now (15cp, shown as
-  "Prep in progress" in the Advice Reason). Order inside the
-  cap: failed / owed subjects first, then electives, then prep. What doesn't fit
-  is listed under "Still to pass (later session)".
+- **Conditional Enrolment = 30 credit points per semester, max.** On a
+  mid-semester report the cap applies to the rest of this semester and starts
+  from what the student is **actually enrolled in** this session: 10cp for each
+  Block 1–2 subject (passed or failed) and 15cp for a prep they're doing now
+  ("Prep in progress"). The Advice Reason shows the total, e.g. "Already
+  enrolled this session: 35cp of 30". Blocks 3–4 only get what still fits, in
+  the order failed / owed subjects, then electives, then prep. If nothing fits
+  it says "30cp cap reached". What doesn't fit is listed under "Still to pass
+  (later session)".
 - **Exclusion**: no advice. Refer to the coach.
 - **Paused**: advice is provisional (grey), no withdrawal advice, no comms until
   they confirm they're returning.

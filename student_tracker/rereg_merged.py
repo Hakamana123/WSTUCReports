@@ -205,6 +205,15 @@ def _mark_earlier_blocks(out: dict, row: pd.Series, from_block: int) -> None:
         out[ADVICE_COLS[b]] = _earlier_block_cell(row, b)
 
 
+def _enrolled_earlier_codes(row: pd.Series, from_block: int) -> list[str]:
+    """Every subject code the student was enrolled in across Blocks
+    1..from_block-1 this session (a block can hold more than one)."""
+    return [
+        code for b in range(1, from_block)
+        for code in _SUBJECT_CODE_RE.findall(str(row.get(f"Block {b} code", "") or ""))
+    ]
+
+
 def _enrolled_earlier_blocks(row: pd.Series, from_block: int) -> dict[str, int]:
     """``{subject_code: block}`` for subjects the student is already enrolled in
     this session, in the blocks before ``from_block`` (the file's ``Block N code``
@@ -709,9 +718,23 @@ def advise_student_merged(
     if prep_enrolled:
         prep_pick = " and ".join(p for p in _split_prep(prep_pick) if p not in prep_enrolled)
 
+    # Mid-semester, Blocks 1..from_block-1 have already run: the cap counts what
+    # the student was actually enrolled in there (10cp a subject, passed or
+    # failed - coaching team, 2026-09-28), not the pattern's picks for those
+    # blocks, and applies for the rest of this semester. The early picks are
+    # kept out of the fill and put back afterwards, for the "still owes" text.
+    early_cp = 0
+    early_picks: list[str] = []
+    if capped and from_block > 1:
+        early_cp = _CP_MODULAR * len(_enrolled_earlier_codes(row, from_block))
+        early_picks = [b if b != "+1 elective" else "" for b in positioned[:from_block - 1]]
+        positioned = [""] * (from_block - 1) + list(positioned[from_block - 1:])
+    session_cp = _CP_PREP * len(prep_enrolled) + early_cp  # already used this session
+
     if capped:
         kept, deferred, prep_now, prep_summer, elec_now = _ce_fill(
-            positioned, prep_pick, elec_need, cp_start=_CP_PREP * len(prep_enrolled))
+            positioned, prep_pick, elec_need, cp_start=session_cp)
+        kept[:len(early_picks)] = early_picks
     else:
         kept, deferred = list(positioned), []
         prep_now, prep_summer = prep_pick, ""
@@ -738,8 +761,8 @@ def advise_student_merged(
     if from_block > 1:
         cp_used = 0
         if capped:
-            cp_used = _CP_MODULAR * sum(1 for b in kept if b)
-            cp_used += _CP_PREP * (len(_split_prep(prep_now)) + len(prep_enrolled))
+            cp_used = session_cp + _CP_PREP * len(_split_prep(prep_now))
+            cp_used += _CP_MODULAR * sum(1 for b in kept[from_block - 1:] if b)
         for bi in range(from_block - 1, 4):
             forced = next(
                 (prog_subj[str(pos)] for pos in (bi + 1, bi + 5)
@@ -793,6 +816,10 @@ def advise_student_merged(
         bits.append("At Risk (full load allowed - monitor)")
     if prep_enrolled:
         bits.append(f"Prep in progress: {' and '.join(prep_enrolled)} (counted in the 30cp cap)")
+    if session_cp:
+        parts = ([f"prep {_CP_PREP * len(prep_enrolled)}cp"] if prep_enrolled else []) + (
+            [f"Blocks 1-{from_block - 1} {early_cp}cp"] if early_cp else [])
+        bits.append(f"Already enrolled this session: {session_cp}cp of 30 ({', '.join(parts)})")
     if prep_now:
         bits.append(f"Prep: {prep_now}")
     if prep_summer:
@@ -837,11 +864,8 @@ def advise_student_merged(
     if still:
         bits.append("Still to pass (later session): " + ", ".join(still))
     not_offered = c.get("total_needed", 0) - len(in_progress)
-    if nothing and prep_enrolled:
-        bits.append(
-            f"Nothing more to register in {session} - {outcome} 30cp cap reached "
-            "(the prep in progress plus this session's blocks)"
-        )
+    if nothing and session_cp + _CP_MODULAR > CE_CAP_CP:
+        bits.append(f"Nothing more to register in {session} - {outcome} 30cp cap reached")
     elif nothing and not_offered > 0:
         bits.append(
             f"Nothing to register in {session} - {not_offered} subject(s) "
