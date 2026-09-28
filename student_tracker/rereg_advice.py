@@ -349,7 +349,9 @@ def build_advice(
 # Coach view - a slim, readable second sheet                                   #
 # --------------------------------------------------------------------------- #
 PASSED_MARK = "✓"       # passed
-OUTSTANDING_MARK = "✗"  # still to pass
+ENROLLED_MARK = "◐"     # currently registered, not passed yet
+OUTSTANDING_MARK = "○"  # still to pass (failed or not yet attempted - the file
+                        # can't tell them apart; ✗ is kept for "failed")
 BAR_FILLED = "█"
 BAR_EMPTY = "░"
 BAR_WIDTH = 10
@@ -370,10 +372,10 @@ def _status(row: pd.Series, is_outstanding=None, elective_count=None) -> tuple[s
     """(summary, grid, bar).
 
     - summary: plain count line, e.g. "Outstanding: 1 prep, 2 core, 2 electives"
-    - grid: positional marks, e.g. "Prep ✓✗ | Blk 1-4 ✓✓✓✓ | Blk 5-6 ✗✗ | Elec ✗✗"
+    - grid: positional marks, e.g. "Prep ✓○ | Blk 1-4 ✓✓◐○ | Blk 5-6 ○○ | Elec ○○"
     - bar: text progress bar over all required subjects
-    ✓ = passed, ✗ = still to pass. Electives always count as outstanding (the
-    file only gives a count of what's still needed).
+    ✓ = passed, ◐ = currently registered, ○ = still to pass. Electives always
+    count as outstanding (the file only gives a count of what's still needed).
 
     ``is_outstanding`` overrides the slot test - the merged tool passes the
     calculator's (more lenient) version so the grid matches its advice.
@@ -400,7 +402,12 @@ def _status(row: pd.Series, is_outstanding=None, elective_count=None) -> tuple[s
 
     # grid
     def marks(slots):
-        return "".join(OUTSTANDING_MARK if _out(row[s]) else PASSED_MARK for s in slots)
+        return "".join(
+            PASSED_MARK if not _out(row[s])
+            else ENROLLED_MARK if "Currently Registered" in str(row[s])
+            else OUTSTANDING_MARK
+            for s in slots
+        )
 
     segs = []
     if prep_used:

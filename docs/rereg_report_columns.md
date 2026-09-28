@@ -62,8 +62,8 @@ Why each student gets the template they do is in
 | L | Other Enrolment | `Also enrolled: program X (coach)` when the same student has a second program row. Check which one is real. |
 | M | Student Status | Count of what's left: "Outstanding: 1 prep, 2 core, 2 electives", or "All passed". |
 | N | Progress Bar | The same as a bar and percentage. |
-| O | Progress | Position by position across the whole course: `✓` passed, `✗` **still to pass**. **Not the same as the Block 1–2 marks.** Here `✗` covers failed *and* not yet attempted. |
-| P | Withdrawal Flag | `ADVISE WITHDRAWAL` (red) = a commencing student who passed neither Block 1 nor Block 2 this session. **Never set for a paused student.** They get a note in the Advice Reason instead. |
+| O | Progress | Position by position across the whole course: `✓` passed, `◐` registered now (not passed yet), `○` still to pass. `○` covers failed *and* not yet attempted, because the file can't tell them apart. That's why it isn't `✗`, which means "failed" in T/U. |
+| P | Withdrawal Flag | Mid-semester only, commencing students with **no pass** in Blocks 1–2 this session. See [the flags](#withdrawal-flag-column-p) below. Blank for everyone else, and **always blank for a paused student** (they get a note in the Advice Reason instead). |
 | Q | Messaging Template | Which email/tab: Commencing, Template 1A / 1B / 1C / 2 / 3, Transition. Paused students are also collected on the *Paused – check enrolment* tab of the per-coach files. |
 | R | Rereg Principle | The situation behind the template (On Pattern, Mostly Progressing, 3+ Sessions, …). |
 | S | Prep Registration Advice | Prep subject to register (GEDU0016 / GEDU0017), if any. |
@@ -76,6 +76,21 @@ Why each student gets the template they do is in
 
 In the per-coach files, S–W also carry the subject name after each code
 (`GEDU1001 — Name`).
+
+---
+
+## Withdrawal Flag (column P)
+
+Only on a mid-semester report, and only for a **commencing, not paused**
+student who has **no pass** in Blocks 1–2 this session:
+
+| Flag | When | What to do |
+|---|---|---|
+| **ADVISE WITHDRAWAL** (red) | At least one ✗ in Blocks 1–2 (the other block can be ✗ or `0`), **and** registered in Block 3 or 4 | Withdrawal conversation: drop Blocks 3–4, restart next semester. No subject advice. The Advice Reason lists the failed subjects. |
+| **CHECK ENROLMENT** (amber) | Not enrolled in Block 1 or 2 (`0`/`0`), **or** no Block 3/4 registration, so there's nothing to withdraw from | Not a withdrawal. Confirm the enrolment is right, or whether they're still studying. Normal advice is shown. |
+| **AWAITING GRADE** | Enrolled in Block 1 or 2 with no grade recorded yet | Nothing yet. Re-run once grades are in. Normal advice is shown. |
+
+The Advice Reason starts with a line explaining which case applies.
 
 ---
 

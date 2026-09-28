@@ -35,7 +35,7 @@ A2. Counts are from the `20260915 Mid Semester Re-reg` file, target
 | Template / Tab | When (who it's for) | Rule | What the student gets |
 |---|---|---|---|
 | **Commencing** (717) | Commenced *this* Spring (2026) | Commencement period = 26 SPR or later | On-pattern registration — **or** the withdrawal flag below |
-| ↳ *Advise Withdrawal flag* (66) | Commencing student, **mid-block**, not paused | Failed **both** Spring Block 1 **and** Block 2 this session | Red flag (Column P) → "de-register from B3/B4, restart in Autumn 2027" email. A Deferred / LoA student is never flagged — they get greyed advice and a note instead |
+| ↳ *Advise Withdrawal flag* (82) | Commencing student, **mid-block**, not paused | **No pass** in Spring Blocks 1–2, **at least one fail**, and registered in Block 3/4 | Red flag (Column P) → "de-register from B3/B4, restart in Autumn 2027" email. Never enrolled in B1/B2, or nothing to withdraw from → *Check Enrolment* instead; a grade still to come → *Awaiting Grade*. A Deferred / LoA student is never flagged — greyed advice and a note instead |
 | **Template 1A** (1,537) | Current cohort (26 AUT / 25 SPR / 25 SUM) | **0** first-semester subjects still unpassed — on pattern | Next pattern subjects into Prep + Blocks 3/4; electives where needed |
 | **Template 1B** (480) | Current cohort | **1–2** first-semester subjects unpassed — roughly on track | Stay-with-cohort advice + catch-up subject into B3/B4; check-in |
 | **Template 1C** (518) | Current cohort | **3+** first-semester subjects unpassed — start again | Restart message ("best option is Autumn 2027") **+** subject advice for those who press on |

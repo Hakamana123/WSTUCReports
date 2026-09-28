@@ -79,8 +79,10 @@ with col_a:
         value=False,
         help="Only Blocks 3–4 are registered now; Blocks 1–2 (already done this "
              "session) show greyed with what the student took and how it went: "
-             "✓ passed, ✗ failed, 0 not enrolled. A commencing student who failed "
-             "both Block 1 and Block 2 is flagged to withdraw (never a paused one).",
+             "✓ passed, ✗ failed, 0 not enrolled. A commencing student with no "
+             "pass and at least one fail is flagged to withdraw; no enrolment or "
+             "nothing to withdraw from -> check enrolment; a grade still to come "
+             "-> awaiting grade. Paused students are never flagged.",
     )
     session = f"{named} Block 3" if part_block else named
     st.caption(f"Target: **{session}**")
@@ -207,6 +209,14 @@ c4.metric("Rule-tree fallback", f"{fallback:,}")
 c5.metric("Flagged for coach review", f"{flagged:,}")
 if excluded:
     st.caption(f"{excluded:,} student(s) excluded — no advice.")
+flags = result.loc[result[rm.WITHDRAWAL_COL].ne(""), rm.WITHDRAWAL_COL].value_counts()
+if not flags.empty:
+    st.caption(
+        "Mid-semester flags (commencing students with no pass yet): "
+        + ", ".join(f"**{int(flags.get(f, 0)):,}** {f.lower()}"
+                    for f in (rm._WITHDRAW_TEXT, rm._CHECK_ENROL_TEXT, rm._AWAITING_TEXT))
+        + "."
+    )
 
 paused = (
     int(coach_view[rm.STUDY_PATH_COL].map(rm.is_paused).sum())
@@ -268,7 +278,7 @@ preview = view.replace(r"^~(.+)$", r"(\1)", regex=True)
 st.dataframe(preview, use_container_width=True, hide_index=True)
 st.caption(
     f"Showing {len(view):,} of {total:,} students.  "
-    "Progress key: ✓ = passed, ✗ = still to pass.  "
+    "Progress key: ✓ = passed, ◐ = registered now, ○ = still to pass.  "
     "A block subject in (brackets) here is greyed in the download — shown for "
     "reference, not being registered this session. On a mid-semester run the "
     "greyed Block 1–2 cells mark the result: ✓ passed, ✗ failed, 0 not enrolled "

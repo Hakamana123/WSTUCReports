@@ -72,10 +72,20 @@ NOT_ASSESSED_PAUSED = "Not assessed (paused)"
 NO_OUTCOME = "No outcome recorded - review"
 _PASS_GRADE_LETTERS = set("ABCDHP")  # first letter of a pass grade (A/B/C/C+/D/H/P)
 _WITHDRAW_TEXT = "ADVISE WITHDRAWAL"
+_CHECK_ENROL_TEXT = "CHECK ENROLMENT"
+_AWAITING_TEXT = "AWAITING GRADE"
 _SRC_WITHDRAW = "mid-semester withdrawal (commencing student, failed Blocks 1-2)"
 _PAUSED_NO_WITHDRAW_NOTE = (
     "No Block 1-2 passes, but paused - no withdrawal advice (not sent to paused students)"
 )
+_EARLY_FLAG_NOTES = {
+    "later": ("CHECK ENROLMENT: not enrolled in Blocks 1-2 but registered later this "
+              "session - confirm the enrolment is right (not a withdrawal case)"),
+    "nothing": ("CHECK ENROLMENT: no Block 1-2 pass and no later registration this "
+                "session - nothing to withdraw from; check they are still studying"),
+    _AWAITING_TEXT: ("AWAITING GRADE: no Block 1-2 pass yet but a grade is still to come - "
+                     "recheck before any withdrawal advice"),
+}
 
 
 def _block_passed(result) -> bool:
@@ -90,21 +100,64 @@ def _block_passed(result) -> bool:
     )
 
 
-def _failed_earlier_blocks(row: pd.Series, from_block: int) -> bool:
-    """Mid-session withdrawal trigger: a commencing student who has passed none
-    of the teaching blocks up to this point in the session.
+def _block_outcome(row: pd.Series, block: int) -> str:
+    """How one already-run block went: ``"pass"``, ``"fail"`` (a grade is
+    recorded and none of it is a pass), ``"pending"`` (enrolled, no grade yet)
+    or ``"none"`` (not enrolled in that block)."""
+    if not _SUBJECT_CODE_RE.search(str(row.get(f"Block {block} code", "") or "")):
+        return "none"
+    raw = row.get(f"Block {block} Result")
+    raw = "" if raw is None or pd.isna(raw) else str(raw)
+    if _block_passed(raw):
+        return "pass"
+    return "fail" if raw.replace(",", "").strip() else "pending"
 
-    'Not passed' is deliberately wide - a fail (F / FNS), a withdrawal (W), an
-    E, or a blank result all count. A blank means no pass is recorded, whether
-    the student failed, dropped, or never engaged; for a commencing student at
-    mid-semester that is still a "hasn't passed their first blocks" situation,
-    so they are flagged for the coach to follow up."""
+
+def _early_block_flag(row: pd.Series, from_block: int) -> str:
+    """Mid-session check on a commencing student with no pass so far this
+    session. Returns the Withdrawal Flag value, or ``""`` when nothing is wrong.
+
+    Agreed with the coaching team (2026-09-28) - withdrawal only makes sense
+    when there is something to withdraw from and something actually failed:
+
+    - any block passed                           -> ``""``
+    - a block still waiting on its grade          -> AWAITING GRADE
+    - at least one fail, registered in a later block -> ADVISE WITHDRAWAL
+      (a fail plus a block they weren't enrolled in counts)
+    - otherwise - never enrolled in the early blocks, or nothing left to
+      withdraw from                                -> CHECK ENROLMENT
+    """
     if from_block < 2:
-        return False
-    return all(
-        not _block_passed(row.get(f"Block {b} Result"))
-        for b in range(1, from_block)
+        return ""
+    outcomes = [_block_outcome(row, b) for b in range(1, from_block)]
+    if "pass" in outcomes:
+        return ""
+    if "pending" in outcomes:
+        return _AWAITING_TEXT
+    later = any(
+        _SUBJECT_CODE_RE.search(str(row.get(f"Block {b} code", "") or ""))
+        for b in range(from_block, 5)
     )
+    if "fail" in outcomes and later:
+        return _WITHDRAW_TEXT
+    return _CHECK_ENROL_TEXT
+
+
+def _failed_subjects(row: pd.Series, from_block: int) -> list[str]:
+    """``["GEDU1001 (Block 1)", ...]`` - the early-block subjects with a
+    non-pass grade, for the withdrawal reason text."""
+    out = []
+    for b in range(1, from_block):
+        codes = _SUBJECT_CODE_RE.findall(str(row.get(f"Block {b} code", "") or ""))
+        raw = row.get(f"Block {b} Result")
+        raw = "" if raw is None or pd.isna(raw) else str(raw)
+        grades = raw.split(",") if raw.strip() else []
+        if len(grades) == len(codes):
+            out += [f"{c} (Block {b})" for c, g in zip(codes, grades)
+                    if _result_mark(g) == RESULT_FAIL]
+        elif _result_mark(raw) == RESULT_FAIL:
+            out += [f"{c} (Block {b})" for c in codes]
+    return out
 
 
 RESULT_PASS = "✓"
@@ -553,35 +606,49 @@ def advise_student_merged(
     base = rs.base_session(session)
     from_block = rs.target_block(session)
 
-    # Mid-semester withdrawal (Stage 1): a *commencing* student who failed every
-    # block completed so far this session -> no subject advice, just flag them
-    # for the coach. A continuing student who fails two blocks in a row is
-    # advised to re-take (the normal engine below), not withdraw.
+    # Mid-semester check (Stage 1): a *commencing* student with no pass in the
+    # blocks run so far this session (see _early_block_flag). ADVISE WITHDRAWAL
+    # -> no subject advice, just flag them for the coach. CHECK ENROLMENT /
+    # AWAITING GRADE -> flagged, but the normal advice below still runs. A
+    # continuing student who fails two blocks in a row is advised to re-take,
+    # not withdraw.
     #
     # UPPAP (program 9034) is excluded: its pattern doesn't start at Block 1, so
     # "hasn't cleared Block 1/2" doesn't mean the same thing - those students are
     # not registered in Blocks 1/2 by design, not because they failed to.
     #
-    # A paused (Deferred / Leave of Absence) student is never sent withdrawal
-    # advice (coaching team, 2026-09-28): they have no Block 1-2 passes because
-    # they stepped away, not because they failed. They fall through to the
-    # normal (greyed, provisional) advice with a note for the coach.
-    would_withdraw = (
-        program not in calc.UNSUPPORTED_PROGRAMS
-        and _failed_earlier_blocks(row, from_block)
-        and _commenced_this_session(row, base)
+    # A paused (Deferred / Leave of Absence) student is never flagged
+    # (coaching team, 2026-09-28): they have no Block 1-2 passes because they
+    # stepped away, not because they failed. They fall through to the normal
+    # (greyed, provisional) advice with a note for the coach.
+    early_flag = (
+        _early_block_flag(row, from_block)
+        if program not in calc.UNSUPPORTED_PROGRAMS and _commenced_this_session(row, base)
+        else ""
     )
-    paused_no_withdraw = would_withdraw and is_paused(row.get(STUDY_PATH_COL))
-    if would_withdraw and not paused_no_withdraw:
+    paused_no_withdraw = bool(early_flag) and is_paused(row.get(STUDY_PATH_COL))
+    early_note = ""
+    if paused_no_withdraw:
+        early_flag = ""
+    elif early_flag == _WITHDRAW_TEXT:
         _mark_earlier_blocks(out, row, from_block)
+        failed = ", ".join(_failed_subjects(row, from_block))
         out[WITHDRAWAL_COL] = _WITHDRAW_TEXT
         out[REASON_COL] = (
-            f"** {_WITHDRAW_TEXT} ** - commencing student, failed Block(s) 1-{from_block - 1} "
-            f"this session. Drop Block {from_block}-4 registrations; restart next semester as a "
-            "commencing student."
+            f"** {_WITHDRAW_TEXT} ** - commencing student, no pass in Block(s) "
+            f"1-{from_block - 1} this session (failed: {failed}). Drop Block "
+            f"{from_block}-4 registrations; restart next semester as a commencing student."
         )
         out[SOURCE_COL] = _SRC_WITHDRAW
         return out
+    elif early_flag == _AWAITING_TEXT:
+        early_note = _EARLY_FLAG_NOTES[_AWAITING_TEXT]
+    elif early_flag == _CHECK_ENROL_TEXT:
+        registered_later = any(
+            _SUBJECT_CODE_RE.search(str(row.get(f"Block {b} code", "") or ""))
+            for b in range(from_block, 5)
+        )
+        early_note = _EARLY_FLAG_NOTES["later" if registered_later else "nothing"]
 
     # 2. Grant's calculator - only for the sessions it has offering patterns for.
     if rs.uses_calculator(session):
@@ -615,6 +682,9 @@ def advise_student_merged(
         out[REASON_COL] = adv.reason
         if paused_no_withdraw:
             out[REASON_COL] += f" | {_PAUSED_NO_WITHDRAW_NOTE}"
+        if early_note:
+            out[WITHDRAWAL_COL] = early_flag
+            out[REASON_COL] = f"{early_note} | {out[REASON_COL]}"
         out[SOURCE_COL] = _SRC_V2.format(c["miss"])
         return out
 
@@ -780,6 +850,9 @@ def advise_student_merged(
         bits.append(f"NOTE: {status} - confirm the student is returning before acting")
     if paused_no_withdraw:
         bits.append(_PAUSED_NO_WITHDRAW_NOTE)
+    if early_note:
+        out[WITHDRAWAL_COL] = early_flag
+        bits.insert(0, early_note)
 
     if carried:
         bits.append(
@@ -824,8 +897,9 @@ SHEET_NAME = v2.SHEET_NAME
 def _style_advice_sheet(ws) -> None:
     """Apply the two bits of styling the advice output uses to one worksheet:
     an advice-block cell prefixed with the grey marker becomes grey italic text
-    (for-reference, not registered) with the marker stripped, and a row flagged
-    ``ADVISE WITHDRAWAL`` gets its flag + reason cells in red bold."""
+    (for-reference, not registered) with the marker stripped, a row flagged
+    ``ADVISE WITHDRAWAL`` gets its flag + reason cells in red bold, and a
+    ``CHECK ENROLMENT`` flag is amber bold."""
     from openpyxl.styles import Font
 
     grey_font = Font(color="808080", italic=True)
@@ -834,14 +908,17 @@ def _style_advice_sheet(ws) -> None:
     block_cols = {i for i, c in enumerate(header, 1) if c in ADVICE_COLS}
     flag_col = next((i for i, c in enumerate(header, 1) if c == WITHDRAWAL_COL), None)
     red_cols = {i for i, c in enumerate(header, 1) if c in (WITHDRAWAL_COL, REASON_COL)}
+    amber_font = Font(color="C65911", bold=True)
     for rowcells in ws.iter_rows(min_row=2):
-        flagged = flag_col and str(rowcells[flag_col - 1].value or "").strip() == _WITHDRAW_TEXT
+        flag = str(rowcells[flag_col - 1].value or "").strip() if flag_col else ""
         for cell in rowcells:
             if cell.column in block_cols and isinstance(cell.value, str) and cell.value.startswith(_GREY):
                 cell.value = cell.value[len(_GREY):]
                 cell.font = grey_font
-            elif flagged and cell.column in red_cols:
+            elif flag == _WITHDRAW_TEXT and cell.column in red_cols:
                 cell.font = red_font
+            elif flag == _CHECK_ENROL_TEXT and cell.column == flag_col:
+                cell.font = amber_font
 
 
 def to_workbook_bytes(df: pd.DataFrame, coach_view: pd.DataFrame | None = None) -> bytes:
