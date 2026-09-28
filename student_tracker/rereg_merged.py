@@ -73,6 +73,9 @@ NO_OUTCOME = "No outcome recorded - review"
 _PASS_GRADE_LETTERS = set("ABCDHP")  # first letter of a pass grade (A/B/C/C+/D/H/P)
 _WITHDRAW_TEXT = "ADVISE WITHDRAWAL"
 _SRC_WITHDRAW = "mid-semester withdrawal (commencing student, failed Blocks 1-2)"
+_PAUSED_NO_WITHDRAW_NOTE = (
+    "No Block 1-2 passes, but paused - no withdrawal advice (not sent to paused students)"
+)
 
 
 def _block_passed(result) -> bool:
@@ -102,6 +105,51 @@ def _failed_earlier_blocks(row: pd.Series, from_block: int) -> bool:
         not _block_passed(row.get(f"Block {b} Result"))
         for b in range(1, from_block)
     )
+
+
+RESULT_PASS = "✓"
+RESULT_FAIL = "✗"
+NOT_ENROLLED = "0"
+
+
+def _result_mark(grade: str) -> str:
+    """``✓`` for a pass grade, ``✗`` for any other recorded grade (F / FNS / E /
+    W), ``""`` when no grade is recorded yet."""
+    grade = grade.strip()
+    if not grade:
+        return ""
+    return RESULT_PASS if _block_passed(grade) else RESULT_FAIL
+
+
+def _earlier_block_cell(row: pd.Series, block: int) -> str:
+    """The greyed advice cell for a block that has already run this session:
+    what the student was enrolled in, each subject tagged with its result
+    (``GEDU1001 ✓``, ``EDUC1012 ✗``), or ``0`` when they weren't enrolled in
+    that block at all - so "didn't take it" and "took it and failed" read
+    differently (agreed with the coaching team, 2026-09-28).
+
+    A block can hold more than one subject; its ``Block N Result`` is then a
+    comma list in the same order. If the two lists don't line up, the block's
+    overall result goes on the end instead of per subject."""
+    codes = _SUBJECT_CODE_RE.findall(str(row.get(f"Block {block} code", "") or ""))
+    if not codes:
+        return _GREY + NOT_ENROLLED
+    raw = row.get(f"Block {block} Result")
+    raw = "" if raw is None or pd.isna(raw) else str(raw)
+    grades = raw.split(",") if raw.strip() else []
+    if len(grades) == len(codes):
+        parts = [f"{c} {_result_mark(g)}".rstrip() for c, g in zip(codes, grades)]
+    else:
+        parts = [f"{', '.join(codes)} {_result_mark(raw)}".rstrip()]
+    return _GREY + ", ".join(parts)
+
+
+def _mark_earlier_blocks(out: dict, row: pd.Series, from_block: int) -> None:
+    """Mid-semester target: overwrite the advice cells for Blocks
+    1..from_block-1 (already started, nothing to register) with what the
+    student took there and how it went."""
+    for b in range(1, from_block):
+        out[ADVICE_COLS[b]] = _earlier_block_cell(row, b)
 
 
 def _enrolled_earlier_blocks(row: pd.Series, from_block: int) -> dict[str, int]:
@@ -513,11 +561,19 @@ def advise_student_merged(
     # UPPAP (program 9034) is excluded: its pattern doesn't start at Block 1, so
     # "hasn't cleared Block 1/2" doesn't mean the same thing - those students are
     # not registered in Blocks 1/2 by design, not because they failed to.
-    if (
+    #
+    # A paused (Deferred / Leave of Absence) student is never sent withdrawal
+    # advice (coaching team, 2026-09-28): they have no Block 1-2 passes because
+    # they stepped away, not because they failed. They fall through to the
+    # normal (greyed, provisional) advice with a note for the coach.
+    would_withdraw = (
         program not in calc.UNSUPPORTED_PROGRAMS
         and _failed_earlier_blocks(row, from_block)
         and _commenced_this_session(row, base)
-    ):
+    )
+    paused_no_withdraw = would_withdraw and is_paused(row.get(STUDY_PATH_COL))
+    if would_withdraw and not paused_no_withdraw:
+        _mark_earlier_blocks(out, row, from_block)
         out[WITHDRAWAL_COL] = _WITHDRAW_TEXT
         out[REASON_COL] = (
             f"** {_WITHDRAW_TEXT} ** - commencing student, failed Block(s) 1-{from_block - 1} "
@@ -555,7 +611,10 @@ def advise_student_merged(
         out[ADVICE_COLS[0]] = adv.prep
         for col, val in zip(ADVICE_COLS[1:], adv.blocks):
             out[col] = val
+        _mark_earlier_blocks(out, row, from_block)
         out[REASON_COL] = adv.reason
+        if paused_no_withdraw:
+            out[REASON_COL] += f" | {_PAUSED_NO_WITHDRAW_NOTE}"
         out[SOURCE_COL] = _SRC_V2.format(c["miss"])
         return out
 
@@ -624,24 +683,13 @@ def advise_student_merged(
         partway_carry = []
 
     # For a mid-semester target the earlier blocks have already started, so their
-    # advice cells show the subject the student is *actually taking* in that block
-    # (greyed, for reference), not a pattern subject they can no longer register
-    # in. What they still owe from those blocks is carried in the reason text.
-    enrolled_now: dict[int, str] = {}
-    if from_block > 1:
-        for b in range(1, from_block):
-            codes = _SUBJECT_CODE_RE.findall(str(row.get(f"Block {b} code", "") or ""))
-            if codes:
-                enrolled_now[b] = ", ".join(codes)
-
+    # advice cells show the subject the student actually took in that block and
+    # its result (greyed, for reference), not a pattern subject they can no longer
+    # register in. What they still owe from those blocks is in the reason text.
     out[ADVICE_COLS[0]] = prep_now
-    for i, (col, val) in enumerate(zip(ADVICE_COLS[1:], kept)):
-        block_no = i + 1
-        if from_block > 1 and block_no < from_block:
-            current = enrolled_now.get(block_no, "")
-            out[col] = (_GREY + current) if current else ""
-        else:
-            out[col] = val
+    for col, val in zip(ADVICE_COLS[1:], kept):
+        out[col] = val
+    _mark_earlier_blocks(out, row, from_block)
     # a carried-forward pattern's completion estimate is stale (see rereg_calc)
     out[COMPLETION_COL] = "" if completion in ("", "Not Found") or carried else completion
 
@@ -730,6 +778,8 @@ def advise_student_merged(
     status = str(row.get("STUDY_PATH_STATUS", "") or "")
     if status and status != "Active Study Path":
         bits.append(f"NOTE: {status} - confirm the student is returning before acting")
+    if paused_no_withdraw:
+        bits.append(_PAUSED_NO_WITHDRAW_NOTE)
 
     if carried:
         bits.append(

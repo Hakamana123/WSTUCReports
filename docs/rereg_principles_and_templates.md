@@ -5,6 +5,9 @@ file, 2026-07-07). ~3,600 de-duplicated students across 9 sheets, each carrying
 a `Rereg Principles` label, a `Template` label, and the resulting
 `Prep / B1–B4 Name` advice.
 
+> For what each column of the report means, see
+> [rereg_report_columns.md](rereg_report_columns.md).
+
 The system has three layers:
 
 ```
@@ -32,7 +35,7 @@ A2. Counts are from the `20260915 Mid Semester Re-reg` file, target
 | Template / Tab | When (who it's for) | Rule | What the student gets |
 |---|---|---|---|
 | **Commencing** (717) | Commenced *this* Spring (2026) | Commencement period = 26 SPR or later | On-pattern registration — **or** the withdrawal flag below |
-| ↳ *Advise Withdrawal flag* (66) | Commencing student, **mid-block** | Failed **both** Spring Block 1 **and** Block 2 this session | Red flag (Column P) → "de-register from B3/B4, restart in Autumn 2027" email |
+| ↳ *Advise Withdrawal flag* (66) | Commencing student, **mid-block**, not paused | Failed **both** Spring Block 1 **and** Block 2 this session | Red flag (Column P) → "de-register from B3/B4, restart in Autumn 2027" email. A Deferred / LoA student is never flagged — they get greyed advice and a note instead |
 | **Template 1A** (1,537) | Current cohort (26 AUT / 25 SPR / 25 SUM) | **0** first-semester subjects still unpassed — on pattern | Next pattern subjects into Prep + Blocks 3/4; electives where needed |
 | **Template 1B** (480) | Current cohort | **1–2** first-semester subjects unpassed — roughly on track | Stay-with-cohort advice + catch-up subject into B3/B4; check-in |
 | **Template 1C** (518) | Current cohort | **3+** first-semester subjects unpassed — start again | Restart message ("best option is Autumn 2027") **+** subject advice for those who press on |
@@ -56,10 +59,11 @@ Reading notes:
 - **Greyed advice cells** mean "for reference, not a registration to action this
   session" and come up two ways. (1) *Mid-semester report* (advising from Block
   3): the earlier blocks have already started, so their cells show the subject
-  the student is **currently enrolled in** for that block, greyed — Blocks 1-2 in
-  progress, Blocks 3-4 the ones to register now. What they still owe from the
-  early blocks is in the Advice Reason ("still owes X, Y — take next Autumn"), not
-  the greyed cell. (2) *Paused student*: every advice cell is greyed, because the
+  the student **was enrolled in** for that block, greyed, with its result:
+  `✓` passed, `✗` failed (F / FNS / E / W), no mark = no grade recorded yet, and
+  a greyed `0` = not enrolled in that block at all. Blocks 3-4 are the ones to
+  register now. What they still owe from the early blocks is in the Advice
+  Reason ("still owes X, Y — take next Autumn"). (2) *Paused student*: every advice cell is greyed, because the
   whole plan is provisional until they confirm they're returning. In the download
   the grey shows as grey italic; in the on-screen preview as `(brackets)`.
 - **Advise Withdrawal (mid-block)** and **1C (end of semester)** are the same

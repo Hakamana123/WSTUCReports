@@ -78,8 +78,9 @@ with col_a:
         "Mid-semester — advise from Block 3",
         value=False,
         help="Only Blocks 3–4 are registered now; Blocks 1–2 (already done this "
-             "session) show greyed. A student who failed both Block 1 and Block 2 "
-             "is flagged to withdraw.",
+             "session) show greyed with what the student took and how it went: "
+             "✓ passed, ✗ failed, 0 not enrolled. A commencing student who failed "
+             "both Block 1 and Block 2 is flagged to withdraw (never a paused one).",
     )
     session = f"{named} Block 3" if part_block else named
     st.caption(f"Target: **{session}**")
@@ -215,7 +216,8 @@ no_outcome = int((coach_view[rm.STUDY_STATUS_COL] == rm.NO_OUTCOME).sum())
 if paused:
     st.caption(
         f"**{paused:,} paused** (Deferred / Leave of Absence) — still get subject "
-        "advice (greyed), but confirm they're returning first. In the per-coach "
+        "advice (greyed), but confirm they're returning first, and are never "
+        "flagged for withdrawal. In the per-coach "
         f"split they're all on the *{rm._PAUSED_TAB}* tab; commencing ones also "
         "stay on the Commencing tab, so they appear in both."
     )
@@ -268,7 +270,9 @@ st.caption(
     f"Showing {len(view):,} of {total:,} students.  "
     "Progress key: ✓ = passed, ✗ = still to pass.  "
     "A block subject in (brackets) here is greyed in the download — shown for "
-    "reference, not being registered this session."
+    "reference, not being registered this session. On a mid-semester run the "
+    "greyed Block 1–2 cells mark the result: ✓ passed, ✗ failed, 0 not enrolled "
+    "(no mark = no grade recorded yet)."
 )
 
 st.download_button(
