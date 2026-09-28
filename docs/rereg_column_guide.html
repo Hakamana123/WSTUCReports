@@ -1,0 +1,276 @@
+<!doctype html>
+<!-- Same content as docs/rereg_report_columns.md; shown in the app by pages/10_Report_Column_Guide.py. Edit both together. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rereg Report Column Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans+Condensed:wght@600&display=swap">
+<style>
+:root {
+  --paper: #f5f6f3;
+  --sheet: #ffffff;
+  --ink: #1f2a2c;
+  --muted: #5b6769;
+  --rule: #d8ddd7;
+  --head: #eceee9;
+  --accent: #2e6b4f;
+  --accent-soft: #e2eee7;
+  --grey-cell: #7e8786;
+  --red: #b3261e;
+  --red-soft: #fbe9e7;
+  --amber: #a8540a;
+  --amber-soft: #fcefdf;
+  --slate-soft: #e9ecef;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --cond: "IBM Plex Sans Condensed", "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --paper: #161b1c; --sheet: #1d2426; --ink: #e4e9e7; --muted: #9aa6a6;
+    --rule: #334043; --head: #243033; --accent: #79c29d; --accent-soft: #1f3a2e;
+    --grey-cell: #8e9998; --red: #f1827a; --red-soft: #3d1f1d;
+    --amber: #f0ad62; --amber-soft: #3a2a17; --slate-soft: #28323a;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #161b1c; --sheet: #1d2426; --ink: #e4e9e7; --muted: #9aa6a6;
+  --rule: #334043; --head: #243033; --accent: #79c29d; --accent-soft: #1f3a2e;
+  --grey-cell: #8e9998; --red: #f1827a; --red-soft: #3d1f1d;
+  --amber: #f0ad62; --amber-soft: #3a2a17; --slate-soft: #28323a;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--paper); color: var(--ink);
+  font: 15px/1.6 var(--sans);
+  padding: 0 16px;
+}
+.wrap { max-width: 820px; margin: 0 auto; padding-block: 40px 72px; display: grid; gap: 44px; }
+h1, h2 { font-family: var(--cond); font-weight: 600; text-wrap: balance; margin: 0; letter-spacing: -0.005em; }
+h1 { font-size: 2rem; line-height: 1.15; }
+h2 { font-size: 1.35rem; }
+h3 { font-size: 1rem; margin: 0; font-weight: 600; }
+p { margin: 0; max-width: 66ch; }
+code, .mono { font-family: var(--mono); font-size: 0.88em; }
+a { color: var(--accent); }
+a:focus-visible, .letters a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.eyebrow { font: 500 0.72rem/1 var(--mono); text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
+section { display: grid; gap: 16px; }
+.intro { display: grid; gap: 14px; }
+.lede { color: var(--muted); font-size: 1.02rem; }
+
+/* spreadsheet header strip */
+.strip-wrap { overflow-x: auto; }
+.strip { display: grid; grid-template-columns: repeat(25, minmax(26px, 1fr)); border: 1px solid var(--rule); background: var(--sheet); min-width: 650px; }
+.strip a { font: 500 0.78rem/1 var(--mono); text-align: center; padding: 8px 0; color: var(--ink); text-decoration: none; background: var(--head); border-right: 1px solid var(--rule); }
+.strip a:last-child { border-right: 0; }
+.strip a:hover { background: var(--accent-soft); color: var(--accent); }
+.groups { display: grid; grid-template-columns: repeat(25, minmax(26px, 1fr)); min-width: 650px; margin-top: 6px; gap: 0; }
+.groups span { font: 0.7rem/1.2 var(--sans); color: var(--muted); border-top: 2px solid var(--rule); padding-top: 4px; padding-right: 4px; }
+.groups .adv { border-top-color: var(--accent); color: var(--accent); font-weight: 500; }
+.groups .flag { border-top-color: var(--red); color: var(--red); font-weight: 500; }
+
+/* cell samples */
+.cell { font-family: var(--mono); font-size: 0.85rem; display: inline-block; padding: 2px 8px; border: 1px solid var(--rule); background: var(--sheet); white-space: nowrap; }
+.cell.grey { color: var(--grey-cell); font-style: italic; }
+.pass { color: var(--accent); font-style: normal; }
+.fail { color: var(--red); font-style: normal; }
+
+.legend { display: grid; border: 1px solid var(--rule); background: var(--sheet); }
+.legend > div { display: grid; grid-template-columns: minmax(150px, 38%) 1fr; gap: 16px; padding: 12px 16px; border-top: 1px solid var(--rule); align-items: start; }
+.legend > div:first-child { border-top: 0; }
+.legend .k { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.cases { display: grid; gap: 12px; counter-reset: c; }
+.case { display: grid; gap: 8px; padding: 16px; background: var(--sheet); border: 1px solid var(--rule); }
+.case h3 { display: flex; gap: 10px; align-items: baseline; }
+.case h3::before { counter-increment: c; content: counter(c); font: 500 0.78rem/1 var(--mono); color: var(--muted); }
+.marks { display: grid; gap: 6px; margin: 4px 0 0; padding: 0; list-style: none; }
+.marks li { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+.note { padding: 12px 16px; background: var(--slate-soft); color: var(--ink); font-size: 0.93rem; }
+
+/* column list */
+.cols { border: 1px solid var(--rule); background: var(--sheet); }
+.col { display: grid; grid-template-columns: 52px 1fr; border-top: 1px solid var(--rule); scroll-margin-top: 16px; }
+.col:first-child { border-top: 0; }
+.col:target, .col.hit { background: var(--accent-soft); }
+.col .L { font: 500 0.82rem/1 var(--mono); background: var(--head); color: var(--muted); display: flex; justify-content: center; padding-top: 15px; border-right: 1px solid var(--rule); }
+.col .b { padding: 12px 16px; display: grid; gap: 4px; }
+.col .n { font-family: var(--mono); font-size: 0.84rem; font-weight: 500; }
+.col.adv .L { color: var(--accent); }
+.col.key .b p strong { font-weight: 600; }
+
+/* flags */
+.flags { display: grid; gap: 12px; }
+.flagrow { display: grid; grid-template-columns: 190px 1fr; gap: 16px; padding: 16px; background: var(--sheet); border: 1px solid var(--rule); }
+.chip { font: 600 0.74rem/1 var(--mono); letter-spacing: 0.04em; padding: 6px 8px; align-self: start; justify-self: start; }
+.chip.red { color: var(--red); background: var(--red-soft); }
+.chip.amber { color: var(--amber); background: var(--amber-soft); }
+.chip.plain { color: var(--muted); background: var(--slate-soft); }
+.flagrow dl { margin: 0; display: grid; gap: 6px; }
+.flagrow dt { font: 500 0.7rem/1 var(--mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.flagrow dd { margin: 0 0 6px; }
+
+.rules { display: grid; gap: 10px; margin: 0; padding-left: 20px; }
+.rules li { max-width: 66ch; }
+footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--rule); padding-top: 16px; }
+
+@media (max-width: 560px) {
+  h1 { font-size: 1.6rem; }
+  .legend > div, .flagrow { grid-template-columns: 1fr; gap: 8px; }
+  .col { grid-template-columns: 40px 1fr; }
+}
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="intro">
+    <span class="eyebrow">WSUTC · Re-registration advice</span>
+    <h1>What each column of the re-registration report means</h1>
+    <p class="lede">One reference so coaches, team leads and the data team read the report the same way. Column letters are for the <strong>Coach View</strong> tab, which is also the layout of every per-coach file in the zip download.</p>
+    <p>The full sheet (<code>Query1</code>) has the raw extract first and the same advice columns after it, in <code>AK</code>–<code>AU</code>.</p>
+  </header>
+
+  <section aria-labelledby="map">
+    <h2 id="map">The Coach View at a glance</h2>
+    <p>Select a column letter to jump to its explanation.</p>
+    <div class="strip-wrap">
+      <nav class="strip" aria-label="Columns A to Y">
+        <a href="#col-A">A</a><a href="#col-B">B</a><a href="#col-B">C</a><a href="#col-B">D</a><a href="#col-E">E</a><a href="#col-F">F</a><a href="#col-G">G</a><a href="#col-H">H</a><a href="#col-I">I</a><a href="#col-J">J</a><a href="#col-K">K</a><a href="#col-L">L</a><a href="#col-M">M</a><a href="#col-N">N</a><a href="#col-O">O</a><a href="#col-P">P</a><a href="#col-Q">Q</a><a href="#col-R">R</a><a href="#col-S">S</a><a href="#col-T">T</a><a href="#col-U">U</a><a href="#col-V">V</a><a href="#col-W">W</a><a href="#col-X">X</a><a href="#col-Y">Y</a>
+      </nav>
+      <div class="groups" aria-hidden="true">
+        <span style="grid-column: 1 / 7">Student &amp; coach</span>
+        <span style="grid-column: 7 / 13">Program &amp; standing</span>
+        <span style="grid-column: 13 / 16">Progress</span>
+        <span class="flag" style="grid-column: 16 / 17">Flag</span>
+        <span style="grid-column: 17 / 19">Template</span>
+        <span class="adv" style="grid-column: 19 / 24">Advice: Prep, Blocks 1–4</span>
+        <span style="grid-column: 24 / 26">Why</span>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="cells">
+    <h2 id="cells">Reading the advice cells (S–W)</h2>
+    <div class="legend">
+      <div><span class="k"><span class="cell">EDUC1013</span></span><p><strong>Register this subject</strong> in this block. This is the advice.</p></div>
+      <div><span class="k"><span class="cell grey">EDUC1013</span><span class="cell">(EDUC1013)</span></span><p><strong>For reference only. Don't register it.</strong> Grey italic in the download, brackets in the on-screen preview. See the three cases below.</p></div>
+      <div><span class="k"><span class="cell">+1 elective</span></span><p>Register any elective in this block.</p></div>
+      <div><span class="k"><span class="cell">&nbsp;</span> <span class="mono" style="color:var(--muted)">blank</span></span><p>Nothing to register in this block.</p></div>
+      <div><span class="k"><span class="cell" style="white-space:normal">You do not need to register in a subject</span></span><p>Nothing to register this session.</p></div>
+    </div>
+
+    <h3>Grey shows up in three situations</h3>
+    <div class="cases">
+      <div class="case">
+        <h3>Mid-semester report</h3>
+        <p>When the target ends in <code>Block 3</code>, Blocks 1–2 (T, U) have already run. Those cells show what the student <strong>was enrolled in</strong>, with its result:</p>
+        <ul class="marks">
+          <li><span class="cell grey">GEDU1001 <span class="pass">✓</span></span> passed</li>
+          <li><span class="cell grey">GEDU1001 <span class="fail">✗</span></span> failed (F, FNS, E or W)</li>
+          <li><span class="cell grey">GEDU1001</span> enrolled, no grade recorded yet</li>
+          <li><span class="cell grey">0</span> <strong>not enrolled</strong> in that block at all</li>
+        </ul>
+        <p>Only Blocks 3–4 (V, W) are advice. Anything still owed from Blocks 1–2 is in the Advice Reason, e.g. “still owes X, Y (take next Autumn)”.</p>
+      </div>
+      <div class="case">
+        <h3>Paused students</h3>
+        <p>Deferred or Leave of Absence (column I). <strong>Every</strong> advice cell is grey, because the plan is provisional until they confirm they're returning. Here grey does <strong>not</strong> mean a past registration.</p>
+      </div>
+      <div class="case">
+        <h3>Summer report</h3>
+        <p>A grey subject is one the student still needs that doesn't run in Summer at their campus, or the Summer block is full. They take it in a later session, and the Advice Reason says which.</p>
+      </div>
+    </div>
+    <p class="note">The ✓ / ✗ / 0 marks exist only on the mid-semester report, and only for this session's Blocks 1–2. That's the only place the file carries a result for each block. Everywhere else a failed subject and a never-attempted one look the same in the data: both are just “still to pass”.</p>
+  </section>
+
+  <section aria-labelledby="bycol">
+    <h2 id="bycol">Column by column</h2>
+    <div class="cols">
+      <div class="col" id="col-A"><span class="L">A</span><div class="b"><span class="n">STUDENT_ID</span><p>Student number.</p></div></div>
+      <div class="col" id="col-B"><span class="L">B–D</span><div class="b"><span class="n">FIRST_NAME, LAST_NAME, PREFERRED_NAME</span><p>Name. Use the preferred name in comms.</p></div></div>
+      <div class="col" id="col-E"><span class="L">E</span><div class="b"><span class="n">INSTITUTION_EMAIL_ADDRESS</span><p>Student email.</p></div></div>
+      <div class="col" id="col-F"><span class="L">F</span><div class="b"><span class="n">Coach</span><p>Assigned success coach. It also decides which per-coach file the student lands in.</p></div></div>
+      <div class="col" id="col-G"><span class="L">G</span><div class="b"><span class="n">PROGRAM_CD</span><p>Diploma program code, e.g. 7196. 9031 is Nursing.</p></div></div>
+      <div class="col" id="col-H"><span class="L">H</span><div class="b"><span class="n">COMMENCEMENT_PERIOD</span><p>When they started. Decides current vs old cohort, and whether they count as commencing.</p></div></div>
+      <div class="col" id="col-I"><span class="L">I</span><div class="b"><span class="n">STUDY_PATH_STATUS</span><p><code>Active Study Path</code>, or <strong>Deferred / Leave of Absence</strong>, which means paused.</p></div></div>
+      <div class="col" id="col-J"><span class="L">J</span><div class="b"><span class="n">Progression Outcome</span><p>Raw standing from the extract: Good Standing, At Risk, Conditional Enrolment, Exclusion. <strong>Blank for some students</strong>; column K explains the blanks.</p></div></div>
+      <div class="col" id="col-K"><span class="L">K</span><div class="b"><span class="n">Study Status</span><p>Column J with no silent blanks: the outcome if there is one, otherwise <code>Not yet assessed (commencing)</code>, <code>Not assessed (paused)</code> or <strong><code>No outcome recorded - review</code></strong> for a student who should have an outcome and doesn't.</p></div></div>
+      <div class="col" id="col-L"><span class="L">L</span><div class="b"><span class="n">Other Enrolment</span><p><code>Also enrolled: program X (coach)</code> when the same student has a second program row. Check which one is real.</p></div></div>
+      <div class="col" id="col-M"><span class="L">M</span><div class="b"><span class="n">Student Status</span><p>Count of what's left, e.g. “Outstanding: 1 prep, 2 core, 2 electives”, or “All passed”.</p></div></div>
+      <div class="col" id="col-N"><span class="L">N</span><div class="b"><span class="n">Progress Bar</span><p>The same count as a bar and percentage.</p></div></div>
+      <div class="col key" id="col-O"><span class="L">O</span><div class="b"><span class="n">Progress</span><p>Position by position across the whole course: <span class="mono">✓</span> passed, <span class="mono">◐</span> registered now (not passed yet), <span class="mono">○</span> still to pass.</p><p><span class="mono">○</span> covers failed <em>and</em> not yet attempted, because the file can't tell them apart. That's why it isn't <span class="mono">✗</span>, which means “failed” in T and U.</p></div></div>
+      <div class="col key" id="col-P"><span class="L">P</span><div class="b"><span class="n">Withdrawal Flag</span><p>Mid-semester only, for commencing students with <strong>no pass</strong> in Blocks 1–2 this session. See <a href="#flags">the flags</a> below. Blank for everyone else, and <strong>always blank for a paused student</strong>, who gets a note in the Advice Reason instead.</p></div></div>
+      <div class="col" id="col-Q"><span class="L">Q</span><div class="b"><span class="n">Messaging Template</span><p>Which email and tab: Commencing, Template 1A / 1B / 1C / 2 / 3, Transition. Paused students are also collected on the <em>Paused – check enrolment</em> tab of the per-coach files.</p></div></div>
+      <div class="col" id="col-R"><span class="L">R</span><div class="b"><span class="n">Rereg Principle</span><p>The situation behind the template: On Pattern, Mostly Progressing, 3+ Sessions, and so on.</p></div></div>
+      <div class="col adv" id="col-S"><span class="L">S</span><div class="b"><span class="n">Prep Registration Advice</span><p>Prep subject to register (GEDU0016 or GEDU0017), if any.</p></div></div>
+      <div class="col adv key" id="col-T"><span class="L">T</span><div class="b"><span class="n">Block 1 Registration Advice</span><p>Block 1 advice. <strong>On a mid-semester report: what they took in Block 1 and its result, in grey.</strong></p></div></div>
+      <div class="col adv key" id="col-U"><span class="L">U</span><div class="b"><span class="n">Block 2 Registration Advice</span><p>Block 2 advice. <strong>On a mid-semester report: what they took in Block 2 and its result, in grey.</strong></p></div></div>
+      <div class="col adv" id="col-V"><span class="L">V</span><div class="b"><span class="n">Block 3 Registration Advice</span><p>Block 3 subject to register.</p></div></div>
+      <div class="col adv" id="col-W"><span class="L">W</span><div class="b"><span class="n">Block 4 Registration Advice</span><p>Block 4 subject to register.</p></div></div>
+      <div class="col" id="col-X"><span class="L">X</span><div class="b"><span class="n">Earliest Completion</span><p>Soonest they could finish at full load. <code>(est.)</code> marks a projection; blank when it can't be estimated.</p></div></div>
+      <div class="col key" id="col-Y"><span class="L">Y</span><div class="b"><span class="n">Advice Reason</span><p>The plain-English why: what to register, what's owed later, the Conditional Enrolment cap, paused notes, and assumptions to sanity-check. <strong>Read this before contacting the student.</strong></p></div></div>
+    </div>
+    <p>In the per-coach files, S–W also carry the subject name after each code, e.g. <code>GEDU1001 — Name</code>.</p>
+  </section>
+
+  <section aria-labelledby="flags">
+    <h2 id="flags">Withdrawal Flag (column P)</h2>
+    <p>Only on a mid-semester report, and only for a <strong>commencing, not paused</strong> student with <strong>no pass</strong> in Blocks 1–2 this session. The Advice Reason starts with a line saying which case applies.</p>
+    <div class="flags">
+      <div class="flagrow">
+        <span class="chip red">ADVISE WITHDRAWAL</span>
+        <dl><dt>When</dt><dd>At least one ✗ in Blocks 1–2 (the other block can be ✗ or 0), <strong>and</strong> registered in Block 3 or 4.</dd>
+        <dt>What to do</dt><dd>Withdrawal conversation: drop Blocks 3–4 and restart next semester. No subject advice is given. The Advice Reason lists the failed subjects.</dd></dl>
+      </div>
+      <div class="flagrow">
+        <span class="chip amber">CHECK ENROLMENT</span>
+        <dl><dt>When</dt><dd>Not enrolled in Block 1 or 2 (0 and 0), <strong>or</strong> no Block 3/4 registration, so there's nothing to withdraw from.</dd>
+        <dt>What to do</dt><dd>Not a withdrawal. Confirm the enrolment is right, or whether they're still studying. Normal advice is shown.</dd></dl>
+      </div>
+      <div class="flagrow">
+        <span class="chip plain">AWAITING GRADE</span>
+        <dl><dt>When</dt><dd>Enrolled in Block 1 or 2 with no grade recorded yet.</dd>
+        <dt>What to do</dt><dd>Nothing yet. Re-run the report once grades are in. Normal advice is shown.</dd></dl>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="rules">
+    <h2 id="rules">Rules worth knowing</h2>
+    <ul class="rules">
+      <li><strong>Conditional Enrolment is capped at 30 credit points per semester.</strong> The cap includes anything already taken in Blocks 1–2 this session. Inside the cap the order is failed or owed subjects first, then electives, then prep. Whatever doesn't fit is listed under “Still to pass (later session)”.</li>
+      <li><strong>Exclusion:</strong> no advice. Refer to the coach.</li>
+      <li><strong>Paused:</strong> advice is provisional (grey), no withdrawal advice, and no comms until they confirm they're returning.</li>
+      <li><strong>Full sheet only</strong> (<code>Query1</code>): <code>Advice Source</code> says which engine produced the row (Grant calculator, position-based, v2 rule-tree, withdrawal, Summer). It's for checking, not for coaches.</li>
+    </ul>
+  </section>
+
+  <footer>Matches the report as of 28 September 2026: mid-semester result marks, the three-way Withdrawal Flag and the new Progress symbols.</footer>
+</div>
+
+<script>
+// Jump links scroll inside this page. The guide is shown in an iframe in the
+// Streamlit app, where a plain #anchor can try to navigate the frame instead.
+document.addEventListener("click", function (e) {
+  var a = e.target.closest('a[href^="#"]');
+  if (!a) return;
+  var el = document.getElementById(a.getAttribute("href").slice(1));
+  if (!el) return;
+  e.preventDefault();
+  document.querySelectorAll(".col.hit").forEach(function (c) { c.classList.remove("hit"); });
+  if (el.classList.contains("col")) el.classList.add("hit");
+  el.scrollIntoView({ block: "start" });
+});
+</script>
+</body>
+</html>

@@ -5,6 +5,9 @@ same way. Column letters are for the **Coach View** tab (also the layout of
 every per-coach file in the zip download). The full sheet (`Query1`) has the
 raw extract first and the same advice columns after it (`AK`–`AU`).
 
+Coaches read this as the *Report Column Guide* page in the app
+([rereg_column_guide.html](rereg_column_guide.html)). Change both together.
+
 Why each student gets the template they do is in
 [rereg_principles_and_templates.md](rereg_principles_and_templates.md).
 

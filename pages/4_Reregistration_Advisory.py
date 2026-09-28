@@ -31,9 +31,8 @@ from student_tracker import rereg_merged as rm
 
 st.set_page_config(page_title="Reregistration Advisory", layout="wide")
 
-# Shared column guide (same content as docs/rereg_report_columns.md).
-COLUMN_GUIDE_URL = "https://claude.ai/artifact/TSMAaza1xDVEayzMYJAQS3"
-st.sidebar.caption(f"[Report column guide ↗]({COLUMN_GUIDE_URL})")
+# What each report column means (docs/rereg_column_guide.html).
+st.sidebar.page_link("pages/10_Report_Column_Guide.py", label="Report column guide")
 
 st.title("Reregistration Advisory")
 st.caption(
