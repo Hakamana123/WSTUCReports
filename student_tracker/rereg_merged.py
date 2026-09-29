@@ -1287,8 +1287,9 @@ def summer_early_advice(
     A candidate has **1-2 outstanding core subjects** (currently-registered
     counts as done, so fresh commencers with everything ahead are excluded) and
     at least one of those is **offered in Summer at their campus** (``offering``
-    from :func:`read_summer_offering_campus`). A subject that runs in both
-    blocks there is listed in both catch-up columns. Each is
+    from :func:`read_summer_offering_campus`). Each catch-up subject is listed
+    in one block's column only - a subject that runs in both takes whichever
+    block the student's other catch-up subjects leave free. Each is
     grouped: *Get back on pattern* when the catch-up subject is an early one
     (position 1-2, they're behind), else *Finish sooner* (a later subject, they
     are near the end). A student whose Progression Outcome is Exclusion goes in
@@ -1327,6 +1328,15 @@ def summer_early_advice(
         else:
             group = EARLY_GROUP_RESTORE if min(p for p, _ in catch) <= 2 else EARLY_GROUP_FINISH
         _, template = calc.classify(r, program in calc.NURSING_PROGRAMS)
+        # Each catch-up subject is advised in ONE block. Subjects that run in a
+        # single block claim it first; one that runs in both takes the block
+        # left free (SU1 if both are), earliest pattern position first.
+        placed: dict[str, str] = {}
+        taken: set[str] = set()
+        for _, code in sorted(catch, key=lambda pc: (len(runs[pc[1]]), pc[0])):
+            free = [b for b in runs[code] if b and b not in taken]
+            placed[code] = free[0] if free else runs[code][0]
+            taken.add(placed[code])
         rows.append({
             "STUDENT_ID": r["STUDENT_ID"],
             "FIRST_NAME": r.get("FIRST_NAME"), "LAST_NAME": r.get("LAST_NAME"),
@@ -1336,10 +1346,10 @@ def summer_early_advice(
             "COMMENCEMENT_PERIOD": r.get("COMMENCEMENT_PERIOD"),
             EARLY_OUTCOME_COL: _study_status(outcome, template, r.get(STUDY_PATH_COL)),
             EARLY_GROUP_COL: group,
-            **{col: ", ".join(label(c) for _, c in catch if blk in runs[c])
+            **{col: ", ".join(label(c) for _, c in catch if placed[c] == blk)
                for blk, col in EARLY_CATCHUP_COLS.items()},
             EARLY_CATCHUP_NOBLOCK_COL: ", ".join(
-                label(c) for _, c in catch if "" in runs[c]),
+                label(c) for _, c in catch if placed[c] == ""),
             EARLY_OUTSTANDING_COL: ", ".join(c for _, c in outstanding),
             "# outstanding": len(outstanding),
         })
