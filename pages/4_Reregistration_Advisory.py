@@ -106,13 +106,14 @@ if is_summer:
              "**Early advice** is the SB3 targeting list: students a confirmed Summer "
              "subject could get back on pattern or help finish sooner — nothing else.",
     )
-    summer_file = st.file_uploader(
-        "Summer offering list (.xlsx or .csv) — a column of subject codes; add campus "
-        "codes (BK CA KW PC LP) beside each for the early-advice campus check",
-        type=["xlsx", "csv"], key="summer_upload",
+    summer_files = st.file_uploader(
+        "Summer offering list(s) (.xlsx or .csv) — the SU1 and SU2 subject-list "
+        "exports as they come, or the offering template (subject code, SU1/SU2, "
+        "campus codes BK CA KW PC LP ON). A subject can run in both blocks.",
+        type=["xlsx", "csv"], key="summer_upload", accept_multiple_files=True,
     )
-    if summer_file is not None:
-        summer_offering = rm.read_summer_offering_campus(summer_file)
+    if summer_files:
+        summer_offering = rm.read_summer_offering_campus(summer_files)
         # the full engine now takes the campus/block dict so it can place each
         # subject in its Summer block (SU1/SU2) at the student's campus
         summer_subjects = summer_offering or None

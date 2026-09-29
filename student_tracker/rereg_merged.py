@@ -34,6 +34,7 @@ plus the readable 'Coach View' sheet from v2.
 
 from __future__ import annotations
 
+import itertools
 import json
 import re
 from pathlib import Path
@@ -428,25 +429,30 @@ def _grey_cell(value) -> str:
 
 
 def _normalize_summer_offering(summer) -> dict | None:
-    """A Summer offering as ``{code: {"campuses": set, "block": str}}``, or None.
+    """A Summer offering as ``{code: {"blocks": {block: campuses}, "campuses": set}}``,
+    or None.
 
-    Accepts the campus/block dict from :func:`read_summer_offering_campus`, an
-    older ``{code: campuses}`` dict, a plain set of codes (all campuses, no
-    block), or ``None`` (no list uploaded). This lets the engine stay campus-
-    and block-aware while still accepting a bare code set.
+    ``blocks`` maps each Summer block the subject runs in (``"SU1"`` / ``"SU2"``,
+    or ``""`` when the list names none) to the campuses it runs at in that
+    block, so a subject can run in both blocks with different campuses;
+    ``campuses`` is their union. Accepts the dict from
+    :func:`read_summer_offering_campus`, an older ``{code: {"campuses",
+    "block"}}`` or ``{code: campuses}`` dict, a plain set of codes (all
+    campuses, no block), or ``None`` (no list uploaded).
     """
     if summer is None:
         return None
-    if isinstance(summer, dict):
-        norm = {}
-        for code, v in summer.items():
-            if isinstance(v, dict):
-                norm[code] = {"campuses": set(v.get("campuses") or KNOWN_CAMPUSES),
-                              "block": v.get("block", "")}
-            else:
-                norm[code] = {"campuses": set(v) if v else set(KNOWN_CAMPUSES), "block": ""}
-        return norm
-    return {c: {"campuses": set(KNOWN_CAMPUSES), "block": ""} for c in summer}
+    items = summer.items() if isinstance(summer, dict) else ((c, None) for c in summer)
+    norm = {}
+    for code, v in items:
+        if isinstance(v, dict) and "blocks" in v:
+            blocks = {b: set(c or KNOWN_CAMPUSES) for b, c in v["blocks"].items()}
+        elif isinstance(v, dict):
+            blocks = {v.get("block", ""): set(v.get("campuses") or KNOWN_CAMPUSES)}
+        else:
+            blocks = {"": set(v) if v else set(KNOWN_CAMPUSES)}
+        norm[code] = {"blocks": blocks, "campuses": set().union(*blocks.values())}
+    return norm
 
 
 def _summer_advice(
@@ -457,10 +463,11 @@ def _summer_advice(
 
     Preps always run in Summer (diplomas only); every other subject runs only if
     it's on the uploaded offering list, **at the student's campus**, and is
-    placed in the Summer block (SU1 / SU2) that list gives it - at most one
-    subject per Summer block. A subject that's offered but whose Summer block is
-    already taken, or that isn't offered at their campus, is greyed for reference
-    (take next Autumn). With no list uploaded, only prep + Subjects 1 & 2 are
+    placed in a Summer block (SU1 / SU2) the list runs it in there - at most one
+    subject per Summer block. The picks register as many subjects as the blocks
+    (and the cap) allow, so a subject that runs in both blocks takes whichever
+    one the others leave free. A subject that's offered but can't fit, or that
+    isn't offered at their campus, is greyed for reference (take next Autumn). With no list uploaded, only prep + Subjects 1 & 2 are
     assumed to run. Conditional Enrolment keeps the 30cp cap.
     """
     offering = _normalize_summer_offering(summer_subjects)
@@ -472,18 +479,19 @@ def _summer_advice(
     cp_cap = CE_CAP_CP if capped else 10 ** 6
     n_pos = 8 if is_nursing else 6
 
-    def offered_block(pos: int) -> tuple[bool, str]:
-        """``(offered at this student's campus, Summer block)`` for the subject at
-        ``pos``. With no list uploaded, fall back to 'Subjects 1 & 2 run'."""
+    def offered_blocks(pos: int) -> list[str]:
+        """The Summer blocks the subject at ``pos`` runs in at this student's
+        campus, SU1 first (``[""]`` if the list names no block; ``[]`` if not
+        offered). With no list uploaded, fall back to 'Subjects 1 & 2 run'."""
         code = subj.get(str(pos))
         if not code:
-            return (False, "")
+            return []
         if offering is None:
-            return (pos in (1, 2), "")
+            return [""] if pos in (1, 2) else []
         entry = offering.get(code)
-        if entry and campus in entry["campuses"]:
-            return (True, entry["block"])
-        return (False, "")
+        if not entry:
+            return []
+        return sorted(b for b, camps in entry["blocks"].items() if campus in camps)
 
     # preps first (always run in Summer, diplomas only)
     prep_now, cp = [], 0
@@ -498,37 +506,43 @@ def _summer_advice(
     btag = ["", "", "", ""]
     deferred = [False, False, False, False]  # greyed because offered but Summer block full / cap
     register: list[str] = []
-    used_su: set[str] = set()  # a student takes at most one subject per Summer block
+    # per pattern block: the outstanding positions, and every (code, Summer
+    # block) it could register as, in preference order
+    cands_by: list[list[int]] = []
+    options: list[list[tuple[str, str]]] = []
     for bi in range(4):
         cands = [
             p for p in (bi + 1, bi + 5)
             if subj.get(str(p)) and calc._is_outstanding(row.get(f"Subject {p} Status"))
         ]
+        cands_by.append(cands)
+        options.append([(subj[str(p)], blk) for p in cands for blk in offered_blocks(p)])
+    # Try every combination (at most 5^4): register as many subjects as fit -
+    # at most one per Summer block, within the cap - and among equals fill the
+    # earliest pattern blocks, then take each one's first choice (SU1 before SU2).
+    room = (cp_cap - cp) // _CP_MODULAR
+    best_key, choice = None, [len(o) for o in options]
+    for combo in itertools.product(*[range(len(o) + 1) for o in options]):
+        picked = [options[bi][c] for bi, c in enumerate(combo) if c < len(options[bi])]
+        named = [blk for _, blk in picked if blk]
+        if len(picked) > room or len(named) != len(set(named)):
+            continue
+        key = (-len(picked), tuple(c >= len(o) for c, o in zip(combo, options)), combo)
+        if best_key is None or key < best_key:
+            best_key, choice = key, list(combo)
+    for bi, cands in enumerate(cands_by):
         if not cands:
             continue
-        pick = None
-        offered_but_stuck = False
-        for p in cands:
-            ok, blk = offered_block(p)
-            if not ok:
-                continue
-            if (blk and blk in used_su) or cp + _CP_MODULAR > cp_cap:
-                offered_but_stuck = True  # it runs at their campus, just can't fit now
-                continue
-            pick = (subj[str(p)], blk)
-            break
-        if pick:
-            code, blk = pick
+        if choice[bi] < len(options[bi]):
+            code, blk = options[bi][choice[bi]]
             blocks[bi] = code
             btag[bi] = blk
             register.append(code)
-            if blk:
-                used_su.add(blk)
             cp += _CP_MODULAR
         else:
             blocks[bi] = subj[str(cands[0])]
             grey[bi] = True
-            deferred[bi] = offered_but_stuck
+            deferred[bi] = bool(options[bi])  # runs at their campus, just can't fit now
 
     out[ADVICE_COLS[0]] = " and ".join(prep_now)
     for col, val, g, tag in zip(ADVICE_COLS[1:], blocks, grey, btag):
@@ -1182,45 +1196,64 @@ def read_summer_offering(source) -> set[str]:
 KNOWN_CAMPUSES = {"BK", "CA", "KW", "PC", "LP", "ON", "BL"}
 
 
-def read_summer_offering_campus(source) -> dict[str, dict]:
-    """Parse an uploaded Summer offering list -> ``{code: {"campuses", "block"}}``.
-
-    Same lenient scan as ``read_summer_offering``, but per row: the subject code
-    (4 letters + 4 digits) is mapped to whatever campus codes appear in the same
-    row, plus the Summer block it runs in if the row names one (``SU1`` / ``SU2``
-    / "Summer block 1" / "Summer 2" -> ``"SU1"`` / ``"SU2"``). A subject listed
-    with no campus codes runs **everywhere** (all ``KNOWN_CAMPUSES``); with no
-    block named, ``block`` is ``""``. So a bare code list still works.
-    """
+def _offering_frame(source) -> pd.DataFrame:
+    """Every sheet of an uploaded .xlsx (or a .csv) stacked into one frame."""
     import io
+
+    try:
+        sheets = pd.read_excel(io.BytesIO(source.getvalue()) if hasattr(source, "getvalue") else source,
+                               sheet_name=None)
+        return pd.concat(sheets.values(), ignore_index=True)
+    except Exception:
+        if hasattr(source, "seek"):
+            source.seek(0)
+        return pd.read_csv(source)
+
+
+def read_summer_offering_campus(source) -> dict[str, dict]:
+    """Parse uploaded Summer offering list(s) -> ``{code: {"blocks", "campuses"}}``
+    (the shape :func:`_normalize_summer_offering` describes).
+
+    ``source`` is one file or a list of them (e.g. the SU1 and SU2 timetable
+    exports). Each row is scanned leniently: every subject code (4 letters + 4
+    digits) in it runs in the Summer block(s) the row names (``SU1`` / ``SU2``
+    / "Summer block 1" -> ``"SU1"``), at the campus codes in the row. Cells are
+    split on spaces, commas and ``_`` / ``-``, so either the offering template
+    ("GEDU1001 | SU1 | BK CA KW") or a timetable export's class code
+    ("GEDU1001_27-SU2_BK_1") works. Campus codes must be upper case, so "on" in
+    a subject name isn't read as Online. A subject with no campus codes runs
+    **everywhere** (all ``KNOWN_CAMPUSES``); one with no block named gets
+    ``""``. So a bare code list still works.
+    """
     import re as _re
 
-    raw = source if hasattr(source, "read") else source
-    try:
-        sheets = pd.read_excel(io.BytesIO(raw.getvalue()) if hasattr(raw, "getvalue") else raw,
-                               sheet_name=None)
-        frame = pd.concat(sheets.values(), ignore_index=True)
-    except Exception:
-        frame = pd.read_csv(raw)
+    sources = source if isinstance(source, (list, tuple)) else [source]
+    found: dict[str, dict[str, set[str]]] = {}
+    for src in sources:
+        for _, row in _offering_frame(src).astype(str).iterrows():
+            tokens = [t for cell in row.values for t in _re.split(r"[\s,;/_\-]+", str(cell)) if t]
+            codes = {t.upper() for t in tokens if _re.fullmatch(r"[A-Za-z]{4}\d{4}", t)}
+            if not codes:
+                continue
+            camps = {t for t in tokens if t in KNOWN_CAMPUSES}
+            blks = {t.upper() for t in tokens if _re.fullmatch(r"su[12]", t, _re.I)}
+            if not blks:
+                bm = _re.search(r"summer\s*(?:block\s*)?([12])\b", " ".join(row.values), _re.I)
+                blks = {f"SU{bm.group(1)}"} if bm else {""}
+            for code in codes:
+                for blk in blks:
+                    found.setdefault(code, {}).setdefault(blk, set()).update(camps)
 
-    camps_by: dict[str, set[str]] = {}
-    block_by: dict[str, str] = {}
-    for _, row in frame.astype(str).iterrows():
-        line = " ".join(str(c) for c in row.values)
-        # a cell may hold several tokens ("BK CA KW"), so split before matching
-        tokens = [t.strip() for cell in row.values for t in _re.split(r"[\s,;/]+", str(cell))]
-        codes = [t.upper() for t in tokens if _re.fullmatch(r"[A-Za-z]{4}\d{4}", t)]
-        camps = {t.upper() for t in tokens if t.upper() in KNOWN_CAMPUSES}
-        bm = _re.search(r"su\s*([12])\b|summer\s*(?:block\s*)?([12])\b", line, _re.I)
-        block = f"SU{bm.group(1) or bm.group(2)}" if bm else ""
-        for code in codes:
-            camps_by.setdefault(code, set()).update(camps)
-            if block and not block_by.get(code):
-                block_by[code] = block
-    return {
-        code: {"campuses": (camps or set(KNOWN_CAMPUSES)), "block": block_by.get(code, "")}
-        for code, camps in camps_by.items()
-    }
+    out = {}
+    for code, blocks in found.items():
+        blocks = {b: (c or set(KNOWN_CAMPUSES)) for b, c in blocks.items()}
+        # a row with no block alongside rows that name one: fold its campuses in
+        if "" in blocks and len(blocks) > 1:
+            loose = blocks.pop("")
+            for b in blocks:
+                blocks[b] |= loose
+        out[code] = {"blocks": blocks, "campuses": set().union(*blocks.values())}
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -1238,7 +1271,10 @@ EARLY_GROUP_EXCLUDED = "Excluded - no advice"
 EARLY_GROUPS = (EARLY_GROUP_RESTORE, EARLY_GROUP_FINISH, EARLY_GROUP_EXCLUDED)
 EARLY_OUTCOME_COL = "Progression Outcome"
 EARLY_GROUP_COL = "Group"
-EARLY_CATCHUP_COL = "Summer 1 catch-up"
+# The catch-up subjects, one column per Summer block. A subject whose row in
+# the offering list names no block goes in a third column, added only if needed.
+EARLY_CATCHUP_COLS = {"SU1": "SU1 catch-up", "SU2": "SU2 catch-up"}
+EARLY_CATCHUP_NOBLOCK_COL = "Summer catch-up (block not listed)"
 EARLY_OUTSTANDING_COL = "Outstanding subjects"
 _EARLY_MAX_OUTSTANDING = 2  # "off-pattern due to failing one or two subjects"
 
@@ -1251,7 +1287,8 @@ def summer_early_advice(
     A candidate has **1-2 outstanding core subjects** (currently-registered
     counts as done, so fresh commencers with everything ahead are excluded) and
     at least one of those is **offered in Summer at their campus** (``offering``
-    is ``{code: {campuses}}`` from :func:`read_summer_offering_campus`). Each is
+    from :func:`read_summer_offering_campus`). A subject that runs in both
+    blocks there is listed in both catch-up columns. Each is
     grouped: *Get back on pattern* when the catch-up subject is an early one
     (position 1-2, they're behind), else *Finish sooner* (a later subject, they
     are near the end). A student whose Progression Outcome is Exclusion goes in
@@ -1260,19 +1297,10 @@ def summer_early_advice(
     Returns one row per candidate; empty frame if none.
     """
     names = load_subject_names()
-
-    def campuses_of(code: str) -> set:
-        entry = offering.get(code)
-        return entry["campuses"] if isinstance(entry, dict) else (entry or set())
-
-    def block_of(code: str) -> str:
-        entry = offering.get(code)
-        return entry.get("block", "") if isinstance(entry, dict) else ""
+    offering = _normalize_summer_offering(offering) or {}
 
     def label(code: str) -> str:
-        base = f"{code} — {names[code]}" if code in names else code
-        blk = block_of(code)
-        return f"{base} ({blk})" if blk else base
+        return f"{code} — {names[code]}" if code in names else code
 
     rows = []
     for _, r in df.iterrows():
@@ -1287,8 +1315,10 @@ def summer_early_advice(
         ]
         if not 1 <= len(outstanding) <= _EARLY_MAX_OUTSTANDING:
             continue
-        catch = [(pos, code) for pos, code in outstanding
-                 if code in offering and campus in campuses_of(code)]
+        # the Summer blocks each outstanding subject runs in at their campus
+        runs = {code: sorted(b for b, camps in offering[code]["blocks"].items() if campus in camps)
+                for _, code in outstanding if code in offering}
+        catch = [(pos, code) for pos, code in outstanding if runs.get(code)]
         if not catch:
             continue
         outcome = "" if pd.isna(r.get("Progression Outcome")) else str(r.get("Progression Outcome")).strip()
@@ -1306,15 +1336,21 @@ def summer_early_advice(
             "COMMENCEMENT_PERIOD": r.get("COMMENCEMENT_PERIOD"),
             EARLY_OUTCOME_COL: _study_status(outcome, template, r.get(STUDY_PATH_COL)),
             EARLY_GROUP_COL: group,
-            EARLY_CATCHUP_COL: ", ".join(label(c) for _, c in catch),
+            **{col: ", ".join(label(c) for _, c in catch if blk in runs[c])
+               for blk, col in EARLY_CATCHUP_COLS.items()},
+            EARLY_CATCHUP_NOBLOCK_COL: ", ".join(
+                label(c) for _, c in catch if "" in runs[c]),
             EARLY_OUTSTANDING_COL: ", ".join(c for _, c in outstanding),
             "# outstanding": len(outstanding),
         })
     cols = ["STUDENT_ID", "FIRST_NAME", "LAST_NAME", "PREFERRED_NAME",
             "INSTITUTION_EMAIL_ADDRESS", COACH_COL, "PROGRAM_CD", "CAMP_CODE",
-            "COMMENCEMENT_PERIOD", EARLY_OUTCOME_COL, EARLY_GROUP_COL, EARLY_CATCHUP_COL,
+            "COMMENCEMENT_PERIOD", EARLY_OUTCOME_COL, EARLY_GROUP_COL,
+            *EARLY_CATCHUP_COLS.values(), EARLY_CATCHUP_NOBLOCK_COL,
             EARLY_OUTSTANDING_COL, "# outstanding"]
     out = pd.DataFrame(rows, columns=cols)
+    if not out[EARLY_CATCHUP_NOBLOCK_COL].astype(bool).any():
+        out = out.drop(columns=EARLY_CATCHUP_NOBLOCK_COL)
     if len(out):
         order = {g: i for i, g in enumerate(EARLY_GROUPS)}
         out = (out.assign(_g=out[EARLY_GROUP_COL].map(order))
