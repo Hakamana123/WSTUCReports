@@ -153,19 +153,23 @@ if is_summer and summer_mode.startswith("Early"):
                    "Summer subject covers at their campus.")
         st.stop()
 
+    is_excl = shortlist[rm.EARLY_GROUP_COL] == rm.EARLY_GROUP_EXCLUDED
     restore = int((shortlist[rm.EARLY_GROUP_COL] == rm.EARLY_GROUP_RESTORE).sum())
     finish = int((shortlist[rm.EARLY_GROUP_COL] == rm.EARLY_GROUP_FINISH).sum())
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Candidates", f"{len(shortlist):,}")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Candidates", f"{int((~is_excl).sum()):,}")
     m2.metric(rm.EARLY_GROUP_RESTORE, f"{restore:,}", help="Failed an early subject — Summer restores their pattern")
     m3.metric(rm.EARLY_GROUP_FINISH, f"{finish:,}", help="Near the end — Summer brings completion forward")
+    m4.metric("Excluded", f"{int(is_excl.sum()):,}", help="Progression Outcome is Exclusion — not eligible to re-register; separate tab, not advised")
     st.caption(
         "Students with 1–2 outstanding subjects, at least one offered in Summer at their "
-        "campus. Messaging stays general (the confirmed offerings); this is the *who to contact* list."
+        "campus. Messaging stays general (the confirmed offerings); this is the *who to contact* list. "
+        "Excluded students are listed on their own tab for the coach, not contacted about Summer. "
+        "Progression Outcome is whatever the uploaded file holds (the last progression round)."
     )
 
     view = shortlist
-    groups = st.multiselect("Filter by group", [rm.EARLY_GROUP_RESTORE, rm.EARLY_GROUP_FINISH], default=[])
+    groups = st.multiselect("Filter by group", list(rm.EARLY_GROUPS), default=[])
     if groups:
         view = view[view[rm.EARLY_GROUP_COL].isin(groups)]
     coaches_pick = st.multiselect("Filter by coach", sorted(shortlist[rm.COACH_COL].dropna().astype(str).unique()), default=[])
@@ -177,7 +181,9 @@ if is_summer and summer_mode.startswith("Early"):
     import io as _io
     buf = _io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as w:
-        shortlist.to_excel(w, sheet_name="Summer early advice", index=False)
+        shortlist[~is_excl].to_excel(w, sheet_name="Summer early advice", index=False)
+        if is_excl.any():
+            shortlist[is_excl].to_excel(w, sheet_name="Excluded", index=False)
     d1, d2 = st.columns(2)
     d1.download_button(
         "Download shortlist (.xlsx)", buf.getvalue(),

@@ -1211,6 +1211,11 @@ def read_summer_offering_campus(source) -> dict[str, dict]:
 # subject left). Deliberately narrow - not everyone is advised for Summer.
 EARLY_GROUP_RESTORE = "Get back on pattern"
 EARLY_GROUP_FINISH = "Finish sooner"
+# Excluded students still match on subjects but aren't eligible to re-register,
+# so they're kept off the contact list and put on a tab of their own.
+EARLY_GROUP_EXCLUDED = "Excluded - no advice"
+EARLY_GROUPS = (EARLY_GROUP_RESTORE, EARLY_GROUP_FINISH, EARLY_GROUP_EXCLUDED)
+EARLY_OUTCOME_COL = "Progression Outcome"
 EARLY_GROUP_COL = "Group"
 EARLY_CATCHUP_COL = "Summer 1 catch-up"
 EARLY_OUTSTANDING_COL = "Outstanding subjects"
@@ -1228,7 +1233,10 @@ def summer_early_advice(
     is ``{code: {campuses}}`` from :func:`read_summer_offering_campus`). Each is
     grouped: *Get back on pattern* when the catch-up subject is an early one
     (position 1-2, they're behind), else *Finish sooner* (a later subject, they
-    are near the end). Returns one row per candidate; empty frame if none.
+    are near the end). A student whose Progression Outcome is Exclusion goes in
+    the *Excluded* group instead - listed for the coach, not advised. Each row
+    carries the outcome (blanks labelled as in the Coach View's Study Status).
+    Returns one row per candidate; empty frame if none.
     """
     names = load_subject_names()
 
@@ -1262,7 +1270,12 @@ def summer_early_advice(
                  if code in offering and campus in campuses_of(code)]
         if not catch:
             continue
-        group = EARLY_GROUP_RESTORE if min(p for p, _ in catch) <= 2 else EARLY_GROUP_FINISH
+        outcome = "" if pd.isna(r.get("Progression Outcome")) else str(r.get("Progression Outcome")).strip()
+        if outcome in v2.STANDING_NO_ADVICE:
+            group = EARLY_GROUP_EXCLUDED
+        else:
+            group = EARLY_GROUP_RESTORE if min(p for p, _ in catch) <= 2 else EARLY_GROUP_FINISH
+        _, template = calc.classify(r, program in calc.NURSING_PROGRAMS)
         rows.append({
             "STUDENT_ID": r["STUDENT_ID"],
             "FIRST_NAME": r.get("FIRST_NAME"), "LAST_NAME": r.get("LAST_NAME"),
@@ -1270,6 +1283,7 @@ def summer_early_advice(
             "INSTITUTION_EMAIL_ADDRESS": r.get("INSTITUTION_EMAIL_ADDRESS"),
             COACH_COL: r.get("Coach"), "PROGRAM_CD": program, "CAMP_CODE": campus,
             "COMMENCEMENT_PERIOD": r.get("COMMENCEMENT_PERIOD"),
+            EARLY_OUTCOME_COL: _study_status(outcome, template, r.get(STUDY_PATH_COL)),
             EARLY_GROUP_COL: group,
             EARLY_CATCHUP_COL: ", ".join(label(c) for _, c in catch),
             EARLY_OUTSTANDING_COL: ", ".join(c for _, c in outstanding),
@@ -1277,17 +1291,20 @@ def summer_early_advice(
         })
     cols = ["STUDENT_ID", "FIRST_NAME", "LAST_NAME", "PREFERRED_NAME",
             "INSTITUTION_EMAIL_ADDRESS", COACH_COL, "PROGRAM_CD", "CAMP_CODE",
-            "COMMENCEMENT_PERIOD", EARLY_GROUP_COL, EARLY_CATCHUP_COL,
+            "COMMENCEMENT_PERIOD", EARLY_OUTCOME_COL, EARLY_GROUP_COL, EARLY_CATCHUP_COL,
             EARLY_OUTSTANDING_COL, "# outstanding"]
     out = pd.DataFrame(rows, columns=cols)
     if len(out):
-        out = out.sort_values([EARLY_GROUP_COL, COACH_COL, "LAST_NAME"]).reset_index(drop=True)
+        order = {g: i for i, g in enumerate(EARLY_GROUPS)}
+        out = (out.assign(_g=out[EARLY_GROUP_COL].map(order))
+                  .sort_values(["_g", COACH_COL, "LAST_NAME"])
+                  .drop(columns="_g").reset_index(drop=True))
     return out
 
 
 def summer_early_by_coach_zip(shortlist: pd.DataFrame) -> bytes:
     """The early-advice shortlist as a ``.zip`` of one ``.xlsx`` per coach, a tab
-    per group, so each SSC gets their own candidates."""
+    per group (Excluded on its own tab), so each SSC gets their own candidates."""
     import io
     import zipfile
 
@@ -1299,7 +1316,7 @@ def summer_early_by_coach_zip(shortlist: pd.DataFrame) -> bytes:
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
                 wrote = False
-                for grp_name in (EARLY_GROUP_RESTORE, EARLY_GROUP_FINISH):
+                for grp_name in EARLY_GROUPS:
                     sub = group[group[EARLY_GROUP_COL] == grp_name].drop(columns=["_coach"])
                     if len(sub):
                         sub.to_excel(writer, sheet_name=_safe_sheet_name(grp_name), index=False)
