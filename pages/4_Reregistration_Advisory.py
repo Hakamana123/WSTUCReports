@@ -217,7 +217,8 @@ c3.metric("Conditional Enrolment (30cp)", f"{ce:,}")
 c4.metric("Rule-tree fallback", f"{fallback:,}")
 c5.metric("Flagged for coach review", f"{flagged:,}")
 if excluded:
-    st.caption(f"{excluded:,} student(s) excluded — no advice.")
+    st.caption(f"{excluded:,} student(s) excluded — no advice. They're on an "
+               f"*{rm._EXCLUDED_TAB}* tab in the downloads, not the Coach View / template tabs.")
 if rm.REG_CHECK_COL in result.columns:
     ok = int((result[rm.REG_CHECK_COL] == rm.REG_OK).sum())
     st.caption(
@@ -323,7 +324,8 @@ else:
         f"**Split for distribution** — one Coach View workbook per success coach "
         f"({n_files} file(s)), with a tab per Messaging Template inside each "
         f"plus a *{rm._PAUSED_TAB}* tab for Deferred / Leave-of-Absence students "
-        f"(commencing paused students appear there and on the Commencing tab). "
+        f"(commencing paused students appear there and on the Commencing tab), "
+        f"and an *{rm._EXCLUDED_TAB}* tab for students with no advice. "
         f"Advice columns show the subject name beside each code."
         + (f"  {n_blank} student(s) with no coach go into a `no_coach.xlsx` file." if n_blank else "")
     )

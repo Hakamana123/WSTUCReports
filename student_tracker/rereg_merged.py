@@ -69,6 +69,16 @@ STUDY_PATH_COL = "STUDY_PATH_STATUS"
 ACTIVE_STATUS = "Active Study Path"
 _PAUSED_TAB = "Paused - check enrolment"
 _COMMENCING_TAB = "Commencing"
+# Excluded students get no advice, so they're taken off the Coach View / template
+# tabs and listed on a tab of their own (the full sheet still has everyone).
+_EXCLUDED_TAB = "Excluded"
+
+
+def _is_excluded(cv: pd.DataFrame) -> pd.Series:
+    """Coach View rows whose Progression Outcome is Exclusion."""
+    if STUDY_STATUS_COL not in cv.columns:
+        return pd.Series(False, index=cv.index)
+    return cv[STUDY_STATUS_COL].astype(str).str.strip().isin(v2.STANDING_NO_ADVICE)
 
 # Progression Outcome is blank for ~a quarter of a mid-semester file. A
 # commencing student legitimately has no decision yet; anyone older should have
@@ -982,15 +992,20 @@ def to_workbook_bytes(df: pd.DataFrame, coach_view: pd.DataFrame | None = None) 
     """Same as v2's, plus two bits of styling: an advice-block cell prefixed
     with the grey marker is written as grey italic text (for-reference, not
     registered), and a row flagged ``ADVISE WITHDRAWAL`` gets its flag and
-    reason cells in red bold."""
+    reason cells in red bold. Excluded students move from the Coach View to an
+    ``Excluded`` sheet after it; the full sheet keeps every row."""
     import io
 
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         sheets = []
         if coach_view is not None:
-            coach_view.to_excel(writer, sheet_name=COACH_VIEW_SHEET, index=False)
+            excl = _is_excluded(coach_view)
+            coach_view[~excl].to_excel(writer, sheet_name=COACH_VIEW_SHEET, index=False)
             sheets.append(COACH_VIEW_SHEET)
+            if excl.any():
+                coach_view[excl].to_excel(writer, sheet_name=_EXCLUDED_TAB, index=False)
+                sheets.append(_EXCLUDED_TAB)
         df.to_excel(writer, sheet_name=SHEET_NAME, index=False)
         sheets.append(SHEET_NAME)
 
@@ -1076,6 +1091,11 @@ def split_coach_view_by_coach(coach_view: pd.DataFrame) -> dict[str, bytes]:
     else:
         cv["_tmpl"] = _NO_TEMPLATE
 
+    # Excluded students (no advice) leave every other tab, the Paused one
+    # included, for a tab of their own.
+    excl = _is_excluded(cv)
+    cv.loc[excl, "_tmpl"] = _EXCLUDED_TAB
+
     # Paused students go on the "are you studying with us?" tab - the
     # check-enrolment worklist - instead of being scattered across the template
     # tabs with only a note at the tail of the reason text to tell them apart.
@@ -1085,7 +1105,7 @@ def split_coach_view_by_coach(coach_view: pd.DataFrame) -> dict[str, bytes]:
     # the Paused tab, which is the coach's complete outreach list. Every other
     # paused student is simply moved onto the Paused tab.
     if STUDY_PATH_COL in cv.columns:
-        paused = cv[STUDY_PATH_COL].map(is_paused)
+        paused = cv[STUDY_PATH_COL].map(is_paused) & ~excl
         commencing_paused = paused & cv["_tmpl"].eq(_COMMENCING_TAB)
         # a copy of each paused commencing student for the Paused tab
         dup = cv[commencing_paused].copy()
@@ -1112,8 +1132,9 @@ def split_coach_view_by_coach(coach_view: pd.DataFrame) -> dict[str, bytes]:
             # coach has no commencing students, so the files all look the same.
             if TEMPLATE_COL in cv.columns and _COMMENCING_TAB not in tabs:
                 tabs[_COMMENCING_TAB] = group.iloc[0:0]
-            # Commencing always opens the file; the rest follow alphabetically.
-            for tmpl in sorted(tabs, key=lambda t: (t != _COMMENCING_TAB, t)):
+            # Commencing always opens the file, Excluded closes it; the rest
+            # follow alphabetically.
+            for tmpl in sorted(tabs, key=lambda t: (t != _COMMENCING_TAB, t == _EXCLUDED_TAB, t)):
                 sub = tabs[tmpl]
                 sheet = _safe_sheet_name(tmpl)
                 base, n = sheet, 1
