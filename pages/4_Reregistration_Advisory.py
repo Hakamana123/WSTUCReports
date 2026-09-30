@@ -348,3 +348,21 @@ else:
         f"reregistration_advice_{session.replace(' ', '_')}_by_coach.zip",
         "application/zip",
     )
+
+    # Mid-semester only: the same split, but a tab per coach ACTION instead of
+    # per template - read off the Registration Check.
+    if rm.REG_CHECK_COL in coach_view.columns:
+        actions = pd.Series([rm.coach_action(r)[0] for _, r in coach_view.iterrows()])
+        counts = actions.value_counts()
+        st.caption(
+            "**Split by action** — the same one-workbook-per-coach split, but with a tab per "
+            "thing the coach has to do (from the Registration Check). Each student sits on "
+            "one tab — the most urgent action — and *Action detail* lists every to-do: "
+            + ", ".join(f"**{int(counts.get(a, 0)):,}** {a}" for a in rm.ACTIONS) + "."
+        )
+        st.download_button(
+            "Download split by coach — by action (.zip)",
+            rm.split_coach_view_by_action_zip_bytes(coach_view),
+            f"reregistration_advice_{session.replace(' ', '_')}_by_action.zip",
+            "application/zip",
+        )

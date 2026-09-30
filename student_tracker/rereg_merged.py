@@ -1356,6 +1356,109 @@ def split_coach_view_zip_bytes(coach_view: pd.DataFrame) -> bytes:
     return zip_buf.getvalue()
 
 
+# --------------------------------------------------------------------------- #
+# Split the Coach View by coach ACTION (mid-semester runs only)                #
+# --------------------------------------------------------------------------- #
+# A second way to hand out the mid-semester Coach View: instead of a tab per
+# Messaging Template, a tab per thing the success coach has to do, read off the
+# Registration Check (Blocks from_block..4, registered vs advised). Each student
+# sits on ONE tab - the highest-priority action they need - and the Action
+# detail column lists every to-do (Josiah, 2026-09-30).
+ACTION_COL = "Action"
+ACTION_DETAIL_COL = "Action detail"
+ACTION_WITHDRAW = "Withdraw & restart"
+ACTION_PAUSED = "Confirm returning"
+ACTION_CHANGE = "Change"
+ACTION_DROP = "Drop"
+ACTION_REGISTER = "Register"
+ACTION_OK = "A-OK"
+ACTIONS = (ACTION_WITHDRAW, ACTION_PAUSED, ACTION_CHANGE, ACTION_DROP, ACTION_REGISTER, ACTION_OK)
+
+
+def coach_action(row: pd.Series) -> tuple[str, str]:
+    """``(action, detail)`` for one Coach View row of a mid-semester run.
+
+    Priority: Withdraw & restart (ADVISE WITHDRAWAL) > Confirm returning
+    (paused) > Change (registered in something other than the advice, incl. a
+    course subject where an elective was advised) > Drop (registered where
+    nothing is advised, incl. an excluded student registered in anything) >
+    Register (advised but not registered) > A-OK. CHECK ENROLMENT / AWAITING
+    GRADE don't change the action - the flag stays in its own column.
+    """
+    check = "" if pd.isna(row.get(REG_CHECK_COL)) else str(row.get(REG_CHECK_COL)).strip()
+    if str(row.get(WITHDRAWAL_COL) or "").strip() == _WITHDRAW_TEXT:
+        regs = ", ".join(_SUBJECT_CODE_RE.findall(check))
+        return ACTION_WITHDRAW, ("Withdraw and restart next semester as a commencing student"
+                                 + (f"; drop {regs}" if regs else ""))
+    if is_paused(row.get(STUDY_PATH_COL)):
+        return ACTION_PAUSED, (f"{str(row.get(STUDY_PATH_COL)).strip()} - confirm they're "
+                               "returning before acting on the advice")
+    if check.startswith("Excluded"):
+        regs = _SUBJECT_CODE_RE.findall(check)
+        return (ACTION_DROP, f"Excluded - drop {', '.join(regs)}") if regs else (ACTION_OK, "Excluded - not registered")
+    todos = [t.split(":", 1)[1].strip() if t.strip().startswith("B") else t.strip()
+             for t in check.split(";") if t.strip()]
+    if not todos or check == REG_OK:
+        return ACTION_OK, REG_OK
+    for action, prefix in ((ACTION_CHANGE, "check"), (ACTION_DROP, "drop"), (ACTION_REGISTER, "register")):
+        if any(t.startswith(prefix) for t in todos):
+            return action, check
+    return ACTION_OK, check
+
+
+def split_coach_view_by_action(coach_view: pd.DataFrame) -> dict[str, bytes]:
+    """One ``.xlsx`` per success coach, one worksheet per coach action (empty
+    actions left out), in priority order. Coach View columns plus ``Action``
+    and ``Action detail``, styled and with subject names like the template
+    split. A blank coach lands in ``no_coach.xlsx``. Mid-semester runs only -
+    needs the Registration Check column. Returns ``{filename: xlsx_bytes}``."""
+    import io
+
+    if COACH_COL not in coach_view.columns:
+        raise ValueError(f"No '{COACH_COL}' column in the Coach View — nothing to split by.")
+    if REG_CHECK_COL not in coach_view.columns:
+        raise ValueError("No Registration Check — the action split is for mid-semester runs only.")
+
+    acts = [coach_action(r) for _, r in coach_view.iterrows()]
+    cv = _add_subject_names(coach_view)
+    at = list(cv.columns).index(COACH_COL) + 1
+    cv.insert(at, ACTION_COL, [a for a, _ in acts])
+    cv.insert(at + 1, ACTION_DETAIL_COL, [d for _, d in acts])
+    cv["_coach"] = cv[COACH_COL].fillna("").astype(str).str.strip().replace("", _NO_COACH)
+
+    out: dict[str, bytes] = {}
+    used_files: dict[str, int] = {}
+    for coach, group in cv.groupby("_coach", sort=True):
+        fname = _safe_filename(coach)
+        if fname in used_files:
+            used_files[fname] += 1
+            fname = f"{fname}_{used_files[fname]}"
+        else:
+            used_files[fname] = 1
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            for action in ACTIONS:
+                sub = group[group[ACTION_COL] == action]
+                if len(sub):
+                    sheet = _safe_sheet_name(action)
+                    sub.drop(columns=["_coach"]).to_excel(writer, sheet_name=sheet, index=False)
+                    _style_advice_sheet(writer.sheets[sheet])
+        out[f"{fname}.xlsx"] = buffer.getvalue()
+    return out
+
+
+def split_coach_view_by_action_zip_bytes(coach_view: pd.DataFrame) -> bytes:
+    """``split_coach_view_by_action`` packed into a single ``.zip``."""
+    import io
+    import zipfile
+
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, data in sorted(split_coach_view_by_action(coach_view).items()):
+            zf.writestr(name, data)
+    return zip_buf.getvalue()
+
+
 def read_summer_offering(source) -> set[str]:
     """Parse an uploaded Summer offering list -> the set of subject codes that
     run. Accepts .xlsx or .csv; any column whose cells look like subject codes
