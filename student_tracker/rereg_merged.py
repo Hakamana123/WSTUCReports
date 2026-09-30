@@ -923,12 +923,15 @@ def advise_student_merged(
     capped = outcome in v2.STANDING_MAX_BLOCKS  # Conditional Enrolment
     elec_need = calc._elective_count(row)
 
-    # Mid-semester, a prep the student is enrolled in right now ("Currently
-    # Registered") is part of this session's load: it counts 15cp toward the
-    # Conditional Enrolment cap, and isn't advised again or sent to Summer.
-    prep_enrolled = _preps_in_progress(row, program) if capped and from_block > 1 else []
-    if prep_enrolled:
-        prep_pick = " and ".join(p for p in _split_prep(prep_pick) if p not in prep_enrolled)
+    # One prep per Autumn / Spring semester (Josiah, 2026-09-30): the calculator
+    # can pick both, so keep the first; the other is for a later session. Mid-
+    # semester, a student already taking a prep ("Currently Registered") gets no
+    # other prep this semester.
+    prep_taking = _preps_in_progress(row, program) if from_block > 1 else []
+    prep_pick = "" if prep_taking else (_split_prep(prep_pick) or [""])[0]
+    # ...and for Conditional Enrolment that prep is part of this session's
+    # load: it counts 15cp toward the cap, and isn't sent to Summer.
+    prep_enrolled = prep_taking if capped else []
 
     # Mid-semester, Blocks 1..from_block-1 have already run: the cap counts what
     # the student was actually enrolled in there (10cp a subject, passed or
@@ -1057,7 +1060,7 @@ def advise_student_merged(
     prog_ref = calc._ref().get(program, {})
     accounted = ({b for _, b in named} | set(deferred) | set(partway_carry)
                  | {code for _, code in in_progress} | {prep_now, prep_summer}
-                 | set(prep_enrolled))
+                 | set(prep_taking))
     still: list[str] = []
     for pos in range(1, 9):
         code = prog_subj.get(str(pos))
@@ -1093,7 +1096,7 @@ def advise_student_merged(
     sched_mod = sum(1 for _, b in named if b != "+1 elective")
     load = 3 if capped else 4
     mod_left = max(0, (mod_out - sched_mod) + (elec_need - elec_now))
-    prep_left = max(0, prep_out - len(_split_prep(prep_now)) - len(prep_enrolled))
+    prep_left = max(0, prep_out - len(_split_prep(prep_now)) - len(prep_taking))
     sessions_after = min(8, max(-(-mod_left // load), prep_left))
     estimate = rs.advance(session, sessions_after)
 
@@ -1361,29 +1364,42 @@ def split_coach_view_zip_bytes(coach_view: pd.DataFrame) -> bytes:
 # --------------------------------------------------------------------------- #
 # A second way to hand out the mid-semester Coach View: instead of a tab per
 # Messaging Template, a tab per thing the success coach has to do, read off the
-# Registration Check (Blocks from_block..4, registered vs advised). Each student
-# sits on ONE tab - the highest-priority action they need - and the Action
-# detail column lists every to-do (Josiah, 2026-09-30).
+# Registration Check (Blocks from_block..4 + prep, registered vs advised). Each
+# student sits on ONE tab - the highest-priority action they need - and the
+# Action detail column lists every to-do (Josiah, 2026-09-30).
 ACTION_COL = "Action"
 ACTION_DETAIL_COL = "Action detail"
 ACTION_WITHDRAW = "Withdraw & restart"
 ACTION_PAUSED = "Confirm returning"
 ACTION_CHANGE = "Change"
+ACTION_CHECK_IN = "Check in"
 ACTION_DROP = "Drop"
 ACTION_REGISTER = "Register"
+ACTION_TRANSITION = "Transition"
+ACTION_REVIEW = "Review record"
 ACTION_OK = "A-OK"
-ACTIONS = (ACTION_WITHDRAW, ACTION_PAUSED, ACTION_CHANGE, ACTION_DROP, ACTION_REGISTER, ACTION_OK)
+ACTIONS = (ACTION_WITHDRAW, ACTION_PAUSED, ACTION_CHANGE, ACTION_CHECK_IN, ACTION_DROP,
+           ACTION_REGISTER, ACTION_TRANSITION, ACTION_REVIEW, ACTION_OK)
+_TODO_PREFIX = re.compile(r"^(?:B\d|Prep):\s*")
 
 
-def coach_action(row: pd.Series) -> tuple[str, str]:
+def coach_action(row: pd.Series, session: str = "") -> tuple[str, str]:
     """``(action, detail)`` for one Coach View row of a mid-semester run.
 
     Priority: Withdraw & restart (ADVISE WITHDRAWAL) > Confirm returning
     (paused) > Change (registered in something other than the advice, incl. a
-    course subject where an elective was advised) > Drop (registered where
-    nothing is advised, incl. an excluded student registered in anything) >
-    Register (advised but not registered) > A-OK. CHECK ENROLMENT / AWAITING
-    GRADE don't change the action - the flag stays in its own column.
+    course subject where an elective was advised) > Check in (failed a Block
+    1-2 subject this session and nothing is advised for the blocks left, e.g.
+    over the Conditional Enrolment cap) > Drop (registered where nothing is
+    advised, incl. an excluded student registered in anything) > Register
+    (advised but not registered, prep included) > Transition (nothing to fix
+    and their earliest completion is this semester - they move to the
+    University once what they're taking now is passed, so don't advise more
+    subjects) > Review record (nothing to fix, but the record needs an admin
+    look: excluded, a second program, or no Progression Outcome) > A-OK. A
+    CHECK ENROLMENT flag counts as Check in; AWAITING GRADE doesn't change the
+    action. A-OK is only "registered as advised, no action needed", so each
+    tab can be mail-merged as one message.
     """
     check = "" if pd.isna(row.get(REG_CHECK_COL)) else str(row.get(REG_CHECK_COL)).strip()
     if str(row.get(WITHDRAWAL_COL) or "").strip() == _WITHDRAW_TEXT:
@@ -1395,18 +1411,45 @@ def coach_action(row: pd.Series) -> tuple[str, str]:
                                "returning before acting on the advice")
     if check.startswith("Excluded"):
         regs = _SUBJECT_CODE_RE.findall(check)
-        return (ACTION_DROP, f"Excluded - drop {', '.join(regs)}") if regs else (ACTION_OK, "Excluded - not registered")
-    todos = [t.split(":", 1)[1].strip() if t.strip().startswith("B") else t.strip()
-             for t in check.split(";") if t.strip()]
-    if not todos or check == REG_OK:
-        return ACTION_OK, REG_OK
-    for action, prefix in ((ACTION_CHANGE, "check"), (ACTION_DROP, "drop"), (ACTION_REGISTER, "register")):
+        return (ACTION_DROP, f"Excluded - drop {', '.join(regs)}") if regs else             (ACTION_REVIEW, "Excluded - not registered; refer (not eligible to re-register)")
+    todos = [] if check == REG_OK else [_TODO_PREFIX.sub("", t.strip()) for t in check.split(";") if t.strip()]
+    if any(t.startswith("check") for t in todos):
+        return ACTION_CHANGE, check
+
+    # Check in: failed a Block 1-2 subject this session, nothing advised for the
+    # blocks still to come (those cells are the ones without a result mark)
+    cells = ["" if pd.isna(row.get(c)) else str(row.get(c)) for c in ADVICE_COLS[1:]]
+    failed = [_SUBJECT_CODE_RE.findall(c)[0] for c in cells
+              if RESULT_FAIL in c and _SUBJECT_CODE_RE.search(c)]
+    ahead = [c for c in cells if not (RESULT_PASS in c or RESULT_FAIL in c or c.endswith(NOT_ENROLLED))]
+    if str(row.get(WITHDRAWAL_COL) or "").strip() == _CHECK_ENROL_TEXT:
+        return ACTION_CHECK_IN, ("CHECK ENROLMENT - not enrolled in the early blocks this session; "
+                                 "confirm the enrolment is right" + (f"; {check}" if todos else ""))
+    if failed and not any(c and not c.startswith(_GREY) for c in ahead):
+        why = " (over the Conditional Enrolment cap)" if "Conditional" in str(row.get(STUDY_STATUS_COL) or "") else ""
+        return ACTION_CHECK_IN, (f"Failed {', '.join(failed)} this session; nothing advised for the "
+                                 f"blocks left{why} - check in"
+                                 + (f"; {check}" if todos else ""))
+
+    for action, prefix in ((ACTION_DROP, "drop"), (ACTION_REGISTER, "register")):
         if any(t.startswith(prefix) for t in todos):
             return action, check
-    return ACTION_OK, check
+    done_at = _term_ord(row.get(COMPLETION_COL))
+    if session and done_at is not None and done_at == _term_ord(session):
+        return ACTION_TRANSITION, (f"Finishes this semester ({rs.base_session(session)}) once what "
+                                   "they're taking now is passed - talk transition to the "
+                                   "University, not next subjects")
+    review = []
+    if str(row.get(OTHER_ENROL_COL) or "").strip():
+        review.append(str(row.get(OTHER_ENROL_COL)).strip())
+    if str(row.get(STUDY_STATUS_COL) or "").strip() == NO_OUTCOME:
+        review.append("no Progression Outcome recorded")
+    if review:
+        return ACTION_REVIEW, "Registered as advised, but check: " + "; ".join(review)
+    return ACTION_OK, check or REG_OK
 
 
-def split_coach_view_by_action(coach_view: pd.DataFrame) -> dict[str, bytes]:
+def split_coach_view_by_action(coach_view: pd.DataFrame, session: str = "") -> dict[str, bytes]:
     """One ``.xlsx`` per success coach, one worksheet per coach action (empty
     actions left out), in priority order. Coach View columns plus ``Action``
     and ``Action detail``, styled and with subject names like the template
@@ -1419,7 +1462,7 @@ def split_coach_view_by_action(coach_view: pd.DataFrame) -> dict[str, bytes]:
     if REG_CHECK_COL not in coach_view.columns:
         raise ValueError("No Registration Check — the action split is for mid-semester runs only.")
 
-    acts = [coach_action(r) for _, r in coach_view.iterrows()]
+    acts = [coach_action(r, session) for _, r in coach_view.iterrows()]
     cv = _add_subject_names(coach_view)
     at = list(cv.columns).index(COACH_COL) + 1
     cv.insert(at, ACTION_COL, [a for a, _ in acts])
@@ -1447,14 +1490,14 @@ def split_coach_view_by_action(coach_view: pd.DataFrame) -> dict[str, bytes]:
     return out
 
 
-def split_coach_view_by_action_zip_bytes(coach_view: pd.DataFrame) -> bytes:
+def split_coach_view_by_action_zip_bytes(coach_view: pd.DataFrame, session: str = "") -> bytes:
     """``split_coach_view_by_action`` packed into a single ``.zip``."""
     import io
     import zipfile
 
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for name, data in sorted(split_coach_view_by_action(coach_view).items()):
+        for name, data in sorted(split_coach_view_by_action(coach_view, session).items()):
             zf.writestr(name, data)
     return zip_buf.getvalue()
 
@@ -1768,7 +1811,8 @@ def _registration_check(row: pd.Series, session: str, from_block: int) -> str:
     from_block..4 match the advice? ``OK``, or a short to-do per block.
 
     Any registered subject that isn't one of the program's own subjects or
-    preps is taken to be an elective."""
+    preps is taken to be an elective. An advised prep the student isn't
+    registered in comes first ("Prep: register GEDU0016")."""
     registered = {
         b: _SUBJECT_CODE_RE.findall(str(row.get(f"Block {b} code", "") or ""))
         for b in range(from_block, 5)
@@ -1785,7 +1829,24 @@ def _registration_check(row: pd.Series, session: str, from_block: int) -> str:
         f"B{b}: {msg}" for b in range(from_block, 5)
         if (msg := _block_reg_check(row.get(ADVICE_COLS[b]), registered[b], pattern))
     ]
+    prep_adv = "" if pd.isna(row.get(ADVICE_COLS[0])) else str(row.get(ADVICE_COLS[0]))
+    if prep_adv and not prep_adv.startswith(_GREY):
+        missing = [c for c in _SUBJECT_CODE_RE.findall(prep_adv) if c not in _preps_registered(row, program)]
+        if missing:
+            todo.insert(0, f"Prep: register {', '.join(missing)}")
     return "; ".join(todo) if todo else REG_OK
+
+
+def _preps_registered(row: pd.Series, program: str) -> set[str]:
+    """Preps the student is registered in right now: a ``Prep N Status`` of
+    "… Currently Registered", or the ``Prep Subject code`` when ``Prep
+    Registration`` shows a registration (the file often leaves the code blank,
+    so the status is the main signal)."""
+    taking = set(_preps_in_progress(row, program))
+    reg = "" if pd.isna(row.get("Prep Registration")) else str(row.get("Prep Registration"))
+    if "Registered" in reg:
+        taking |= set(_SUBJECT_CODE_RE.findall(str(row.get("Prep Subject code") or "")))
+    return taking
 
 
 def _other_enrolments(advised: pd.DataFrame) -> list[str]:
