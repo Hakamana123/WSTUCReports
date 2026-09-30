@@ -150,21 +150,24 @@ if is_summer and summer_mode.startswith("Early"):
         st.stop()
     shortlist = rm.summer_early_advice(df, summer_offering, session=session)
     if not len(shortlist):
-        st.warning("No students match — none have 1–2 outstanding subjects that a listed "
-                   "Summer subject covers at their campus.")
+        st.warning("No students match — Summer doesn't bring anyone's transition to the "
+                   "University forward with this offering.")
         st.stop()
 
     is_excl = shortlist[rm.EARLY_GROUP_COL] == rm.EARLY_GROUP_EXCLUDED
-    restore = int((shortlist[rm.EARLY_GROUP_COL] == rm.EARLY_GROUP_RESTORE).sum())
-    finish = int((shortlist[rm.EARLY_GROUP_COL] == rm.EARLY_GROUP_FINISH).sum())
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Candidates", f"{int((~is_excl).sum()):,}")
-    m2.metric(rm.EARLY_GROUP_RESTORE, f"{restore:,}", help="Failed an early subject — Summer restores their pattern")
-    m3.metric(rm.EARLY_GROUP_FINISH, f"{finish:,}", help="Near the end — Summer brings completion forward")
-    m4.metric("Excluded", f"{int(is_excl.sum()):,}", help="Progression Outcome is Exclusion — not eligible to re-register; separate tab, not advised")
+    n_finish = int((shortlist[rm.EARLY_GROUP_COL] == rm.EARLY_GROUP_FINISH).sum())
+    n_earlier = int((shortlist[rm.EARLY_GROUP_COL] == rm.EARLY_GROUP_EARLIER).sum())
+    m1, m2, m3 = st.columns(3)
+    m1.metric(rm.EARLY_GROUP_FINISH, f"{n_finish:,}", help="Everything they still owe fits into this Summer — they finish their diploma / UPP")
+    m2.metric(rm.EARLY_GROUP_EARLIER, f"{n_earlier:,}", help="Summer lightens next year enough that they finish (and move to the University) a semester earlier")
+    m3.metric("Excluded", f"{int(is_excl.sum()):,}", help="Progression Outcome is Exclusion — not eligible to re-register; separate tab, not advised")
     st.caption(
-        "Students with 1–2 outstanding subjects, at least one offered in Summer at their "
-        "campus. Messaging stays general (the confirmed offerings); this is the *who to contact* list. "
+        "Students Summer **materially helps**: it brings their move to the University forward — "
+        "they finish in Summer, or a semester earlier. Same picks as the full advice (one subject "
+        f"per block, SU1 / SU2; an elective can take a free block; preps run every Summer; "
+        f"{rm.SUMMER_CAP_CP}cp limit). Subjects they're enrolled in now count as passed. "
+        "Students Summer wouldn't move forward aren't listed. "
+        "Messaging stays general (the confirmed offerings); this is the *who to contact* list. "
         "Excluded students are listed on their own tab for the coach, not contacted about Summer. "
         "Progression Outcome is whatever the uploaded file holds (the last progression round)."
     )
@@ -217,6 +220,10 @@ c2.metric("From calculator", f"{from_calc:,}", help=f"of which {assumed:,} on an
 c3.metric("Conditional Enrolment (30cp)", f"{ce:,}")
 c4.metric("Rule-tree fallback", f"{fallback:,}")
 c5.metric("Flagged for coach review", f"{flagged:,}")
+no_benefit = int(src.str.contains("no benefit", regex=False).sum())
+if no_benefit:
+    st.caption(f"{no_benefit:,} student(s) not advised for Summer — it wouldn't bring their "
+               "transition to the University forward (subjects greyed, reason says why).")
 if excluded:
     st.caption(f"{excluded:,} student(s) excluded — no advice. They're on an "
                f"*{rm._EXCLUDED_TAB}* tab in the downloads, not the Coach View / template tabs.")
