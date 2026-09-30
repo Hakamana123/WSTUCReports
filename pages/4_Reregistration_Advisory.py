@@ -172,6 +172,11 @@ if is_summer and summer_mode.startswith("Early"):
         "Progression Outcome is whatever the uploaded file holds (the last progression round)."
     )
 
+    n_paused = int(shortlist[rm.EARLY_PAUSED_COL].astype(bool).sum())
+    if n_paused:
+        st.caption(f"**{n_paused:,} paused** (Deferred / Leave of Absence) — kept in their group but "
+                   f"flagged in *{rm.EARLY_PAUSED_COL}*: confirm they're returning before advising.")
+
     view = shortlist
     groups = st.multiselect("Filter by group", list(rm.EARLY_GROUPS), default=[])
     if groups:

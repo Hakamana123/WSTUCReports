@@ -1463,6 +1463,9 @@ EARLY_PREP_COL = "Summer prep"
 EARLY_OUTSTANDING_COL = "Outstanding subjects"
 EARLY_WITHOUT_COL = "Finish without Summer"
 EARLY_WITH_COL = "Finish with Summer"
+# Deferred / Leave of Absence students stay on the list (Summer would help
+# them too) but are flagged: confirm they're coming back before advising.
+EARLY_PAUSED_COL = "Enrolment check"
 _ELECTIVE = "+1 elective"
 
 
@@ -1506,8 +1509,9 @@ def summer_early_advice(
     finish without and with Summer. Subjects they're enrolled in now count as
     passed. A student whose Progression Outcome is Exclusion goes in the
     *Excluded* group - listed for the coach, not advised. Each row carries the
-    outcome (blanks labelled as in the Coach View's Study Status). Returns one
-    row per candidate; empty frame if none.
+    outcome (blanks labelled as in the Coach View's Study Status). A paused
+    (Deferred / Leave of Absence) student stays in their group with an
+    *Enrolment check* flag. Returns one row per candidate; empty frame if none.
     """
     names = load_subject_names()
     offerings = v2.load_offerings()
@@ -1540,6 +1544,9 @@ def summer_early_advice(
             "COMMENCEMENT_PERIOD": r.get("COMMENCEMENT_PERIOD"),
             EARLY_OUTCOME_COL: _study_status(outcome, template, r.get(STUDY_PATH_COL)),
             EARLY_GROUP_COL: group,
+            EARLY_PAUSED_COL: (
+                f"PAUSED ({str(r.get(STUDY_PATH_COL)).strip()}) - confirm they're returning first"
+                if is_paused(r.get(STUDY_PATH_COL)) else ""),
             **{col: ", ".join(c if c == _ELECTIVE else label(c) for c in plan[blk])
                for blk, col in EARLY_CATCHUP_COLS.items()},
             EARLY_CATCHUP_NOBLOCK_COL: ", ".join(label(c) for c in plan[""]),
@@ -1550,7 +1557,7 @@ def summer_early_advice(
         })
     cols = ["STUDENT_ID", "FIRST_NAME", "LAST_NAME", "PREFERRED_NAME",
             "INSTITUTION_EMAIL_ADDRESS", COACH_COL, "PROGRAM_CD", "CAMP_CODE",
-            "COMMENCEMENT_PERIOD", EARLY_OUTCOME_COL, EARLY_GROUP_COL,
+            "COMMENCEMENT_PERIOD", EARLY_OUTCOME_COL, EARLY_GROUP_COL, EARLY_PAUSED_COL,
             *EARLY_CATCHUP_COLS.values(), EARLY_CATCHUP_NOBLOCK_COL, EARLY_PREP_COL,
             EARLY_WITHOUT_COL, EARLY_WITH_COL, EARLY_OUTSTANDING_COL]
     out = pd.DataFrame(rows, columns=cols)
