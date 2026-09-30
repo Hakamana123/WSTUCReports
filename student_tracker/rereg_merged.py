@@ -997,6 +997,24 @@ def advise_student_merged(
             if kept[bi] in taking:
                 in_progress.append((taking[kept[bi]], kept[bi]))
                 kept[bi] = ""
+        # A remaining block left empty (its pattern subject is already being
+        # taken) takes an elective the student still needs - electives already
+        # taken in Blocks 1..from_block-1 this session count - within the cap.
+        ref = calc._ref().get(program, {})
+        own_codes = set(prog_subj.values()) | {ref.get("prep1"), ref.get("prep2")}
+        elec_want = (elec_need - kept.count("+1 elective")
+                     - sum(1 for c in _enrolled_earlier_codes(row, from_block) if c not in own_codes))
+        for bi in range(from_block - 1, 4):
+            if elec_want <= 0:
+                break
+            if kept[bi]:
+                continue
+            if capped:
+                if cp_used + _CP_MODULAR > CE_CAP_CP:
+                    break
+                cp_used += _CP_MODULAR
+            kept[bi] = "+1 elective"
+            elec_want -= 1
         elec_now = kept.count("+1 elective")
     named_all = [(i + 1, b) for i, b in enumerate(kept) if b]
     if from_block > 1:
@@ -1776,10 +1794,8 @@ def build_advice(
     from_block = rs.target_block(session)
     if from_block > 1:
         for b in range(from_block, 5):
-            out[REGISTERED_COLS[b]] = [
-                ", ".join(_SUBJECT_CODE_RE.findall(str(v or ""))) if not pd.isna(v) else ""
-                for v in out.get(f"Block {b} code", pd.Series([""] * len(out), index=out.index))
-            ]
+            # registered now: a subject already dropped isn't shown
+            out[REGISTERED_COLS[b]] = [", ".join(_registered_codes(r, b)) for _, r in out.iterrows()]
         out[REG_CHECK_COL] = [
             _registration_check(row, session, from_block) for _, row in out.iterrows()
         ]
@@ -1811,12 +1827,12 @@ def _registration_check(row: pd.Series, session: str, from_block: int) -> str:
     from_block..4 match the advice? ``OK``, or a short to-do per block.
 
     Any registered subject that isn't one of the program's own subjects or
-    preps is taken to be an elective. An advised prep the student isn't
+    preps is taken to be an elective. Electives aren't tied to a block: an
+    elective advised in one block and taken in another block that has nothing
+    advised counts as registered as advised. An advised prep the student isn't
     registered in comes first ("Prep: register GEDU0016")."""
-    registered = {
-        b: _SUBJECT_CODE_RE.findall(str(row.get(f"Block {b} code", "") or ""))
-        for b in range(from_block, 5)
-    }
+    # what they're registered in now - a subject already dropped doesn't count
+    registered = {b: _registered_codes(row, b) for b in range(from_block, 5)}
     if str(row.get(SOURCE_COL, "")).startswith(_SRC_EXCLUDED):
         regs = [c for b in registered.values() for c in b]
         return f"Excluded - registered in {', '.join(regs)}" if regs else "Excluded"
@@ -1825,9 +1841,20 @@ def _registration_check(row: pd.Series, session: str, from_block: int) -> str:
     program = str(row["PROGRAM_CD"]).split(".")[0]
     ref = calc._ref().get(program, {})
     pattern = set(calc.subjects_for(program, session).values()) | {ref.get("prep1"), ref.get("prep2")}
+    # pair each "elective advised, nothing registered" block with a block that
+    # has nothing advised but an elective registered - same elective, other block
+    def adv(b):
+        v = row.get(ADVICE_COLS[b])
+        return "" if v is None or pd.isna(v) else str(v).strip()
+    want = [b for b in range(from_block, 5) if adv(b) == "+1 elective" and not registered[b]]
+    spare = [b for b in range(from_block, 5)
+             if (not adv(b) or adv(b).startswith(_GREY) or adv(b) == calc.NO_REGISTRATION)
+             and registered[b] and not any(c in pattern for c in registered[b])]
+    matched = {b for pair in zip(want, spare) for b in pair}
     todo = [
         f"B{b}: {msg}" for b in range(from_block, 5)
-        if (msg := _block_reg_check(row.get(ADVICE_COLS[b]), registered[b], pattern))
+        if b not in matched
+        and (msg := _block_reg_check(row.get(ADVICE_COLS[b]), registered[b], pattern))
     ]
     prep_adv = "" if pd.isna(row.get(ADVICE_COLS[0])) else str(row.get(ADVICE_COLS[0]))
     if prep_adv and not prep_adv.startswith(_GREY):
