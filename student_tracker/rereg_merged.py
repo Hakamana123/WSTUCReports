@@ -763,6 +763,53 @@ def _mark_passed(row: pd.Series, program: str, slot_map: dict, codes, preps, ele
     return out
 
 
+def _sb4_pick(row: pd.Series, adj: pd.Series, program: str, session: str,
+              slot_map: dict, outcome: str) -> str:
+    """What the student can still register in Block 4 of the Spring semester
+    before this Summer: one subject, and only if Block 4 has no registration
+    now (Summer advice goes out in SB3, while SB4 is still open). ``adj`` is
+    the row with current enrolments passed (:func:`_assume_enrolled_pass`).
+
+    An outstanding program subject that runs in Block 4 (pattern position 4 or
+    8 in the Spring order) comes first - it's tied to that block - then an
+    elective. Paused students and a Conditional Enrolment student already at
+    the 30cp cap this semester get nothing. Returns a code, ``_ELECTIVE``, or ``""``."""
+    if _registered_codes(row, 4) or is_paused(row.get(STUDY_PATH_COL)):
+        return ""
+    if outcome in v2.STANDING_MAX_BLOCKS:  # Conditional Enrolment: 30cp a semester
+        cp = (_CP_MODULAR * (len(_enrolled_earlier_codes(row, 3)) + len(_registered_codes(row, 3)))
+              + _CP_PREP * len(_preps_in_progress(row, program)))
+        if cp + _CP_MODULAR > 30:
+            return ""
+    spring = f"{rs.parse_target(session)[0] % 100:02d} SPR"
+    srow = calc.remap_statuses(adj, program, spring, slot_map)
+    subj = calc.subjects_for(program, spring)
+    not_offered = set(v2.load_offerings()["programs"].get(program, {}).get("not_offered_slots", []))
+    for pos in (4, 8):
+        code = subj.get(str(pos))
+        slot = _file_slot(program, code, slot_map) if code else None
+        if code and calc._is_outstanding(srow.get(f"Subject {pos} Status")) \
+                and not (slot and int(slot.split()[1]) in not_offered):
+            return code
+    if program not in v2.NO_ELECTIVE_PROGRAMS and calc._elective_count(adj):
+        return _ELECTIVE
+    return ""
+
+
+def _note_sb4(out: dict, sb4: str, spring: str) -> None:
+    """Put the SB4 pick on a Summer advice row. If it clears everything they
+    owe, they finish this Spring: no Summer advice at all."""
+    plan = out["_summer"]
+    plan["sb4"] = sb4
+    if not plan["owed"]:
+        plan["helps"] = False
+        out[COMPLETION_COL] = f"{spring} (est.)"
+        out[REASON_COL] = f"Register {sb4} in SB4 - finishes {spring}, no Summer needed"
+        out[SOURCE_COL] = _SRC_SUMMER + " - SB4 finishes them"
+    else:
+        out[REASON_COL] = f"SB4 ({spring}): register {sb4} | {out[REASON_COL]}"
+
+
 def _summer_helps(
     file_row: pd.Series, program: str, session: str, capped: bool, slot_map: dict,
     offerings: dict, codes, preps, electives: int, left: int, owed_n: int,
@@ -828,9 +875,18 @@ def advise_student_merged(
     tgt = rs.parse_target(session)
     if tgt and tgt[1] == "SUM":
         adj = _assume_enrolled_pass(row, program, session, slot_map)
-        return _summer_advice(out, calc.remap_statuses(adj, program, session, slot_map), program,
-                              is_nursing, session, outcome, summer_subjects,
-                              file_row=adj, slot_map=slot_map, offerings=offerings)
+        # SB4 is still open when Summer advice goes out: whatever the student
+        # can register there counts as done before Summer is weighed.
+        sb4 = _sb4_pick(row, adj, program, session, slot_map, outcome)
+        if sb4:
+            adj = _mark_passed(adj, program, slot_map, [] if sb4 == _ELECTIVE else [sb4], [],
+                               1 if sb4 == _ELECTIVE else 0)
+        out = _summer_advice(out, calc.remap_statuses(adj, program, session, slot_map), program,
+                             is_nursing, session, outcome, summer_subjects,
+                             file_row=adj, slot_map=slot_map, offerings=offerings)
+        if sb4:
+            _note_sb4(out, sb4, f"{tgt[0] % 100:02d} SPR")
+        return out
 
     # A part-way target ("26 AUT Block 3") uses the whole-session engines - the
     # picks are already locked to the block each subject runs in - and only
@@ -1622,6 +1678,10 @@ EARLY_GROUP_COL = "Group"
 # no block goes in a third column, added only if needed. Preps run in every
 # Summer outside the SU1/SU2 blocks, so they get a column of their own.
 EARLY_CATCHUP_COLS = {"SU1": "SU1 catch-up", "SU2": "SU2 catch-up"}
+# SB4 is still open when this goes out: a subject (or elective) the student can
+# register there this semester, before Summer. A student SB4 finishes is off
+# the list - Summer doesn't help them.
+EARLY_SB4_COL = "SB4 (this semester)"
 EARLY_CATCHUP_NOBLOCK_COL = "Summer catch-up (block not listed)"
 EARLY_PREP_COL = "Summer prep"
 EARLY_OUTSTANDING_COL = "Outstanding subjects"
@@ -1659,6 +1719,17 @@ def _electives_in_progress(row: pd.Series, program: str, session: str) -> int:
     return len({c for b in (3, 4) for c in _registered_codes(row, b) if c not in own})
 
 
+def _owed_with_sb4(owed: list[str], sb4: str) -> list[str]:
+    """Everything still owed before SB4: ``owed`` (what's left after it) with
+    the SB4 pick put back - an elective adds to the "+N elective" count."""
+    if not sb4:
+        return owed
+    if sb4 != _ELECTIVE:
+        return [sb4, *owed]
+    n = 1 + sum(int(re.match(r"\+(\d+)", x).group(1)) for x in owed if x.startswith("+"))
+    return [x for x in owed if not x.startswith("+")] + [f"+{n} elective"]
+
+
 def summer_early_advice(
     df: pd.DataFrame, offering: dict[str, set[str]], session: str = "26 SUM",
 ) -> pd.DataFrame:
@@ -1671,7 +1742,8 @@ def summer_early_advice(
     SU1 / SU2 columns show each subject in the one block it's advised in, an
     elective as "+1 elective", preps in their own column - plus when they'd
     finish without and with Summer. Subjects they're enrolled in now count as
-    passed. A student whose Progression Outcome is Exclusion goes in the
+    passed, and so does what they can still register in SB4 (*SB4 (this
+    semester)*, :func:`_sb4_pick`) - a student SB4 finishes isn't listed. A student whose Progression Outcome is Exclusion goes in the
     *Excluded* group - listed for the coach, not advised. Each row carries the
     outcome (blanks labelled as in the Coach View's Study Status). A paused
     (Deferred / Leave of Absence) student stays in their group with an
@@ -1711,18 +1783,19 @@ def summer_early_advice(
             EARLY_PAUSED_COL: (
                 f"PAUSED ({str(r.get(STUDY_PATH_COL)).strip()}) - confirm they're returning first"
                 if is_paused(r.get(STUDY_PATH_COL)) else ""),
+            EARLY_SB4_COL: (lambda c: c if c in ("", _ELECTIVE) else label(c))(plan.get("sb4", "")),
             **{col: ", ".join(c if c == _ELECTIVE else label(c) for c in plan[blk])
                for blk, col in EARLY_CATCHUP_COLS.items()},
             EARLY_CATCHUP_NOBLOCK_COL: ", ".join(label(c) for c in plan[""]),
             EARLY_PREP_COL: ", ".join(label(c) for c in plan["prep"]),
             EARLY_WITHOUT_COL: plan["without"],
             EARLY_WITH_COL: plan["with"],
-            EARLY_OUTSTANDING_COL: ", ".join(plan["owed"]),
+            EARLY_OUTSTANDING_COL: ", ".join(_owed_with_sb4(plan["owed"], plan.get("sb4", ""))),
         })
     cols = ["STUDENT_ID", "FIRST_NAME", "LAST_NAME", "PREFERRED_NAME",
             "INSTITUTION_EMAIL_ADDRESS", COACH_COL, "PROGRAM_CD", "CAMP_CODE",
             "COMMENCEMENT_PERIOD", EARLY_OUTCOME_COL, EARLY_GROUP_COL, EARLY_PAUSED_COL,
-            *EARLY_CATCHUP_COLS.values(), EARLY_CATCHUP_NOBLOCK_COL, EARLY_PREP_COL,
+            EARLY_SB4_COL, *EARLY_CATCHUP_COLS.values(), EARLY_CATCHUP_NOBLOCK_COL, EARLY_PREP_COL,
             EARLY_WITHOUT_COL, EARLY_WITH_COL, EARLY_OUTSTANDING_COL]
     out = pd.DataFrame(rows, columns=cols)
     if not out[EARLY_CATCHUP_NOBLOCK_COL].astype(bool).any():
