@@ -927,8 +927,8 @@ def advise_student_merged(
             _note_sb4(out, sb4, f"{tgt[0] % 100:02d} SPR")
         plan = out["_summer"]
         if summer_round == "SU1" and plan["helps"] and plan["SU2"]:
-            out[REASON_COL] += (" | SU2 picks (" + ", ".join(plan["SU2"])
-                                + ") are confirmed after SB4 results")
+            out[REASON_COL] += (" | SU2 (" + ", ".join(plan["SU2"])
+                                + "): don't register yet - confirmed in the SU2 round after SB4 results")
         return out
 
     # A part-way target ("26 AUT Block 3") uses the whole-session engines - the
@@ -1733,7 +1733,7 @@ EARLY_REG_CHECK = ("No SB3/SB4 registration in the file - check what they're enr
 EARLY_AS_AT_COL = "Registrations as at"
 EARLY_CATCHUP_NOBLOCK_COL = "Summer catch-up (block not listed)"
 # SU1 round: SU2 picks are shown but not advised yet - that's the SU2 round
-EARLY_SU2_LATER_COL = "SU2 (advised after SB4 results)"
+EARLY_SU2_LATER_COL = "SU2 (don't register yet - after SB4 results)"
 EARLY_PREP_COL = "Summer prep"
 EARLY_OUTSTANDING_COL = "Outstanding subjects"
 EARLY_WITHOUT_COL = "Finish without Summer"
@@ -1787,7 +1787,7 @@ def summer_early_advice(
 ) -> pd.DataFrame:
     """Shortlist of students Summer materially helps, for one advice round
     (``SUMMER_ROUNDS``). **SU1** (mid-SB3): listed on the whole Summer, SU1 +
-    prep advised, SU2 picks in *SU2 (advised after SB4 results)*. **SU2** (on
+    prep advised, SU2 picks in *SU2 (don't register yet - after SB4 results)*. **SU2** (on
     the end-of-SB4 extract): SU2 subjects only, actual results, and only
     students it finishes (no *Finish a semester earlier* group, no
     *Registration check*).

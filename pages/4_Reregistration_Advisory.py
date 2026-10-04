@@ -105,7 +105,7 @@ if is_summer:
         ["SU1 — early advice (mid-SB3)", "SU2 — targeted (after SB4 results)"],
         help="**SU1** goes out by mid-SB3 on the latest extract: current enrolments count as "
              "passed and a free SB4 slot as used; students are listed if Summer as a whole "
-             "helps, SU1 + prep are advised and SU2 picks are shown as *after SB4 results*. "
+             "helps, SU1 + prep are advised and SU2 picks are shown but not to register yet. "
              "**SU2** runs on the end-of-SB4 extract: actual results, SU2 subjects only, and "
              "only students who finish this Summer (so they start their Bachelor in Autumn).",
     )
@@ -183,7 +183,7 @@ if is_summer and summer_mode.startswith("Early"):
         st.caption(
             "**SU1 round — broad, early.** Students Summer **materially helps** (judged on SU1 + SU2 "
             "together): they finish in Summer, or a semester earlier. SU1 and prep are advised now; "
-            f"SU2 picks are shown in *{rm.EARLY_SU2_LATER_COL}* and confirmed in the SU2 round. "
+            f"SU2 picks are shown in *{rm.EARLY_SU2_LATER_COL}*: students wait for the SU2 round to register. "
             f"One subject per block, an elective can take a free block, {rm.SUMMER_CAP_CP}cp limit. "
             "Subjects they're enrolled in now count as passed, and a free SB4 slot as used. "
             "Messaging stays general (the confirmed offerings); this is the *who to contact* list. "
