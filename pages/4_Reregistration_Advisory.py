@@ -98,7 +98,18 @@ summer_subjects = None
 summer_offering = {}
 is_summer = "SUM" in session.upper()
 summer_mode = "Full re-registration advice"
+summer_round = ""
 if is_summer:
+    _round = st.radio(
+        "Summer round",
+        ["SU1 — early advice (mid-SB3)", "SU2 — targeted (after SB4 results)"],
+        help="**SU1** goes out by mid-SB3 on the latest extract: current enrolments count as "
+             "passed and a free SB4 slot as used; students are listed if Summer as a whole "
+             "helps, SU1 + prep are advised and SU2 picks are shown as *after SB4 results*. "
+             "**SU2** runs on the end-of-SB4 extract: actual results, SU2 subjects only, and "
+             "only students who finish this Summer (so they start their Bachelor in Autumn).",
+    )
+    summer_round = _round[:3]
     summer_mode = st.radio(
         "Summer output",
         ["Full re-registration advice", "Early advice — candidate shortlist"],
@@ -144,11 +155,17 @@ except ValueError as exc:
 # A separate targeting output, not the full engine: who a confirmed Summer subject
 # could get back on pattern (failed an early subject) or help finish sooner.
 if is_summer and summer_mode.startswith("Early"):
-    st.header("Summer early advice — candidate shortlist")
+    st.header(f"Summer {summer_round} advice — candidate shortlist")
     if not summer_offering:
         st.info("Upload the confirmed Summer offering list above to build the shortlist.")
         st.stop()
-    shortlist = rm.summer_early_advice(df, summer_offering, session=session)
+    as_at = st.text_input(
+        "Extract date (registrations as at)", rm.extract_date(uploaded.name),
+        help="Read from the file name when it has one (e.g. 20260923 …). Goes on every row, "
+             "so coaches know how current the registrations and results are.",
+    )
+    shortlist = rm.summer_early_advice(df, summer_offering, session=session, as_at=as_at.strip(),
+                                       summer_round=summer_round)
     if not len(shortlist):
         st.warning("No students match — Summer doesn't bring anyone's transition to the "
                    "University forward with this offering.")
@@ -159,23 +176,39 @@ if is_summer and summer_mode.startswith("Early"):
     n_earlier = int((shortlist[rm.EARLY_GROUP_COL] == rm.EARLY_GROUP_EARLIER).sum())
     m1, m2, m3 = st.columns(3)
     m1.metric(rm.EARLY_GROUP_FINISH, f"{n_finish:,}", help="Everything they still owe fits into this Summer — they finish their diploma / UPP")
-    m2.metric(rm.EARLY_GROUP_EARLIER, f"{n_earlier:,}", help="Summer lightens next year enough that they finish (and move to the University) a semester earlier")
+    if summer_round == "SU1":
+        m2.metric(rm.EARLY_GROUP_EARLIER, f"{n_earlier:,}", help="Summer lightens next year enough that they finish (and move to the University) a semester earlier")
     m3.metric("Excluded", f"{int(is_excl.sum()):,}", help="Progression Outcome is Exclusion — not eligible to re-register; separate tab, not advised")
-    st.caption(
-        "Students Summer **materially helps**: it brings their move to the University forward — "
-        "they finish in Summer, or a semester earlier. Same picks as the full advice (one subject "
-        f"per block, SU1 / SU2; an elective can take a free block; preps run every Summer; "
-        f"{rm.SUMMER_CAP_CP}cp limit). Subjects they're enrolled in now count as passed. "
-        "Students Summer wouldn't move forward aren't listed. "
-        "Messaging stays general (the confirmed offerings); this is the *who to contact* list. "
-        "Excluded students are listed on their own tab for the coach, not contacted about Summer. "
-        "Progression Outcome is whatever the uploaded file holds (the last progression round)."
-    )
+    if summer_round == "SU1":
+        st.caption(
+            "**SU1 round — broad, early.** Students Summer **materially helps** (judged on SU1 + SU2 "
+            "together): they finish in Summer, or a semester earlier. SU1 and prep are advised now; "
+            f"SU2 picks are shown in *{rm.EARLY_SU2_LATER_COL}* and confirmed in the SU2 round. "
+            f"One subject per block, an elective can take a free block, {rm.SUMMER_CAP_CP}cp limit. "
+            "Subjects they're enrolled in now count as passed, and a free SB4 slot as used. "
+            "Messaging stays general (the confirmed offerings); this is the *who to contact* list. "
+            "Excluded students are on their own tab for the coach, not contacted about Summer."
+        )
+    else:
+        st.caption(
+            "**SU2 round — targeted, after SB4 results.** Only students SU2 **finishes** this "
+            "Summer, so they start their Bachelor in Autumn. Results are taken as the file has "
+            "them (run this on the end-of-SB4 extract); only a status still *Currently Registered* "
+            "counts as passed. SU2 subjects only, one per student; no preps. "
+            "Excluded students are on their own tab for the coach."
+        )
 
     n_paused = int(shortlist[rm.EARLY_PAUSED_COL].astype(bool).sum())
     if n_paused:
         st.caption(f"**{n_paused:,} paused** (Deferred / Leave of Absence) — kept in their group but "
                    f"flagged in *{rm.EARLY_PAUSED_COL}*: confirm they're returning before advising.")
+
+    n_regcheck = (int(shortlist[rm.EARLY_REG_CHECK_COL].astype(bool).sum())
+                  if rm.EARLY_REG_CHECK_COL in shortlist else 0)
+    if n_regcheck:
+        st.caption(f"**{n_regcheck:,}** have no SB3/SB4 registration in the file — flagged in "
+                   f"*{rm.EARLY_REG_CHECK_COL}*: check their current enrolment first, the "
+                   f"extract{f' ({as_at.strip()})' if as_at.strip() else ''} may predate it.")
 
     view = shortlist
     groups = st.multiselect("Filter by group", list(rm.EARLY_GROUPS), default=[])
@@ -187,26 +220,34 @@ if is_summer and summer_mode.startswith("Early"):
     st.dataframe(view, use_container_width=True, hide_index=True)
     st.caption(f"Showing {len(view):,} of {len(shortlist):,} candidates.")
 
+    demand = rm.summer_demand(shortlist)
+    st.subheader("Demand by subject and campus")
+    st.caption("How many listed students (not Excluded) each Summer subject would take, by "
+               "campus — to check the offering against demand.")
+    st.dataframe(demand, use_container_width=True, hide_index=True)
+
     import io as _io
     buf = _io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as w:
-        shortlist[~is_excl].to_excel(w, sheet_name="Summer early advice", index=False)
+        shortlist[~is_excl].to_excel(w, sheet_name=f"Summer {summer_round} advice", index=False)
         if is_excl.any():
             shortlist[is_excl].to_excel(w, sheet_name="Excluded", index=False)
+        demand.to_excel(w, sheet_name="Demand", index=False)
     d1, d2 = st.columns(2)
     d1.download_button(
         "Download shortlist (.xlsx)", buf.getvalue(),
-        f"summer_early_advice_{session.replace(' ', '_')}.xlsx",
+        f"summer_{summer_round}_advice_{session.replace(' ', '_')}.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary",
     )
     d2.download_button(
         "Download split by coach (.zip)", rm.summer_early_by_coach_zip(shortlist),
-        f"summer_early_advice_{session.replace(' ', '_')}_by_coach.zip", "application/zip",
+        f"summer_{summer_round}_advice_{session.replace(' ', '_')}_by_coach.zip", "application/zip",
     )
     st.stop()
 
 dropped = int(df.attrs.get("duplicates_dropped", 0))
-result = rm.build_advice(df, session=session, summer_subjects=summer_subjects)
+result = rm.build_advice(df, session=session, summer_subjects=summer_subjects,
+                         summer_round=summer_round)
 coach_view = rm.build_coach_view(result)
 
 # --- summary --------------------------------------------------------------

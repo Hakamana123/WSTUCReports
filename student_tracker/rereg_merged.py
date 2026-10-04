@@ -459,7 +459,7 @@ def _normalize_summer_offering(summer) -> dict | None:
 def _summer_advice(
     out: dict, row: pd.Series, program: str, is_nursing: bool, session: str, outcome: str,
     summer_subjects=None, file_row: pd.Series | None = None, slot_map: dict | None = None,
-    offerings: dict | None = None,
+    offerings: dict | None = None, allow_prep: bool = True, finish_only: bool = False,
 ) -> dict:
     """Summer advice.
 
@@ -482,7 +482,10 @@ def _summer_advice(
     one the others leave free. A subject that's offered but can't fit, or that
     isn't offered at their campus, is greyed for reference (take next Autumn). With no list uploaded, only prep + Subjects 1 & 2 are
     assumed to run. Everyone is held to the Summer limit (``SUMMER_CAP_CP``,
-    25cp - tighter than the Conditional Enrolment 30cp cap).
+    25cp - tighter than the Conditional Enrolment 30cp cap). ``allow_prep``
+    off (the SU2 round) leaves preps out of the picks; ``finish_only`` (also
+    SU2) advises only students it finishes, so they start their Bachelor in
+    Autumn.
     """
     offering = _normalize_summer_offering(summer_subjects)
     assumed = offering is None
@@ -510,7 +513,7 @@ def _summer_advice(
     prep_now, cp = [], 0
     for slot, key in (("Prep 1 Status", "prep1"), ("Prep 2 Status", "prep2")):
         code = prog_ref.get(key)
-        if not is_nursing and code and calc._is_outstanding(row.get(slot)) and cp + _CP_PREP <= cp_cap:
+        if allow_prep and not is_nursing and code and calc._is_outstanding(row.get(slot))                 and cp + _CP_PREP <= cp_cap:
             prep_now.append(code)
             cp += _CP_PREP
 
@@ -607,7 +610,8 @@ def _summer_advice(
         slot_map or {}, offerings or {}, register, prep_now, len(elec_blocks),
         left=work, owed_n=len(owed) - (1 if elec_need else 0) + elec_need,
     ) if summer_items else None
-    plan = {"helps": bool(helps and helps["material"]), "finishes": work == 0,
+    plan = {"helps": bool(helps and helps["material"] and (work == 0 or not finish_only)),
+            "finishes": work == 0,
             "without": helps["without"] if helps else "", "with": helps["with"] if helps else "",
             "SU1": [], "SU2": [], "": [], "prep": list(prep_now), "owed": owed}
     for i, b in enumerate(blocks):
@@ -629,8 +633,10 @@ def _summer_advice(
             nxt.append(f"+{elec_need} elective")
         out[COMPLETION_COL] = f"{helps['without']} (est.)"
         out[REASON_COL] = (
-            f"No Summer advice - Summer doesn't bring their transition forward "
-            f"(finish ~{helps['without']} either way) | Next Autumn: " + ", ".join(nxt)
+            (f"No SU2 advice - SU2 doesn't finish them this Summer (finish ~{helps['without']}"
+             f" without it) | Next Autumn: " if finish_only and helps["material"] else
+             f"No Summer advice - Summer doesn't bring their transition forward "
+             f"(finish ~{helps['without']} either way) | Next Autumn: ") + ", ".join(nxt)
         )
         out[SOURCE_COL] = src + " - no benefit, not advised"
         return out
@@ -724,16 +730,21 @@ def _file_slot(program: str, code: str, slot_map: dict) -> str | None:
     return None
 
 
-def _assume_enrolled_pass(row: pd.Series, program: str, session: str, slot_map: dict) -> pd.Series:
+def _assume_enrolled_pass(row: pd.Series, program: str, session: str, slot_map: dict,
+                          blocks: bool = True) -> pd.Series:
     """Copy of ``row`` with everything the student is enrolled in now marked
     passed: a "Currently Registered" status, a program subject or prep
     registered in Blocks 3-4, and electives registered there (taken off
-    ``Electives Needed``). Summer is judged on that basis (Josiah, 2026-09-30)."""
+    ``Electives Needed``). Summer is judged on that basis (Josiah, 2026-09-30).
+    ``blocks`` off (the SU2 round, after SB4 results) takes Blocks 3-4 as the
+    file has them - only a status still "Currently Registered" counts."""
     out = row.copy()
     for col in [*(f"Subject {p} Status" for p in range(1, 9)), "Prep 1 Status", "Prep 2 Status"]:
         v = out.get(col)
         if isinstance(v, str) and "Currently Registered" in v:
             out[col] = v.replace("Currently Registered", "Completed")
+    if not blocks:
+        return out
     ref = calc._ref().get(program, {})
     prep_slot = {ref.get("prep1"): "Prep 1 Status", ref.get("prep2"): "Prep 2 Status"}
     for code in {c for b in (3, 4) for c in _registered_codes(row, b)}:
@@ -843,9 +854,34 @@ def _summer_helps(
     }
 
 
+# Summer runs in two advice rounds (coaching team, 2026-10-04):
+#   SU1 - early, broad: out by mid-SB3 on the latest extract. Current
+#         enrolments count as passed and a free SB4 slot as used. Who's listed
+#         is judged on the whole Summer (SU1 + SU2), but only SU1 + prep are
+#         advised; SU2 picks are shown as "after SB4 results".
+#   SU2 - targeted, after SB4 results: actual results, no SB4 assumption,
+#         SU2 subjects only, and only students who finish in Summer (so they
+#         move to their Bachelor in Autumn).
+SUMMER_ROUNDS = ("SU1", "SU2")
+
+
+def _round_offering(summer_subjects, summer_round: str):
+    """The offering a round places subjects from: SU2 keeps only what runs in
+    SU2 (or names no block); SU1 and the combined run keep everything."""
+    if summer_round != "SU2" or summer_subjects is None:
+        return summer_subjects
+    norm = _normalize_summer_offering(summer_subjects)
+    keep = {}
+    for code, v in norm.items():
+        blocks = {b: c for b, c in v["blocks"].items() if b in ("SU2", "")}
+        if blocks:
+            keep[code] = {"blocks": blocks, "campuses": set().union(*blocks.values())}
+    return keep
+
+
 def advise_student_merged(
     row: pd.Series, slot_map: dict, offerings: dict, session: str,
-    summer_subjects: set[str] | None = None,
+    summer_subjects: set[str] | None = None, summer_round: str = "",
 ) -> dict:
     program = str(row["PROGRAM_CD"]).split(".")[0]
     outcome = str(row.get("Progression Outcome", "") or "").strip()
@@ -874,18 +910,25 @@ def advise_student_merged(
     #     (or just Subjects 1 & 2 when no list has been uploaded).
     tgt = rs.parse_target(session)
     if tgt and tgt[1] == "SUM":
-        adj = _assume_enrolled_pass(row, program, session, slot_map)
-        # SB4 is still open when Summer advice goes out: whatever the student
-        # can register there counts as done before Summer is weighed.
-        sb4 = _sb4_pick(row, adj, program, session, slot_map, outcome)
+        post_sb4 = summer_round == "SU2"
+        adj = _assume_enrolled_pass(row, program, session, slot_map, blocks=not post_sb4)
+        # Before SB4 results, SB4 is still open: whatever the student can
+        # register there counts as done before Summer is weighed.
+        sb4 = "" if post_sb4 else _sb4_pick(row, adj, program, session, slot_map, outcome)
         if sb4:
             adj = _mark_passed(adj, program, slot_map, [] if sb4 == _ELECTIVE else [sb4], [],
                                1 if sb4 == _ELECTIVE else 0)
         out = _summer_advice(out, calc.remap_statuses(adj, program, session, slot_map), program,
-                             is_nursing, session, outcome, summer_subjects,
-                             file_row=adj, slot_map=slot_map, offerings=offerings)
+                             is_nursing, session, outcome,
+                             _round_offering(summer_subjects, summer_round),
+                             file_row=adj, slot_map=slot_map, offerings=offerings,
+                             allow_prep=not post_sb4, finish_only=post_sb4)
         if sb4:
             _note_sb4(out, sb4, f"{tgt[0] % 100:02d} SPR")
+        plan = out["_summer"]
+        if summer_round == "SU1" and plan["helps"] and plan["SU2"]:
+            out[REASON_COL] += (" | SU2 picks (" + ", ".join(plan["SU2"])
+                                + ") are confirmed after SB4 results")
         return out
 
     # A part-way target ("26 AUT Block 3") uses the whole-session engines - the
@@ -1678,11 +1721,19 @@ EARLY_GROUP_COL = "Group"
 # no block goes in a third column, added only if needed. Preps run in every
 # Summer outside the SU1/SU2 blocks, so they get a column of their own.
 EARLY_CATCHUP_COLS = {"SU1": "SU1 catch-up", "SU2": "SU2 catch-up"}
-# SB4 is still open when this goes out: a subject (or elective) the student can
-# register there this semester, before Summer. A student SB4 finishes is off
-# the list - Summer doesn't help them.
-EARLY_SB4_COL = "SB4 (this semester)"
+# SB4 is still open when this goes out, so what the student can register there
+# (_sb4_pick) counts as done before Summer is weighed - not shown, the list is
+# about Summer. A student SB4 finishes is off the list.
+# The extract can be weeks old: an active student with nothing registered in
+# SB3 or SB4 may have enrolled since, so the coach checks before advising.
+EARLY_REG_CHECK_COL = "Registration check"
+EARLY_REG_CHECK = ("No SB3/SB4 registration in the file - check what they're enrolled in "
+                   "now; anything they're taking this semester comes off the Summer advice")
+# the date of the progression extract the advice is built on
+EARLY_AS_AT_COL = "Registrations as at"
 EARLY_CATCHUP_NOBLOCK_COL = "Summer catch-up (block not listed)"
+# SU1 round: SU2 picks are shown but not advised yet - that's the SU2 round
+EARLY_SU2_LATER_COL = "SU2 (advised after SB4 results)"
 EARLY_PREP_COL = "Summer prep"
 EARLY_OUTSTANDING_COL = "Outstanding subjects"
 EARLY_WITHOUT_COL = "Finish without Summer"
@@ -1732,8 +1783,14 @@ def _owed_with_sb4(owed: list[str], sb4: str) -> list[str]:
 
 def summer_early_advice(
     df: pd.DataFrame, offering: dict[str, set[str]], session: str = "26 SUM",
+    as_at: str = "", summer_round: str = "SU1",
 ) -> pd.DataFrame:
-    """Shortlist of students Summer materially helps.
+    """Shortlist of students Summer materially helps, for one advice round
+    (``SUMMER_ROUNDS``). **SU1** (mid-SB3): listed on the whole Summer, SU1 +
+    prep advised, SU2 picks in *SU2 (advised after SB4 results)*. **SU2** (on
+    the end-of-SB4 extract): SU2 subjects only, actual results, and only
+    students it finishes (no *Finish a semester earlier* group, no
+    *Registration check*).
 
     Runs the full Summer engine on each student (``offering`` from
     :func:`read_summer_offering_campus`) and keeps those whose transition to the
@@ -1742,8 +1799,11 @@ def summer_early_advice(
     SU1 / SU2 columns show each subject in the one block it's advised in, an
     elective as "+1 elective", preps in their own column - plus when they'd
     finish without and with Summer. Subjects they're enrolled in now count as
-    passed, and so does what they can still register in SB4 (*SB4 (this
-    semester)*, :func:`_sb4_pick`) - a student SB4 finishes isn't listed. A student whose Progression Outcome is Exclusion goes in the
+    passed, and so does what they can still register in SB4
+    (:func:`_sb4_pick`) - a student SB4 finishes isn't listed. An active
+    student with no SB3/SB4 registration in the file gets a *Registration
+    check* flag (the extract may predate it); ``as_at`` (the extract's date)
+    goes in a first column when given. A student whose Progression Outcome is Exclusion goes in the
     *Excluded* group - listed for the coach, not advised. Each row carries the
     outcome (blanks labelled as in the Coach View's Study Status). A paused
     (Deferred / Leave of Absence) student stays in their group with an
@@ -1763,7 +1823,8 @@ def summer_early_advice(
         rr = r.copy()
         if excluded:  # judge them like anyone else; they're only listed, not advised
             rr["Progression Outcome"] = ""
-        plan = advise_student_merged(rr, slot_map, offerings, session, offering).get("_summer")
+        plan = advise_student_merged(rr, slot_map, offerings, session, offering,
+                                     summer_round).get("_summer")
         if not plan or not plan["helps"]:
             continue
         program = str(r["PROGRAM_CD"]).split(".")[0]
@@ -1783,7 +1844,9 @@ def summer_early_advice(
             EARLY_PAUSED_COL: (
                 f"PAUSED ({str(r.get(STUDY_PATH_COL)).strip()}) - confirm they're returning first"
                 if is_paused(r.get(STUDY_PATH_COL)) else ""),
-            EARLY_SB4_COL: (lambda c: c if c in ("", _ELECTIVE) else label(c))(plan.get("sb4", "")),
+            EARLY_REG_CHECK_COL: (
+                EARLY_REG_CHECK if summer_round != "SU2" and not is_paused(r.get(STUDY_PATH_COL))
+                and not _registered_codes(r, 3) and not _registered_codes(r, 4) else ""),
             **{col: ", ".join(c if c == _ELECTIVE else label(c) for c in plan[blk])
                for blk, col in EARLY_CATCHUP_COLS.items()},
             EARLY_CATCHUP_NOBLOCK_COL: ", ".join(label(c) for c in plan[""]),
@@ -1795,9 +1858,15 @@ def summer_early_advice(
     cols = ["STUDENT_ID", "FIRST_NAME", "LAST_NAME", "PREFERRED_NAME",
             "INSTITUTION_EMAIL_ADDRESS", COACH_COL, "PROGRAM_CD", "CAMP_CODE",
             "COMMENCEMENT_PERIOD", EARLY_OUTCOME_COL, EARLY_GROUP_COL, EARLY_PAUSED_COL,
-            EARLY_SB4_COL, *EARLY_CATCHUP_COLS.values(), EARLY_CATCHUP_NOBLOCK_COL, EARLY_PREP_COL,
+            EARLY_REG_CHECK_COL, *EARLY_CATCHUP_COLS.values(), EARLY_CATCHUP_NOBLOCK_COL, EARLY_PREP_COL,
             EARLY_WITHOUT_COL, EARLY_WITH_COL, EARLY_OUTSTANDING_COL]
     out = pd.DataFrame(rows, columns=cols)
+    if summer_round == "SU2":
+        out = out.drop(columns=[EARLY_CATCHUP_COLS["SU1"], EARLY_PREP_COL, EARLY_REG_CHECK_COL])
+    elif summer_round == "SU1":
+        out = out.rename(columns={EARLY_CATCHUP_COLS["SU2"]: EARLY_SU2_LATER_COL})
+    if as_at:
+        out.insert(0, EARLY_AS_AT_COL, as_at)
     if not out[EARLY_CATCHUP_NOBLOCK_COL].astype(bool).any():
         out = out.drop(columns=EARLY_CATCHUP_NOBLOCK_COL)
     if len(out):
@@ -1806,6 +1875,52 @@ def summer_early_advice(
                   .sort_values(["_g", COACH_COL, "LAST_NAME"])
                   .drop(columns="_g").reset_index(drop=True))
     return out
+
+
+def summer_demand(shortlist: pd.DataFrame) -> pd.DataFrame:
+    """How many listed students need each Summer subject, by campus - for
+    checking the offering against demand. One row per (block, subject): the
+    block columns present in ``shortlist`` (an elective counts as "Elective",
+    preps under "Prep"), a column per campus and a Total. Excluded students
+    aren't counted."""
+    names = load_subject_names()
+    blocks = [(EARLY_CATCHUP_COLS["SU1"], "SU1"), (EARLY_CATCHUP_COLS["SU2"], "SU2"),
+              (EARLY_SU2_LATER_COL, "SU2 (after SB4 results)"),
+              (EARLY_CATCHUP_NOBLOCK_COL, "Block not listed"), (EARLY_PREP_COL, "Prep")]
+    live = shortlist[shortlist[EARLY_GROUP_COL] != EARLY_GROUP_EXCLUDED]
+    recs = []
+    for col, blk in blocks:
+        if col not in live:
+            continue
+        for _, r in live.iterrows():
+            cell = str(r[col] or "")
+            items = _SUBJECT_CODE_RE.findall(cell) + (["Elective"] if _ELECTIVE in cell else [])
+            recs += [{"Block": blk, "Subject": c, "Campus": r["CAMP_CODE"] or "?"} for c in items]
+    if not recs:
+        return pd.DataFrame(columns=["Block", "Subject", "Subject name", "Total"])
+    t = pd.crosstab([pd.Series([x["Block"] for x in recs], name="Block"),
+                     pd.Series([x["Subject"] for x in recs], name="Subject")],
+                    pd.Series([x["Campus"] for x in recs], name="Campus"))
+    t["Total"] = t.sum(axis=1)
+    t = t.reset_index()
+    t.columns.name = None
+    t.insert(2, "Subject name", t["Subject"].map(lambda c: names.get(c, "")))
+    order = {b: i for i, (_, b) in enumerate(blocks)}
+    return (t.assign(_b=t["Block"].map(order)).sort_values(["_b", "Total"], ascending=[True, False])
+             .drop(columns="_b").reset_index(drop=True))
+
+
+def extract_date(filename: str) -> str:
+    """The extract date in a progression file's name ("20260923 Mid Semester
+    Re-reg - SB2 End.xlsx" -> "23 Sep 2026"); ``""`` if there isn't one."""
+    from datetime import datetime
+
+    for m in re.finditer(r"(?<!\d)(20\d{6})(?!\d)", str(filename or "")):
+        try:
+            return datetime.strptime(m.group(1), "%Y%m%d").strftime("%d %b %Y").lstrip("0")
+        except ValueError:
+            continue
+    return ""
 
 
 def summer_early_by_coach_zip(shortlist: pd.DataFrame) -> bytes:
@@ -1839,8 +1954,10 @@ def build_advice(
     session: str = DEFAULT_PLANNING_SESSION,
     offerings: dict | None = None,
     summer_subjects: set[str] | None = None,
+    summer_round: str = "",
 ) -> pd.DataFrame:
-    """Copy of ``df`` with the advice + completion + reason + source columns."""
+    """Copy of ``df`` with the advice + completion + reason + source columns.
+    ``summer_round`` ("SU1" / "SU2", see ``SUMMER_ROUNDS``) for a Summer target."""
     offerings = offerings or v2.load_offerings()
     slot_map = v2.derive_slot_map(df)
 
@@ -1851,7 +1968,7 @@ def build_advice(
         out[col] = ""
 
     for idx, row in df.iterrows():
-        r = advise_student_merged(row, slot_map, offerings, session, summer_subjects)
+        r = advise_student_merged(row, slot_map, offerings, session, summer_subjects, summer_round)
         for col in cols:
             out.at[idx, col] = r[col]
 
