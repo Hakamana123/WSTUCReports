@@ -1923,6 +1923,32 @@ def extract_date(filename: str) -> str:
     return ""
 
 
+def summer_early_prep_split(shortlist: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """The listed students (not Excluded) split on *Summer prep*: ``(needs
+    prep, no prep)``. A student with a prep AND catch-up subjects is in the
+    first. SU2 advises no preps, so there everyone is in the second."""
+    live = shortlist[shortlist[EARLY_GROUP_COL] != EARLY_GROUP_EXCLUDED]
+    if EARLY_PREP_COL not in live:
+        return live.iloc[0:0], live
+    has_prep = live[EARLY_PREP_COL].fillna("").astype(str).str.strip().astype(bool)
+    return live[has_prep], live[~has_prep]
+
+
+def summer_early_workbook(shortlist: pd.DataFrame, sheet_name: str) -> bytes:
+    """``shortlist`` as an ``.xlsx``: the advice on ``sheet_name``, Excluded
+    students (if any) on their own tab, and a Demand tab for the rest."""
+    import io
+
+    is_excl = shortlist[EARLY_GROUP_COL] == EARLY_GROUP_EXCLUDED
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+        shortlist[~is_excl].to_excel(w, sheet_name=_safe_sheet_name(sheet_name), index=False)
+        if is_excl.any():
+            shortlist[is_excl].to_excel(w, sheet_name="Excluded", index=False)
+        summer_demand(shortlist).to_excel(w, sheet_name="Demand", index=False)
+    return buf.getvalue()
+
+
 def summer_early_by_coach_zip(shortlist: pd.DataFrame) -> bytes:
     """The early-advice shortlist as a ``.zip`` of one ``.xlsx`` per coach, a tab
     per group (Excluded on its own tab), so each SSC gets their own candidates."""

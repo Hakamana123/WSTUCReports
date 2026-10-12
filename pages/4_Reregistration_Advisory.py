@@ -226,23 +226,38 @@ if is_summer and summer_mode.startswith("Early"):
                "campus — to check the offering against demand.")
     st.dataframe(demand, use_container_width=True, hide_index=True)
 
-    import io as _io
-    buf = _io.BytesIO()
-    with pd.ExcelWriter(buf, engine="openpyxl") as w:
-        shortlist[~is_excl].to_excel(w, sheet_name=f"Summer {summer_round} advice", index=False)
-        if is_excl.any():
-            shortlist[is_excl].to_excel(w, sheet_name="Excluded", index=False)
-        demand.to_excel(w, sheet_name="Demand", index=False)
+    xlsx = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    stem = f"summer_{summer_round}_advice_{session.replace(' ', '_')}"
     d1, d2 = st.columns(2)
     d1.download_button(
-        "Download shortlist (.xlsx)", buf.getvalue(),
-        f"summer_{summer_round}_advice_{session.replace(' ', '_')}.xlsx",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary",
+        "Download shortlist (.xlsx)",
+        rm.summer_early_workbook(shortlist, f"Summer {summer_round} advice"),
+        f"{stem}.xlsx", xlsx, type="primary",
     )
     d2.download_button(
         "Download split by coach (.zip)", rm.summer_early_by_coach_zip(shortlist),
-        f"summer_{summer_round}_advice_{session.replace(' ', '_')}_by_coach.zip", "application/zip",
+        f"{stem}_by_coach.zip", "application/zip",
     )
+
+    # SU1 only - SU2 advises no preps
+    if summer_round == "SU1":
+        with_prep, no_prep = rm.summer_early_prep_split(shortlist)
+        st.caption(
+            f"**Split by prep** — **{len(with_prep):,}** need a Summer prep "
+            f"(GEDU0016 / GEDU0017; any catch-up subjects they also need are on the same row), "
+            f"**{len(no_prep):,}** need catch-up subjects only. Excluded students aren't in either."
+        )
+        p1, p2 = st.columns(2)
+        p1.download_button(
+            f"Download prep students only ({len(with_prep):,}) (.xlsx)",
+            rm.summer_early_workbook(with_prep, f"Summer {summer_round} prep"),
+            f"{stem}_prep.xlsx", xlsx, disabled=not len(with_prep),
+        )
+        p2.download_button(
+            f"Download no-prep students only ({len(no_prep):,}) (.xlsx)",
+            rm.summer_early_workbook(no_prep, f"Summer {summer_round} no prep"),
+            f"{stem}_no_prep.xlsx", xlsx, disabled=not len(no_prep),
+        )
     st.stop()
 
 dropped = int(df.attrs.get("duplicates_dropped", 0))
