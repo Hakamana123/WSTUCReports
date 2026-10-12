@@ -258,6 +258,14 @@ if is_summer and summer_mode.startswith("Early"):
             rm.summer_early_workbook(no_prep, f"Summer {summer_round} no prep"),
             f"{stem}_no_prep.xlsx", xlsx, disabled=not len(no_prep),
         )
+        p1.download_button(
+            "Download prep students split by coach (.zip)", rm.summer_early_by_coach_zip(with_prep),
+            f"{stem}_prep_by_coach.zip", "application/zip", disabled=not len(with_prep),
+        )
+        p2.download_button(
+            "Download no-prep students split by coach (.zip)", rm.summer_early_by_coach_zip(no_prep),
+            f"{stem}_no_prep_by_coach.zip", "application/zip", disabled=not len(no_prep),
+        )
     st.stop()
 
 dropped = int(df.attrs.get("duplicates_dropped", 0))
