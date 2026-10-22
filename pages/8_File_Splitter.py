@@ -28,6 +28,17 @@ STRIPE_COLOUR = "F7F9FC"  # ALT_ROW in the Engagement Report builder
 SUBJECT_ROW_COLOUR = "E5ECF6"
 CLASS_ROW_FONT_COLOUR = "808080"
 WEEK_NOTE_RE = re.compile(r"(W-?\d+(?:\(partial\))?)\.\s*$")
+# Subjects in several programs' REF structures, filed under one chosen program
+SHARED_SUBJECT_PROGRAM = {
+    "BUSM1045": "7194",
+    "ENVL1008": "7192",
+    "CULT1028": "7198",
+    "HUMN1068": "7198",
+    "HUMN1069": "7198",
+    "HUMN1070": "7198",
+}
+# Core subjects in (nearly) every program: filed class by class instead of whole
+SPLIT_BY_CLASS_SUBJECTS = {"GEDU1001", "GEDU1002"}
 REF_PROGRAMS_PATH = Path(__file__).resolve().parent.parent / "student_tracker" / "rereg_data" / "ref_programs.json"
 FRACTION_RE = re.compile(r"^\s*(\d+)\s*/\s*(\d+)\s*$")
 
@@ -361,10 +372,16 @@ def group_entries_by_subject_program(wb, entries):
     class groups, to the program whose REF structure includes its subject code.
     Students from other programs taking it as an elective stay in.
 
-    A subject in several programs' structures (e.g. HUMN1068 in 7188 and 7198)
-    goes to whichever of them has the most students in the offering (Course
-    column). A subject in none of them goes to the program, among those in the
-    Class Index, with the most students in it. Ties go to the lowest code.
+    A subject in several programs' structures goes to its program in
+    SHARED_SUBJECT_PROGRAM, or failing that to whichever of them has the most
+    students in the offering (Course column). A subject in none of them goes
+    to the program, among those in the Class Index, with the most students in
+    it. Ties go to the lowest code.
+
+    SPLIT_BY_CLASS_SUBJECTS (GEDU1001/GEDU1002, core in nearly every program)
+    are filed class by class instead: each class goes to the program with the
+    most students in that class, so each program gets its own classes and a
+    merged tab built from just those.
     """
     ref_owners = _ref_subject_programs()
     programs = {e["program"] for e in entries if e["program"]}
@@ -374,35 +391,50 @@ def group_entries_by_subject_program(wb, entries):
 
     by_program = defaultdict(list)
     for subject, sub_entries in by_subject.items():
-        courses = Counter()
-        for e in sub_entries:
-            if e["sheet"] not in wb.sheetnames:
-                continue
-            ws = wb[e["sheet"]]
-            headers = [c.value for c in ws[5]]
-            if "Course" not in headers:
-                continue
-            ci = headers.index("Course")
-            courses.update(
-                str(row[ci]) for row in ws.iter_rows(min_row=6, values_only=True)
-                if row[ci] is not None
-            )
+        code = subject.split("_")[0]
+        owners = ref_owners.get(code, set())
+        if code in SPLIT_BY_CLASS_SUBJECTS:
+            for e in sub_entries:
+                program = _most_students_program(_course_counts(wb, [e]), owners or programs, [e])
+                by_program[program or "(no program)"].append(e)
+            continue
 
-        owners = ref_owners.get(subject.split("_")[0], set())
-        candidates = owners or programs
-        counts = {p: courses.get(p, 0) for p in candidates}
-        if len(owners) == 1:
+        if code in SHARED_SUBJECT_PROGRAM:
+            program = SHARED_SUBJECT_PROGRAM[code]
+        elif len(owners) == 1:
             program = next(iter(owners))
-        elif counts and max(counts.values()) > 0:
-            top = max(counts.values())
-            program = min(p for p, n in counts.items() if n == top)
-        elif owners:
-            program = min(owners)
         else:
-            # No Course data to go on: fall back to the class rows' own programs
-            program = Counter(e["program"] for e in sub_entries).most_common(1)[0][0]
+            program = _most_students_program(_course_counts(wb, sub_entries), owners or programs, sub_entries)
         by_program[program or "(no program)"].extend(sub_entries)
     return by_program
+
+
+def _course_counts(wb, class_entries):
+    """Students per Course across the given class sheets."""
+    courses = Counter()
+    for e in class_entries:
+        if e["sheet"] not in wb.sheetnames:
+            continue
+        ws = wb[e["sheet"]]
+        headers = [c.value for c in ws[5]]
+        if "Course" not in headers:
+            continue
+        ci = headers.index("Course")
+        courses.update(
+            str(row[ci]) for row in ws.iter_rows(min_row=6, values_only=True)
+            if row[ci] is not None
+        )
+    return courses
+
+
+def _most_students_program(courses, candidates, class_entries):
+    """The candidate program with the most students (ties: lowest code)."""
+    counts = {p: courses.get(p, 0) for p in candidates}
+    if counts and max(counts.values()) > 0:
+        top = max(counts.values())
+        return min(p for p, n in counts.items() if n == top)
+    # No Course data to go on: fall back to the class rows' own programs
+    return Counter(e["program"] for e in class_entries).most_common(1)[0][0]
 
 
 def build_subject_program_workbook(file_bytes, program, prog_entries, all_class_sheets):
