@@ -1,8 +1,10 @@
 import io
+import json
 import re
 import zipfile
 from collections import Counter, defaultdict
 from copy import copy
+from pathlib import Path
 
 import streamlit as st
 import openpyxl
@@ -26,6 +28,7 @@ STRIPE_COLOUR = "F7F9FC"  # ALT_ROW in the Engagement Report builder
 SUBJECT_ROW_COLOUR = "E5ECF6"
 CLASS_ROW_FONT_COLOUR = "808080"
 WEEK_NOTE_RE = re.compile(r"(W-?\d+(?:\(partial\))?)\.\s*$")
+REF_PROGRAMS_PATH = Path(__file__).resolve().parent.parent / "student_tracker" / "rereg_data" / "ref_programs.json"
 FRACTION_RE = re.compile(r"^\s*(\d+)\s*/\s*(\d+)\s*$")
 
 
@@ -338,13 +341,32 @@ def _write_subject_index(wb, program, subjects, subject_sheets):
     ws.freeze_panes = "A5"
 
 
+def _ref_subject_programs():
+    """Subject code -> programs whose structure includes it, from the REF sheet
+    the Re-registration tool uses (any session's subject list counts)."""
+    ref = json.loads(REF_PROGRAMS_PATH.read_text())
+    owners = defaultdict(set)
+    for program, info in ref.items():
+        lists = [info.get("subjects", {})] + [
+            change.get("subjects", {}) for change in info.get("from_session", {}).values()
+        ]
+        for subjects in lists:
+            for code in subjects.values():
+                owners[code].add(program)
+    return owners
+
+
 def group_entries_by_subject_program(wb, entries):
     """Subject mode's program split: each subject offering goes, with all of its
-    class groups, to the program most of its students are enrolled in (Course
-    column, counted across the whole offering). Students from other programs
-    taking it as an elective stay in. Only programs from the Class Index can
-    win, so a stray course code never gets a file of its own; ties go to the
-    lowest program code."""
+    class groups, to the program whose REF structure includes its subject code.
+    Students from other programs taking it as an elective stay in.
+
+    A subject in several programs' structures (e.g. HUMN1068 in 7188 and 7198)
+    goes to whichever of them has the most students in the offering (Course
+    column). A subject in none of them goes to the program, among those in the
+    Class Index, with the most students in it. Ties go to the lowest code.
+    """
+    ref_owners = _ref_subject_programs()
     programs = {e["program"] for e in entries if e["program"]}
     by_subject = defaultdict(list)
     for e in entries:
@@ -363,11 +385,19 @@ def group_entries_by_subject_program(wb, entries):
             ci = headers.index("Course")
             courses.update(
                 str(row[ci]) for row in ws.iter_rows(min_row=6, values_only=True)
-                if row[ci] is not None and str(row[ci]) in programs
+                if row[ci] is not None
             )
-        if courses:
-            top = max(courses.values())
-            program = min(p for p, n in courses.items() if n == top)
+
+        owners = ref_owners.get(subject.split("_")[0], set())
+        candidates = owners or programs
+        counts = {p: courses.get(p, 0) for p in candidates}
+        if len(owners) == 1:
+            program = next(iter(owners))
+        elif counts and max(counts.values()) > 0:
+            top = max(counts.values())
+            program = min(p for p, n in counts.items() if n == top)
+        elif owners:
+            program = min(owners)
         else:
             # No Course data to go on: fall back to the class rows' own programs
             program = Counter(e["program"] for e in sub_entries).most_common(1)[0][0]
@@ -493,8 +523,8 @@ if uploaded:
             ["class", "subject"],
             format_func=lambda x: {
                 "class": "Class group (one tab per class, each class filed under its main program)",
-                "subject": "Subject offering (each offering filed whole under its main program: "
-                           "a tab with all its students, then a tab per class)",
+                "subject": "Subject offering (each offering filed whole under the program it belongs "
+                           "to in the REF program structures: a tab with all its students, then a tab per class)",
             }[x],
             key="splitter_group_by",
         )
