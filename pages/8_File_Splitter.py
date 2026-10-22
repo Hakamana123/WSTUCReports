@@ -29,6 +29,15 @@ WEEK_NOTE_RE = re.compile(r"(W-?\d+(?:\(partial\))?)\.\s*$")
 FRACTION_RE = re.compile(r"^\s*(\d+)\s*/\s*(\d+)\s*$")
 
 
+def _short_report_name(base_name):
+    """Short prefix for output files, keeping names well under Windows' path limit
+    once unzipped: 'GEDU0016_Class_Report_W5_20261020_Partial' -> 'GEDU0016_W5'."""
+    m = re.match(r"^([A-Za-z0-9]+)_Class_Report_(W-?\d+)", base_name)
+    if m:
+        return f"{m.group(1)}_{m.group(2)}"
+    return re.sub(r"[^A-Za-z0-9_-]+", "_", base_name)[:20].strip("_") or "Class_Report"
+
+
 def _resolve_hyperlink_sheet(cell):
     if not cell.hyperlink or not cell.hyperlink.target:
         return None
@@ -429,6 +438,7 @@ if uploaded:
         st.dataframe(summary_rows, use_container_width=True, hide_index=True)
 
         base_name = re.sub(r"\.xlsx$", "", uploaded.name, flags=re.IGNORECASE)
+        short_name = _short_report_name(base_name)
 
         group_by = st.radio(
             "Group sheets by",
@@ -439,7 +449,7 @@ if uploaded:
             }[x],
             key="splitter_group_by",
         )
-        zip_suffix = "_by_program_by_subject" if group_by == "subject" else "_by_program"
+        zip_suffix = "_by_subject" if group_by == "subject" else "_by_program"
 
         if st.button(f"Build {len(by_program)} program files", type="primary"):
             outputs = {}
@@ -449,7 +459,7 @@ if uploaded:
                 buf = build_program_workbook(
                     file_bytes, program, prog_entries, all_class_sheets, group_by=group_by
                 )
-                outputs[f"{base_name}_Program_{safe_program}.xlsx"] = buf
+                outputs[f"{short_name}_{safe_program}.xlsx"] = buf
                 progress.progress((i + 1) / len(by_program))
             progress.empty()
 
@@ -463,7 +473,7 @@ if uploaded:
             st.download_button(
                 "Download all as .zip",
                 data=zip_buf,
-                file_name=f"{base_name}{zip_suffix}.zip",
+                file_name=f"{short_name}{zip_suffix}.zip",
                 mime="application/zip",
             )
 
