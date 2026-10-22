@@ -1,7 +1,7 @@
 import io
 import re
 import zipfile
-from collections import defaultdict
+from collections import Counter, defaultdict
 from copy import copy
 
 import streamlit as st
@@ -168,11 +168,14 @@ def _sum_fractions(values):
 
 
 def _teachers(entries):
+    """Distinct teacher names across classes. A class's teacher field can hold
+    several comma-separated names, so names are deduplicated individually."""
     seen = []
     for e in entries:
-        t = str(e["teacher"]).strip() if e["teacher"] else ""
-        if t and t not in seen:
-            seen.append(t)
+        for t in str(e["teacher"] or "").split(","):
+            t = t.strip()
+            if t and t not in seen:
+                seen.append(t)
     return seen
 
 
@@ -275,8 +278,9 @@ def _write_subject_sheet(wb, sheet_name, subject, class_entries):
 
 
 def _write_subject_index(wb, program, subjects, subject_sheets):
-    """Build the 'Subject Index' sheet: a bold total row per subject offering,
-    with a grey row per class group underneath it."""
+    """Build the 'Subject Index' sheet: a bold total row per subject offering
+    (linked to its merged tab), with a grey row per class group underneath it
+    linking to that class's tab."""
     ws = wb.create_sheet("Subject Index", 0)
     n_classes = sum(len(entries) for _, entries in subjects)
 
@@ -285,7 +289,7 @@ def _write_subject_index(wb, program, subjects, subject_sheets):
         row=2,
         column=1,
         value=f"{len(subjects)} subject offering(s), {n_classes} class(es)  •  "
-              "Click a subject name to jump to its sheet",
+              "Click a subject or class to jump to its sheet",
     ).font = Font(italic=True, color="666666")
 
     header_row = 4
@@ -324,45 +328,108 @@ def _write_subject_index(wb, program, subjects, subject_sheets):
             )
             for c, v in enumerate(values, start=1):
                 ws.cell(row=r, column=c, value=v).font = Font(color=CLASS_ROW_FONT_COLOUR)
+            if e["sheet"] in wb.sheetnames and e["sheet"] not in subject_sheets.values():
+                class_cell = ws.cell(row=r, column=2)
+                class_cell.hyperlink = Hyperlink(ref=class_cell.coordinate, location=f"'{e['sheet']}'!A1")
+                class_cell.font = Font(color=CLASS_ROW_FONT_COLOUR, underline="single")
 
     ws.column_dimensions["B"].width = 32
     ws.column_dimensions["C"].width = 70
     ws.freeze_panes = "A5"
 
 
+def group_entries_by_subject_program(wb, entries):
+    """Subject mode's program split: each subject offering goes, with all of its
+    class groups, to the program most of its students are enrolled in (Course
+    column, counted across the whole offering). Students from other programs
+    taking it as an elective stay in. Only programs from the Class Index can
+    win, so a stray course code never gets a file of its own; ties go to the
+    lowest program code."""
+    programs = {e["program"] for e in entries if e["program"]}
+    by_subject = defaultdict(list)
+    for e in entries:
+        by_subject[_split_class_label(e["class_label"])[0]].append(e)
+
+    by_program = defaultdict(list)
+    for subject, sub_entries in by_subject.items():
+        courses = Counter()
+        for e in sub_entries:
+            if e["sheet"] not in wb.sheetnames:
+                continue
+            ws = wb[e["sheet"]]
+            headers = [c.value for c in ws[5]]
+            if "Course" not in headers:
+                continue
+            ci = headers.index("Course")
+            courses.update(
+                str(row[ci]) for row in ws.iter_rows(min_row=6, values_only=True)
+                if row[ci] is not None and str(row[ci]) in programs
+            )
+        if courses:
+            top = max(courses.values())
+            program = min(p for p, n in courses.items() if n == top)
+        else:
+            # No Course data to go on: fall back to the class rows' own programs
+            program = Counter(e["program"] for e in sub_entries).most_common(1)[0][0]
+        by_program[program or "(no program)"].extend(sub_entries)
+    return by_program
+
+
 def build_subject_program_workbook(file_bytes, program, prog_entries, all_class_sheets):
-    """Same program split as build_program_workbook, but with one tab per
-    subject offering (all its class groups merged) and a 'Subject Index'."""
+    """Same program split as build_program_workbook, but organised by subject
+    offering: a 'Subject Index', then for each offering a tab with all of its
+    class groups merged, followed by each of its class tabs (kept as built)."""
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes))
 
     by_subject = defaultdict(list)
     for e in prog_entries:
-        by_subject[_split_class_label(e["class_label"])[0]].append(e)
+        if e["sheet"] in wb.sheetnames:
+            by_subject[_split_class_label(e["class_label"])[0]].append(e)
     subjects = sorted(
         (
             (subject, sorted(entries, key=lambda e: str(e["class_label"] or "").lower()))
             for subject, entries in by_subject.items()
-            if any(e["sheet"] in wb.sheetnames for e in entries)
         ),
         key=lambda item: item[0].lower(),
     )
 
     # Temporary names while the source sheets still exist (a label without
     # " — " gives a subject name equal to its own class sheet's name)
-    original_sheets = list(wb.sheetnames)
-    temp_sheets = []
-    for i, (subject, entries) in enumerate(subjects):
-        temp_sheets.append(_write_subject_sheet(wb, f"__subject_{i}", subject, entries))
-    for name in original_sheets:
-        del wb[name]
+    temp_sheets = [
+        _write_subject_sheet(wb, f"__subject_{i}", subject, entries)
+        for i, (subject, entries) in enumerate(subjects)
+    ]
+
+    # Keep this offering's class tabs, except a label with no class group,
+    # whose single class is the merged tab itself
+    class_tabs = {
+        subject: [wb[e["sheet"]] for e in entries if _split_class_label(e["class_label"])[1]]
+        for subject, entries in subjects
+    }
+    keep = {ws.title for ws in temp_sheets} | {ws.title for tabs in class_tabs.values() for ws in tabs}
+    for name in list(wb.sheetnames):
+        if name not in keep:
+            del wb[name]
 
     subject_sheets = {}
     for (subject, _), ws in zip(subjects, temp_sheets):
         name = subject[:31] or "Unknown"
-        if name in subject_sheets.values() or name == "Subject Index":
+        while name in wb.sheetnames or name == "Subject Index":
             name = (name[:28] + "_2")[:31]
         ws.title = name
         subject_sheets[subject] = name
+
+    # Class tabs' "← Back to Index" pointed at the dropped Class Index
+    for ws in (ws for tabs in class_tabs.values() for ws in tabs):
+        back_cell = ws.cell(row=3, column=1)
+        if back_cell.hyperlink:
+            back_cell.hyperlink = Hyperlink(ref=back_cell.coordinate, location="'Subject Index'!A1")
+
+    # Order: each merged subject tab followed by its class tabs
+    wb._sheets = [
+        ws for (subject, _), subject_ws in zip(subjects, temp_sheets)
+        for ws in [subject_ws] + class_tabs[subject]
+    ]
 
     _write_subject_index(wb, program, subjects, subject_sheets)
 
@@ -421,9 +488,23 @@ if uploaded:
     elif not entries:
         st.warning("Class Index has no class rows to split.")
     else:
-        by_program = defaultdict(list)
-        for e in entries:
-            by_program[e["program"] or "(no program)"].append(e)
+        group_by = st.radio(
+            "Group sheets by",
+            ["class", "subject"],
+            format_func=lambda x: {
+                "class": "Class group (one tab per class, each class filed under its main program)",
+                "subject": "Subject offering (each offering filed whole under its main program: "
+                           "a tab with all its students, then a tab per class)",
+            }[x],
+            key="splitter_group_by",
+        )
+
+        if group_by == "subject":
+            by_program = group_entries_by_subject_program(wb, entries)
+        else:
+            by_program = defaultdict(list)
+            for e in entries:
+                by_program[e["program"] or "(no program)"].append(e)
         all_class_sheets = {e["sheet"] for e in entries}
 
         st.subheader("Programs found")
@@ -439,16 +520,6 @@ if uploaded:
 
         base_name = re.sub(r"\.xlsx$", "", uploaded.name, flags=re.IGNORECASE)
         short_name = _short_report_name(base_name)
-
-        group_by = st.radio(
-            "Group sheets by",
-            ["class", "subject"],
-            format_func=lambda x: {
-                "class": "Class group (one tab per class)",
-                "subject": "Subject offering (one tab per subject, all its class groups merged)",
-            }[x],
-            key="splitter_group_by",
-        )
         zip_suffix = "_by_subject" if group_by == "subject" else "_by_program"
 
         if st.button(f"Build {len(by_program)} program files", type="primary"):
