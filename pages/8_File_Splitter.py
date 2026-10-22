@@ -2,6 +2,7 @@ import io
 import re
 import zipfile
 from collections import defaultdict
+from copy import copy
 
 import streamlit as st
 import openpyxl
@@ -19,6 +20,13 @@ st.caption(
 
 HYPERLINK_SHEET_RE = re.compile(r"^#'?(.+?)'?!")
 INDEX_COLUMNS = ["#", "Class", "Teacher", "Enrolled", "Active", "At Risk", "AS1 Sub", "AS2 Sub", "AS3 Sub"]
+SUBJECT_INDEX_COLUMNS = ["#", "Subject / Class", "Teacher", "Enrolled", "Active", "At Risk", "AS1 Sub", "AS2 Sub", "AS3 Sub"]
+SEG_ORDER = {f"S{i}": i for i in range(1, 8)}
+STRIPE_COLOUR = "F7F9FC"  # ALT_ROW in the Engagement Report builder
+SUBJECT_ROW_COLOUR = "E5ECF6"
+CLASS_ROW_FONT_COLOUR = "808080"
+WEEK_NOTE_RE = re.compile(r"(W-?\d+(?:\(partial\))?)\.\s*$")
+FRACTION_RE = re.compile(r"^\s*(\d+)\s*/\s*(\d+)\s*$")
 
 
 def _resolve_hyperlink_sheet(cell):
@@ -119,7 +127,243 @@ def _write_program_index(wb, program, prog_entries):
     ws.freeze_panes = "A5"
 
 
-def build_program_workbook(file_bytes, program, prog_entries, all_class_sheets):
+def _split_class_label(label):
+    """'FINC1004_26-SB4_PC_1 — WK-02' -> ('FINC1004_26-SB4_PC_1', 'WK-02')."""
+    subject, _, class_group = str(label or "").partition(" — ")
+    return subject, class_group
+
+
+def _fill_colour(cell):
+    if cell.fill is None or cell.fill.fill_type is None:
+        return None
+    rgb = cell.fill.start_color.rgb
+    return rgb[-6:].upper() if isinstance(rgb, str) else None
+
+
+def _sum_counts(values):
+    nums = [v for v in values if isinstance(v, (int, float))]
+    return sum(nums) if nums else None
+
+
+def _sum_fractions(values):
+    """Sum 'n/d' strings as numerator/denominator: 7/16 + 14/15 -> 21/31."""
+    num = den = 0
+    found = False
+    for v in values:
+        m = FRACTION_RE.match(str(v)) if v is not None else None
+        if m:
+            num += int(m.group(1))
+            den += int(m.group(2))
+            found = True
+    return f"{num}/{den}" if found else None
+
+
+def _teachers(entries):
+    seen = []
+    for e in entries:
+        t = str(e["teacher"]).strip() if e["teacher"] else ""
+        if t and t not in seen:
+            seen.append(t)
+    return seen
+
+
+def _read_student_rows(ws):
+    """Data rows (row 6 onward) of a class sheet, as lists of source cells."""
+    rows = []
+    for r in range(6, ws.max_row + 1):
+        cells = [ws.cell(row=r, column=c) for c in range(1, ws.max_column + 1)]
+        if any(c.value is not None for c in cells):
+            rows.append(cells)
+    return rows
+
+
+def _write_subject_sheet(wb, sheet_name, subject, class_entries):
+    """One tab for a subject offering, merging all of its class groups' students.
+
+    Rows and styles come straight from the class sheets the Engagement Report
+    built, so columns and formatting match them exactly; only the row order,
+    the alternating stripe and the three header lines are new.
+    """
+    sources = [wb[e["sheet"]] for e in class_entries if e["sheet"] in wb.sheetnames]
+    template = sources[0]
+    n_cols = template.max_column
+    headers = [template.cell(row=5, column=c).value for c in range(1, n_cols + 1)]
+    for src in sources[1:]:
+        if [src.cell(row=5, column=c).value for c in range(1, src.max_column + 1)] != headers:
+            raise ValueError(f"Class sheets for {subject} have different columns; can't merge them.")
+    col = {h: i for i, h in enumerate(headers)}
+    seg_i, last_i, first_i = col["Segment"], col["Surname"], col["First Name"]
+
+    rows = [row for src in sources for row in _read_student_rows(src)]
+    rows.sort(
+        key=lambda row: (
+            SEG_ORDER.get(row[seg_i].value, 99),
+            str(row[last_i].value or "").lower(),
+            str(row[first_i].value or "").lower(),
+        )
+    )
+
+    ws = wb.create_sheet(sheet_name)
+
+    # Header rows 1–5: same merges, heights and styles as the class sheets
+    for rng in template.merged_cells.ranges:
+        if rng.max_row <= 4:
+            ws.merge_cells(rng.coord)
+    for r in range(1, 6):
+        ws.row_dimensions[r].height = template.row_dimensions[r].height
+    for r in range(1, 4):
+        ws.cell(row=r, column=1)._style = copy(template.cell(row=r, column=1)._style)
+    for c in range(1, n_cols + 1):
+        cell = ws.cell(row=5, column=c, value=headers[c - 1])
+        cell._style = copy(template.cell(row=5, column=c)._style)
+
+    class_groups = [_split_class_label(e["class_label"])[1] or e["class_label"] for e in class_entries]
+    ws.cell(row=1, column=1).value = (
+        f"{subject} — {len(rows)} students  •  "
+        f"{len(class_entries)} class(es): {', '.join(class_groups)}"
+    )
+
+    subtitle = ", ".join(
+        f"S{i}: {sum(1 for row in rows if row[seg_i].value == f'S{i}')}" for i in range(1, 8)
+    )
+    teachers = _teachers(class_entries)
+    if teachers:
+        subtitle += f"  •  {'Teachers' if len(teachers) > 1 else 'Teacher'}: {', '.join(teachers)}"
+    ws.cell(row=2, column=1).value = subtitle
+
+    week_match = WEEK_NOTE_RE.search(str(template.cell(row=3, column=1).value or ""))
+    week_note = f" {week_match.group(1)}." if week_match else ""
+    back_cell = ws.cell(row=3, column=1)
+    back_cell.value = (
+        "← Back to Index      All students in this subject offering (all class groups), "
+        "sorted by segment then surname. See Disc. Class column for class group."
+        f"{week_note}"
+    )
+    back_cell.hyperlink = Hyperlink(ref=back_cell.coordinate, location="'Subject Index'!A1")
+
+    # Student rows: copy each cell and its style, then redo the stripe for the
+    # merged order. Cells with a non-stripe fill (segment colour in column A,
+    # AS status colours) keep their own fill.
+    stripe = PatternFill("solid", start_color=STRIPE_COLOUR, end_color=STRIPE_COLOUR)
+    no_fill = PatternFill(fill_type=None)
+    for i, src_cells in enumerate(rows):
+        r = 6 + i
+        for c, src in enumerate(src_cells, start=1):
+            cell = ws.cell(row=r, column=c, value=src.value)
+            cell._style = copy(src._style)
+            if _fill_colour(src) in (None, STRIPE_COLOUR):
+                cell.fill = stripe if i % 2 == 0 else no_fill
+
+    for key, dim in template.column_dimensions.items():
+        new_dim = ws.column_dimensions[key]
+        new_dim.min, new_dim.max = dim.min, dim.max
+        new_dim.width = dim.width
+        new_dim.outline_level = dim.outline_level
+        new_dim.hidden = dim.hidden
+    ws.sheet_properties.outlinePr.summaryRight = template.sheet_properties.outlinePr.summaryRight
+    ws.freeze_panes = template.freeze_panes
+    return ws
+
+
+def _write_subject_index(wb, program, subjects, subject_sheets):
+    """Build the 'Subject Index' sheet: a bold total row per subject offering,
+    with a grey row per class group underneath it."""
+    ws = wb.create_sheet("Subject Index", 0)
+    n_classes = sum(len(entries) for _, entries in subjects)
+
+    ws.cell(row=1, column=1, value=f"Program {program} — Subject Index").font = Font(bold=True, size=14)
+    ws.cell(
+        row=2,
+        column=1,
+        value=f"{len(subjects)} subject offering(s), {n_classes} class(es)  •  "
+              "Click a subject name to jump to its sheet",
+    ).font = Font(italic=True, color="666666")
+
+    header_row = 4
+    header_fill = PatternFill("solid", start_color="1F2937", end_color="1F2937")
+    for c, title in enumerate(SUBJECT_INDEX_COLUMNS, start=1):
+        cell = ws.cell(row=header_row, column=c, value=title)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = header_fill
+
+    metric_keys = ["enrolled", "active", "at_risk"]
+    as_keys = ["as1_sub", "as2_sub", "as3_sub"]
+    subject_fill = PatternFill("solid", start_color=SUBJECT_ROW_COLOUR, end_color=SUBJECT_ROW_COLOUR)
+    r = header_row
+    for n, (subject, entries) in enumerate(subjects, start=1):
+        r += 1
+        values = (
+            [n, subject, ", ".join(_teachers(entries))]
+            + [_sum_counts(e[k] for e in entries) for k in metric_keys]
+            + [_sum_fractions(e[k] for e in entries) for k in as_keys]
+        )
+        for c, v in enumerate(values, start=1):
+            cell = ws.cell(row=r, column=c, value=v)
+            cell.font = Font(bold=True)
+            cell.fill = subject_fill
+        name_cell = ws.cell(row=r, column=2)
+        name_cell.hyperlink = Hyperlink(ref=name_cell.coordinate, location=f"'{subject_sheets[subject]}'!A1")
+        name_cell.font = Font(bold=True, color="0563C1", underline="single")
+
+        for e in entries:
+            r += 1
+            class_group = _split_class_label(e["class_label"])[1] or e["class_label"]
+            values = (
+                [None, f"    {class_group}", e["teacher"]]
+                + [e[k] for k in metric_keys]
+                + [e[k] for k in as_keys]
+            )
+            for c, v in enumerate(values, start=1):
+                ws.cell(row=r, column=c, value=v).font = Font(color=CLASS_ROW_FONT_COLOUR)
+
+    ws.column_dimensions["B"].width = 32
+    ws.column_dimensions["C"].width = 70
+    ws.freeze_panes = "A5"
+
+
+def build_subject_program_workbook(file_bytes, program, prog_entries, all_class_sheets):
+    """Same program split as build_program_workbook, but with one tab per
+    subject offering (all its class groups merged) and a 'Subject Index'."""
+    wb = openpyxl.load_workbook(io.BytesIO(file_bytes))
+
+    by_subject = defaultdict(list)
+    for e in prog_entries:
+        by_subject[_split_class_label(e["class_label"])[0]].append(e)
+    subjects = sorted(
+        (
+            (subject, sorted(entries, key=lambda e: str(e["class_label"] or "").lower()))
+            for subject, entries in by_subject.items()
+            if any(e["sheet"] in wb.sheetnames for e in entries)
+        ),
+        key=lambda item: item[0].lower(),
+    )
+
+    # Temporary names while the source sheets still exist (a label without
+    # " — " gives a subject name equal to its own class sheet's name)
+    original_sheets = list(wb.sheetnames)
+    temp_sheets = []
+    for i, (subject, entries) in enumerate(subjects):
+        temp_sheets.append(_write_subject_sheet(wb, f"__subject_{i}", subject, entries))
+    for name in original_sheets:
+        del wb[name]
+
+    subject_sheets = {}
+    for (subject, _), ws in zip(subjects, temp_sheets):
+        name = subject[:31] or "Unknown"
+        if name in subject_sheets.values() or name == "Subject Index":
+            name = (name[:28] + "_2")[:31]
+        ws.title = name
+        subject_sheets[subject] = name
+
+    _write_subject_index(wb, program, subjects, subject_sheets)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+def build_program_workbook(file_bytes, program, prog_entries, all_class_sheets, group_by="class"):
     """Load a fresh copy of the report and strip it down to just this program.
 
     Only whole-sheet deletion is used on the original workbook (safe, well
@@ -129,7 +373,13 @@ def build_program_workbook(file_bytes, program, prog_entries, all_class_sheets):
     program's data and aren't safely row-filterable (see _write_program_index
     docstring), so they're dropped and replaced with a fresh, program-scoped
     Class Index built from parsed data rather than sheet surgery.
+
+    group_by="subject" builds one tab per subject offering instead (see
+    build_subject_program_workbook).
     """
+    if group_by == "subject":
+        return build_subject_program_workbook(file_bytes, program, prog_entries, all_class_sheets)
+
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes))
     keep_sheets = {e["sheet"] for e in prog_entries}
 
@@ -180,12 +430,25 @@ if uploaded:
 
         base_name = re.sub(r"\.xlsx$", "", uploaded.name, flags=re.IGNORECASE)
 
+        group_by = st.radio(
+            "Group sheets by",
+            ["class", "subject"],
+            format_func=lambda x: {
+                "class": "Class group (one tab per class)",
+                "subject": "Subject offering (one tab per subject, all its class groups merged)",
+            }[x],
+            key="splitter_group_by",
+        )
+        zip_suffix = "_by_program_by_subject" if group_by == "subject" else "_by_program"
+
         if st.button(f"Build {len(by_program)} program files", type="primary"):
             outputs = {}
             progress = st.progress(0.0)
             for i, (program, prog_entries) in enumerate(sorted(by_program.items())):
                 safe_program = re.sub(r"[^A-Za-z0-9_-]+", "_", program)
-                buf = build_program_workbook(file_bytes, program, prog_entries, all_class_sheets)
+                buf = build_program_workbook(
+                    file_bytes, program, prog_entries, all_class_sheets, group_by=group_by
+                )
                 outputs[f"{base_name}_Program_{safe_program}.xlsx"] = buf
                 progress.progress((i + 1) / len(by_program))
             progress.empty()
@@ -200,7 +463,7 @@ if uploaded:
             st.download_button(
                 "Download all as .zip",
                 data=zip_buf,
-                file_name=f"{base_name}_by_program.zip",
+                file_name=f"{base_name}{zip_suffix}.zip",
                 mime="application/zip",
             )
 
