@@ -185,6 +185,8 @@ if is_summer and summer_mode.startswith("Early"):
             "together): they finish in Summer, or a semester earlier. SU1 and prep are advised now; "
             f"SU2 picks are shown in *{rm.EARLY_SU2_LATER_COL}*: students wait for the SU2 round to register. "
             f"One subject per block, an elective can take a free block, {rm.SUMMER_CAP_CP}cp limit. "
+            f"Over {rm.SUMMER_NO_APPROVAL_CP}cp (a prep plus a subject or elective) needs the PC's "
+            f"approval: advise the prep and hold the rest, see *{rm.EARLY_APPROVAL_COL}*. "
             "Subjects they're enrolled in now count as passed, and a free SB4 slot as used. "
             "Messaging stays general (the confirmed offerings); this is the *who to contact* list. "
             "Excluded students are on their own tab for the coach, not contacted about Summer."
@@ -241,6 +243,21 @@ if is_summer and summer_mode.startswith("Early"):
 
     # SU1 only - SU2 advises no preps
     if summer_round == "SU1":
+        needs_pc = rm.summer_pc_approval(shortlist)
+        st.subheader("PC approval")
+        st.caption(
+            f"**{len(needs_pc):,}** need PC approval (over {rm.SUMMER_NO_APPROVAL_CP}cp), across "
+            f"**{needs_pc['PROGRAM_CD'].nunique():,}** programs. One file per program, each with a "
+            f"*{rm.PC_DECISION_COL}* dropdown ({' / '.join(rm.PC_DECISIONS)}). A subject that only "
+            f"runs at another campus still needs a rule waiver"
+            + (f", see *{rm.EARLY_OTHER_CAMPUS_COL}*." if rm.EARLY_OTHER_CAMPUS_COL in shortlist else ".")
+        )
+        st.download_button(
+            f"Download PC approval files by program ({len(needs_pc):,}) (.zip)",
+            rm.summer_pc_by_program_zip(shortlist),
+            f"{stem}_pc_approval.zip", "application/zip", disabled=not len(needs_pc),
+        )
+
         with_prep, no_prep = rm.summer_early_prep_split(shortlist)
         st.caption(
             f"**Split by prep** — **{len(with_prep):,}** need a Summer prep "

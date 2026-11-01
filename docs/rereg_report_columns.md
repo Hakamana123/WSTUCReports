@@ -40,7 +40,9 @@ Why each student gets the template they do is in
    returning. Grey here does **not** mean a past registration.
 3. **Summer report.** A grey subject is one the student still needs that
    doesn't run in Summer at their campus (or the Summer block is full). They
-   take it in a later session. The Advice Reason says which.
+   take it in a later session. The Advice Reason says which. It can also be a
+   subject or elective **awaiting PC approval**: the student's plan is over
+   20CP, so they register the prep now and wait for the PC's decision.
 
 > The ✓ / ✗ / 0 marks exist only on the mid-semester report, and only for this
 > session's Blocks 1–2, because that's the only place the file carries a result
@@ -126,6 +128,13 @@ The Advice Reason starts with a line explaining which case applies.
   the order failed / owed subjects, then electives, then prep. If nothing fits
   it says "30cp cap reached". What doesn't fit is listed under "Still to pass
   (later session)".
+- **Summer = 20 credit points without approval.** That's two program subjects.
+  A prep plus a subject or elective is 25CP, which needs the PC's approval (no
+  rule waiver). Coaches advise the prep and hold the other item until the PC
+  replies. On the SU1 shortlist, *PC approval* says who and what, and the PC
+  files by program carry a *PC decision* dropdown (Approve / Prep only /
+  Subject only). A subject that only runs at another campus still needs a rule
+  waiver: the Advice Reason names the campus.
 - **Exclusion**: no advice. Refer to the coach.
 - **Paused**: advice is provisional (grey), no withdrawal advice, no comms until
   they confirm they're returning.

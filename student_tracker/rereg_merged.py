@@ -335,6 +335,9 @@ def _positional_fallback(row: pd.Series, program: str, is_nursing: bool, session
 
 CE_CAP_CP = 30  # Conditional Enrolment credit-point cap
 SUMMER_CAP_CP = 25  # most a student can take across Summer (SU1 + SU2 + prep)
+# Up to this needs no approval (two program subjects). A prep + one subject or
+# elective is over it, so the PC approves it - no rule waiver (Despina, 2026-11-01).
+SUMMER_NO_APPROVAL_CP = 20
 _CP_MODULAR = 10
 _CP_PREP = 15
 
@@ -456,6 +459,15 @@ def _normalize_summer_offering(summer) -> dict | None:
     return norm
 
 
+def _pc_hold(plan: dict) -> list[str]:
+    """What a Summer plan holds back for the PC's approval: everything but the
+    prep, when the whole Summer (SU1 + SU2 + prep) is over the no-approval
+    limit. Empty if the plan needs no approval."""
+    if plan["cp"] <= SUMMER_NO_APPROVAL_CP:
+        return []
+    return [*plan["SU1"], *plan["SU2"], *plan[""]]
+
+
 def _summer_advice(
     out: dict, row: pd.Series, program: str, is_nursing: bool, session: str, outcome: str,
     summer_subjects=None, file_row: pd.Series | None = None, slot_map: dict | None = None,
@@ -482,10 +494,13 @@ def _summer_advice(
     one the others leave free. A subject that's offered but can't fit, or that
     isn't offered at their campus, is greyed for reference (take next Autumn). With no list uploaded, only prep + Subjects 1 & 2 are
     assumed to run. Everyone is held to the Summer limit (``SUMMER_CAP_CP``,
-    25cp - tighter than the Conditional Enrolment 30cp cap). ``allow_prep``
-    off (the SU2 round) leaves preps out of the picks; ``finish_only`` (also
-    SU2) advises only students it finishes, so they start their Bachelor in
-    Autumn.
+    25cp - tighter than the Conditional Enrolment 30cp cap). A plan over
+    ``SUMMER_NO_APPROVAL_CP`` needs the PC's approval: the prep goes ahead and
+    the rest is greyed until they reply (:func:`_pc_hold`). A subject that
+    only runs at another campus goes in ``plan["other_campus"]``: that needs a
+    rule waiver. ``allow_prep`` off (the SU2 round) leaves preps out of the
+    picks; ``finish_only`` (also SU2) advises only students it finishes, so
+    they start their Bachelor in Autumn.
     """
     offering = _normalize_summer_offering(summer_subjects)
     assumed = offering is None
@@ -595,6 +610,11 @@ def _summer_advice(
     # (their block/cap is full), the rest simply aren't offered at their campus
     deferred_full = [b for b, g, d in zip(blocks, grey, deferred) if g and d]
     not_offered = [b for b, g, d in zip(blocks, grey, deferred) if g and not d]
+    # not at their campus but running elsewhere: a campus rule waiver, not a PC call
+    other_campus = {
+        c: sorted(offering[c]["campuses"] - {campus}) for c in not_offered
+        if offering and c in offering and offering[c]["campuses"] - {campus}
+    }
     # what's left after this Summer
     work = len(greyed) + sum(1 for s in still if not s.startswith("+")) + elec_left
     core_owed = [
@@ -613,7 +633,8 @@ def _summer_advice(
     plan = {"helps": bool(helps and helps["material"] and (work == 0 or not finish_only)),
             "finishes": work == 0,
             "without": helps["without"] if helps else "", "with": helps["with"] if helps else "",
-            "SU1": [], "SU2": [], "": [], "prep": list(prep_now), "owed": owed}
+            "SU1": [], "SU2": [], "": [], "prep": list(prep_now), "owed": owed,
+            "cp": cp, "other_campus": other_campus}
     for i, b in enumerate(blocks):
         if b and not grey[i]:
             plan[btag[i]].append(b)
@@ -641,6 +662,8 @@ def _summer_advice(
         out[SOURCE_COL] = src + " - no benefit, not advised"
         return out
 
+    held = _pc_hold(plan)
+    hold_mark = _GREY if held else ""
     out[ADVICE_COLS[0]] = " and ".join(prep_now)
     for col, val, g, tag in zip(ADVICE_COLS[1:], blocks, grey, btag):
         if not val:
@@ -648,9 +671,9 @@ def _summer_advice(
         elif g:
             out[col] = _GREY + val
         else:
-            out[col] = f"{val} ({tag})" if tag else val
+            out[col] = hold_mark + (f"{val} ({tag})" if tag else val)
     for i, blk in zip(empty_cols, elec_blocks):
-        out[ADVICE_COLS[i + 1]] = f"{_ELECTIVE} ({blk})"
+        out[ADVICE_COLS[i + 1]] = f"{hold_mark}{_ELECTIVE} ({blk})"
 
     # registered subjects with their Summer block, in SU1-then-SU2 order
     reg_by_block = [(btag[i], b) for i, b in enumerate(blocks) if b and not grey[i]]
@@ -665,7 +688,8 @@ def _summer_advice(
     if prep_now:
         bits.append("Prep: " + " and ".join(prep_now))
     if reg_display:
-        bits.append("Register: " + ", ".join(reg_display))
+        bits.append((f"Awaiting PC approval ({cp}cp) - don't register yet: " if held
+                     else "Register: ") + ", ".join(reg_display))
     if not summer_items:
         bits.append(f"Nothing confirmed for this student runs in {session}")
     if deferred_full:
@@ -674,6 +698,8 @@ def _summer_advice(
     if not_offered:
         bits.append("Grey = not offered in Summer at their campus - take next Autumn: "
                     + ", ".join(not_offered))
+    for code, camps in other_campus.items():
+        bits.append(f"{code} runs at {', '.join(camps)} - campus rule waiver needed")
     if assumed and (greyed or register):
         bits.append("ASSUMED: only prep + Subjects 1 & 2 run in Summer - upload the Summer offering list for real advice")
     if still:
@@ -1741,6 +1767,16 @@ EARLY_WITH_COL = "Finish with Summer"
 # Deferred / Leave of Absence students stay on the list (Summer would help
 # them too) but are flagged: confirm they're coming back before advising.
 EARLY_PAUSED_COL = "Enrolment check"
+# Whole-Summer load, and the approval a plan over SUMMER_NO_APPROVAL_CP needs
+EARLY_CP_COL = "Summer CP"
+EARLY_APPROVAL_COL = "PC approval"
+# Subjects that only run at another campus (a rule waiver, not a PC approval);
+# added only if needed
+EARLY_OTHER_CAMPUS_COL = "Runs at another campus (rule waiver)"
+# what the PC fills in on their program's file
+PC_DECISION_COL = "PC decision"
+PC_COMMENTS_COL = "PC comments"
+PC_DECISIONS = ("Approve", "Prep only", "Subject only")
 _ELECTIVE = "+1 elective"
 
 
@@ -1807,7 +1843,9 @@ def summer_early_advice(
     *Excluded* group - listed for the coach, not advised. Each row carries the
     outcome (blanks labelled as in the Coach View's Study Status). A paused
     (Deferred / Leave of Absence) student stays in their group with an
-    *Enrolment check* flag. Returns one row per candidate; empty frame if none.
+    *Enrolment check* flag. A plan over ``SUMMER_NO_APPROVAL_CP`` says what's
+    held in *PC approval* (:func:`summer_pc_by_program_zip` builds the files).
+    Returns one row per candidate; empty frame if none.
     """
     names = load_subject_names()
     offerings = v2.load_offerings()
@@ -1832,6 +1870,7 @@ def summer_early_advice(
         _, template = calc.classify(r, program in calc.NURSING_PROGRAMS)
         group = (EARLY_GROUP_EXCLUDED if excluded
                  else EARLY_GROUP_FINISH if plan["finishes"] else EARLY_GROUP_EARLIER)
+        held = [] if excluded else _pc_hold(plan)
         rows.append({
             "STUDENT_ID": r["STUDENT_ID"],
             "FIRST_NAME": r.get("FIRST_NAME"), "LAST_NAME": r.get("LAST_NAME"),
@@ -1851,6 +1890,12 @@ def summer_early_advice(
                for blk, col in EARLY_CATCHUP_COLS.items()},
             EARLY_CATCHUP_NOBLOCK_COL: ", ".join(label(c) for c in plan[""]),
             EARLY_PREP_COL: ", ".join(label(c) for c in plan["prep"]),
+            EARLY_CP_COL: plan["cp"],
+            EARLY_APPROVAL_COL: (
+                f"Needs PC approval ({plan['cp']}cp) - advise prep only, hold "
+                + ", ".join(held) if held else ""),
+            EARLY_OTHER_CAMPUS_COL: "; ".join(
+                f"{label(c)} ({', '.join(camps)})" for c, camps in plan["other_campus"].items()),
             EARLY_WITHOUT_COL: plan["without"],
             EARLY_WITH_COL: plan["with"],
             EARLY_OUTSTANDING_COL: ", ".join(_owed_with_sb4(plan["owed"], plan.get("sb4", ""))),
@@ -1859,16 +1904,19 @@ def summer_early_advice(
             "INSTITUTION_EMAIL_ADDRESS", COACH_COL, "PROGRAM_CD", "CAMP_CODE",
             "COMMENCEMENT_PERIOD", EARLY_OUTCOME_COL, EARLY_GROUP_COL, EARLY_PAUSED_COL,
             EARLY_REG_CHECK_COL, *EARLY_CATCHUP_COLS.values(), EARLY_CATCHUP_NOBLOCK_COL, EARLY_PREP_COL,
+            EARLY_CP_COL, EARLY_APPROVAL_COL, EARLY_OTHER_CAMPUS_COL,
             EARLY_WITHOUT_COL, EARLY_WITH_COL, EARLY_OUTSTANDING_COL]
     out = pd.DataFrame(rows, columns=cols)
     if summer_round == "SU2":
-        out = out.drop(columns=[EARLY_CATCHUP_COLS["SU1"], EARLY_PREP_COL, EARLY_REG_CHECK_COL])
+        out = out.drop(columns=[EARLY_CATCHUP_COLS["SU1"], EARLY_PREP_COL, EARLY_REG_CHECK_COL,
+                                EARLY_APPROVAL_COL])
     elif summer_round == "SU1":
         out = out.rename(columns={EARLY_CATCHUP_COLS["SU2"]: EARLY_SU2_LATER_COL})
     if as_at:
         out.insert(0, EARLY_AS_AT_COL, as_at)
-    if not out[EARLY_CATCHUP_NOBLOCK_COL].astype(bool).any():
-        out = out.drop(columns=EARLY_CATCHUP_NOBLOCK_COL)
+    for optional in (EARLY_CATCHUP_NOBLOCK_COL, EARLY_OTHER_CAMPUS_COL):
+        if not out[optional].astype(bool).any():
+            out = out.drop(columns=optional)
     if len(out):
         order = {g: i for i, g in enumerate(EARLY_GROUPS)}
         out = (out.assign(_g=out[EARLY_GROUP_COL].map(order))
@@ -1932,6 +1980,49 @@ def summer_early_prep_split(shortlist: pd.DataFrame) -> tuple[pd.DataFrame, pd.D
         return live.iloc[0:0], live
     has_prep = live[EARLY_PREP_COL].fillna("").astype(str).str.strip().astype(bool)
     return live[has_prep], live[~has_prep]
+
+
+def summer_pc_approval(shortlist: pd.DataFrame) -> pd.DataFrame:
+    """The listed students whose Summer plan needs the PC's approval (not
+    Excluded - those never get a *PC approval* flag). SU2 advises no preps, so
+    nobody there."""
+    if EARLY_APPROVAL_COL not in shortlist:
+        return shortlist.iloc[0:0]
+    return shortlist[shortlist[EARLY_APPROVAL_COL].fillna("").astype(str).str.strip().astype(bool)]
+
+
+def summer_pc_by_program_zip(shortlist: pd.DataFrame) -> bytes:
+    """The students needing approval as a ``.zip`` of one ``.xlsx`` per program,
+    to send to each PC: the proposed plan, when they'd finish without and with
+    it, and a *PC decision* dropdown (``PC_DECISIONS``) plus *PC comments* to
+    fill in. Layout kept plain so the returned files can be read back."""
+    import io
+    import zipfile
+
+    from openpyxl.worksheet.datavalidation import DataValidation
+
+    keep = [c for c in (
+        "STUDENT_ID", "FIRST_NAME", "LAST_NAME", "PREFERRED_NAME", COACH_COL, "PROGRAM_CD",
+        "CAMP_CODE", EARLY_OUTCOME_COL, EARLY_GROUP_COL, EARLY_PAUSED_COL, EARLY_REG_CHECK_COL,
+        EARLY_PREP_COL, *EARLY_CATCHUP_COLS.values(), EARLY_SU2_LATER_COL,
+        EARLY_CATCHUP_NOBLOCK_COL, EARLY_CP_COL, EARLY_WITHOUT_COL, EARLY_WITH_COL,
+        EARLY_OUTSTANDING_COL) if c in shortlist]
+    pc = summer_pc_approval(shortlist)[keep].assign(**{PC_DECISION_COL: "", PC_COMMENTS_COL: ""})
+    # the SU1 file's wording is for coaches; here an SU2 pick is just part of the plan
+    pc = pc.rename(columns={EARLY_SU2_LATER_COL: EARLY_CATCHUP_COLS["SU2"]})
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for program, group in pc.groupby("PROGRAM_CD", sort=True):
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                group.to_excel(writer, sheet_name="PC approval", index=False)
+                ws = writer.sheets["PC approval"]
+                col = ws.cell(row=1, column=group.columns.get_loc(PC_DECISION_COL) + 1).column_letter
+                dv = DataValidation(type="list", formula1=f'"{",".join(PC_DECISIONS)}"', allow_blank=True)
+                ws.add_data_validation(dv)
+                dv.add(f"{col}2:{col}{len(group) + 1}")
+            zf.writestr(f"{_safe_filename(str(program))}.xlsx", buffer.getvalue())
+    return zip_buf.getvalue()
 
 
 def summer_early_workbook(shortlist: pd.DataFrame, sheet_name: str) -> bytes:
