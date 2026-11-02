@@ -258,6 +258,26 @@ if is_summer and summer_mode.startswith("Early"):
             f"{stem}_pc_approval.zip", "application/zip", disabled=not len(needs_pc),
         )
 
+        one_gedu = rm.summer_one_gedu(df, shortlist, session)
+        n_95 = int((one_gedu[rm.EARLY_CP_DONE_COL] == rm.ROUND_1B_CP).sum())
+        st.subheader("Round 1b — one GEDU subject left")
+        st.caption(
+            f"**{n_95:,}** have {rm.ROUND_1B_CP}CP completed and only a prep left; "
+            f"**{len(one_gedu) - n_95:,}** have only GEDU1001 or GEDU1002 left. Based on results "
+            "alone: anything they're enrolled in now doesn't count as passed, and a student "
+            "enrolled in that subject now isn't listed. CP is worked out from a 110CP diploma."
+        )
+        g1, g2 = st.columns(2)
+        g1.download_button(
+            f"Download Round 1b list ({len(one_gedu):,}) (.xlsx)",
+            rm.summer_early_workbook(one_gedu, "Round 1b"),
+            f"{stem}_round_1b.xlsx", xlsx, disabled=not len(one_gedu),
+        )
+        g2.download_button(
+            "Download Round 1b split by coach (.zip)", rm.summer_early_by_coach_zip(one_gedu),
+            f"{stem}_round_1b_by_coach.zip", "application/zip", disabled=not len(one_gedu),
+        )
+
         with_prep, no_prep = rm.summer_early_prep_split(shortlist)
         st.caption(
             f"**Split by prep** — **{len(with_prep):,}** need a Summer prep "

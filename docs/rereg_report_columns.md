@@ -135,6 +135,10 @@ The Advice Reason starts with a line explaining which case applies.
   files by program carry a *PC decision* dropdown (Approve / Prep only /
   Subject only). A subject that only runs at another campus still needs a rule
   waiver: the Advice Reason names the campus.
+- **Round 1b = one GEDU subject left.** A separate list in the SU1 view, on
+  results alone: nothing they're enrolled in counts as passed, and a student
+  enrolled in that subject now isn't listed. *CP completed* is worked out from a
+  110CP diploma, so 95CP means only a prep is left.
 - **Exclusion**: no advice. Refer to the coach.
 - **Paused**: advice is provisional (grey), no withdrawal advice, no comms until
   they confirm they're returning.

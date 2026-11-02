@@ -1777,6 +1777,13 @@ EARLY_OTHER_CAMPUS_COL = "Runs at another campus (rule waiver)"
 PC_DECISION_COL = "PC decision"
 PC_COMMENTS_COL = "PC comments"
 PC_DECISIONS = ("Approve", "Prep only", "Subject only")
+# Round 1b: students one GEDU subject from finishing, on results alone. The
+# extract has no CP total, so it's worked out from a diploma of 110CP: 2 preps
+# (15cp) + 6 subjects + 2 electives (10cp). One prep left = 95CP completed.
+ROUND_1B_CP = 95
+_DIPLOMA_CP = 110
+EARLY_LAST_GEDU_COL = "Last GEDU subject"
+EARLY_CP_DONE_COL = "CP completed"
 _ELECTIVE = "+1 elective"
 
 
@@ -2023,6 +2030,52 @@ def summer_pc_by_program_zip(shortlist: pd.DataFrame) -> bytes:
                 dv.add(f"{col}2:{col}{len(group) + 1}")
             zf.writestr(f"{_safe_filename(str(program))}.xlsx", buffer.getvalue())
     return zip_buf.getvalue()
+
+
+def _last_gedu(row: pd.Series, program: str, session: str, slot_map: dict) -> str:
+    """The one GEDU subject (prep or core) this student still owes, if that's
+    all they owe on results alone and they aren't enrolled in it now. Unlike
+    the Summer advice, nothing they're enrolled in counts as passed."""
+    ref = calc._ref().get(program, {})
+    if not ref.get("prep1") or calc._elective_count(row):
+        return ""
+    srow = calc.remap_statuses(row, program, session, slot_map)
+    subj = calc.subjects_for(program, session)
+    owed = [(srow.get(f"Subject {p} Status"), subj[str(p)]) for p in range(1, 9) if subj.get(str(p))]
+    owed += [(row.get(slot), ref[key]) for slot, key in (("Prep 1 Status", "prep1"), ("Prep 2 Status", "prep2"))
+             if ref.get(key)]
+    owed = [(status, code) for status, code in owed if calc._is_outstanding(status)]
+    if len(owed) != 1:
+        return ""
+    status, code = owed[0]
+    if (not code.startswith("GEDU") or "Currently Registered" in str(status)
+            or code in {*_registered_codes(row, 3), *_registered_codes(row, 4)}):
+        return ""
+    return code
+
+
+def summer_one_gedu(df: pd.DataFrame, shortlist: pd.DataFrame, session: str) -> pd.DataFrame:
+    """Round 1b: the listed students (not Excluded) one GEDU subject from
+    finishing, with that subject and their CP completed, most complete last -
+    so ``ROUND_1B_CP`` (one prep left) comes first. Same columns as the
+    shortlist otherwise, so its workbook and coach split work on this too."""
+    slot_map = v2.derive_slot_map(df)
+    last = {}
+    for _, r in df.iterrows():
+        program = str(r["PROGRAM_CD"]).split(".")[0]
+        code = _last_gedu(r, program, session, slot_map)
+        if code:
+            last[(r["STUDENT_ID"], program)] = code
+    live = shortlist[shortlist[EARLY_GROUP_COL] != EARLY_GROUP_EXCLUDED]
+    codes = [last.get(k, "") for k in zip(live["STUDENT_ID"], live["PROGRAM_CD"])]
+    out = live[[bool(c) for c in codes]].copy()
+    picked = [c for c in codes if c]
+    preps = {calc._ref()[p][k] for p in out["PROGRAM_CD"] for k in ("prep1", "prep2")}
+    at = out.columns.get_loc(EARLY_GROUP_COL) + 1
+    out.insert(at, EARLY_LAST_GEDU_COL, picked)
+    out.insert(at + 1, EARLY_CP_DONE_COL,
+               [_DIPLOMA_CP - (_CP_PREP if c in preps else _CP_MODULAR) for c in picked])
+    return out.sort_values([EARLY_CP_DONE_COL, COACH_COL, "LAST_NAME"]).reset_index(drop=True)
 
 
 def summer_early_workbook(shortlist: pd.DataFrame, sheet_name: str) -> bytes:
