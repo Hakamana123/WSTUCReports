@@ -97,13 +97,19 @@ def load_offerings(path: Path | None = None) -> dict:
 
 
 def load_progression_file(source) -> pd.DataFrame:
-    """Read the progression workbook (sheet 'Query1', header on row 1)."""
+    """Read the progression workbook (sheet 'Query1', header on row 1). A
+    workbook with only one sheet is read whatever that sheet is called."""
     try:
         df = pd.read_excel(source, sheet_name=SHEET_NAME)
     except ValueError as exc:  # sheet not found
-        raise ValueError(
-            f"Couldn't find a sheet called '{SHEET_NAME}' in this workbook."
-        ) from exc
+        if hasattr(source, "seek"):
+            source.seek(0)
+        sheets = pd.read_excel(source, sheet_name=None)
+        if len(sheets) != 1:
+            raise ValueError(
+                f"Couldn't find a sheet called '{SHEET_NAME}' in this workbook."
+            ) from exc
+        df = next(iter(sheets.values()))
 
     missing = [c for c in ["COMMENCEMENT_PERIOD", "PROGRAM_CD", *ALL_SLOTS] if c not in df.columns]
     if missing:

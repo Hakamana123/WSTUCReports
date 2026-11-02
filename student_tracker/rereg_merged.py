@@ -1794,8 +1794,14 @@ def _registered_codes(row: pd.Series, block: int) -> list[str]:
     ("Registered - Web, Drop - Medical Reasons"); a code counts when any of
     its entries is a registration. If the two lists don't line up, every code
     counts as long as the block has a registration at all."""
-    codes = _SUBJECT_CODE_RE.findall(str(row.get(f"Block {block} code", "") or ""))
-    raw = row.get(f"Block {block} Registration")
+    return _registered_in(row, f"Block {block} code", f"Block {block} Registration")
+
+
+def _registered_in(row: pd.Series, code_col: str, status_col: str) -> list[str]:
+    """The codes in ``code_col`` that ``status_col`` shows as registered."""
+    raw_codes = row.get(code_col)
+    codes = _SUBJECT_CODE_RE.findall("" if raw_codes is None or pd.isna(raw_codes) else str(raw_codes))
+    raw = row.get(status_col)
     statuses = [] if raw is None or pd.isna(raw) else [t.strip() for t in str(raw).split(",")]
     if len(statuses) != len(codes):
         return codes if any(t.startswith("Registered") for t in statuses) else []
@@ -2030,6 +2036,89 @@ def summer_pc_by_program_zip(shortlist: pd.DataFrame) -> bytes:
                 dv.add(f"{col}2:{col}{len(group) + 1}")
             zf.writestr(f"{_safe_filename(str(program))}.xlsx", buffer.getvalue())
     return zip_buf.getvalue()
+
+
+# Summer registration check: what students are actually registered in. Reads
+# only the Summer columns, so it works on a file with no usable Status columns.
+_REG_PREP_COLS = ("Summer Code", "Summer Registration")
+_REG_BLOCK_COLS = {"SU1": ("Summer Block 1 code", "Summer Block 1 Registration"),
+                   "SU2": ("Summer Block 2 code", "Summer Block 2 Registration")}
+REG_PREP_COL = "Summer prep registered"
+REG_BLOCK_COLS = {"SU1": "SU1 registered", "SU2": "SU2 registered"}
+REG_CP_COL = "Registered CP"
+REG_CHECK_COL = "Load check"
+REG_WAIVER_COL = "Rule waiver registration"
+
+
+def _squeeze_headers(df: pd.DataFrame) -> pd.DataFrame:
+    """``df`` with runs of spaces in its headers closed up ("Summer  Registration")."""
+    return df.rename(columns=lambda c: " ".join(str(c).split()))
+
+
+def has_summer_registrations(df: pd.DataFrame) -> bool:
+    """Does this extract carry the Summer registration columns?"""
+    cols = set(_squeeze_headers(df).columns)
+    return all(c in cols for pair in (_REG_PREP_COLS, *_REG_BLOCK_COLS.values()) for c in pair)
+
+
+def has_progress_statuses(df: pd.DataFrame) -> bool:
+    """Do the Status columns say who has passed what? Without a single
+    "Completed", "Currently Registered" or bare 1, everyone reads as owing
+    everything, so the advice can't be trusted."""
+    cells = df[v2.ALL_SLOTS].astype(str).stack().str.strip()
+    return bool(cells.str.contains(r"Completed$|Currently Registered|^1(?:\.0)?$", regex=True).any())
+
+
+def summer_registration_check(df: pd.DataFrame) -> pd.DataFrame:
+    """One row per student registered in Summer, heaviest load first, with
+    their CP (prep 15cp, block subject 10cp) and a *Load check* over
+    ``SUMMER_NO_APPROVAL_CP`` or ``SUMMER_CAP_CP``. It shows who is over, not
+    who was approved: there are no PC decisions to compare with here."""
+    rows = []
+    for _, r in _squeeze_headers(df).iterrows():
+        prep = _registered_in(r, *_REG_PREP_COLS)
+        blocks = {b: _registered_in(r, *cols) for b, cols in _REG_BLOCK_COLS.items()}
+        n_block = sum(len(codes) for codes in blocks.values())
+        if not prep and not n_block:
+            continue
+        cp = _CP_PREP * len(prep) + _CP_MODULAR * n_block
+        waiver = [c for pair in (_REG_PREP_COLS, *_REG_BLOCK_COLS.values())
+                  for c in _registered_in(r, *pair) if "Rule Waiver" in str(r.get(pair[1]))]
+        rows.append({
+            "STUDENT_ID": r["STUDENT_ID"],
+            "FIRST_NAME": r.get("FIRST_NAME"), "LAST_NAME": r.get("LAST_NAME"),
+            "PREFERRED_NAME": r.get("PREFERRED_NAME"),
+            "INSTITUTION_EMAIL_ADDRESS": r.get("INSTITUTION_EMAIL_ADDRESS"),
+            COACH_COL: r.get("Coach"), "PROGRAM_CD": str(r["PROGRAM_CD"]).split(".")[0],
+            "CAMP_CODE": r.get("CAMP_CODE"), STUDY_PATH_COL: r.get(STUDY_PATH_COL),
+            EARLY_OUTCOME_COL: r.get("Progression Outcome"),
+            REG_PREP_COL: ", ".join(prep),
+            **{REG_BLOCK_COLS[b]: ", ".join(codes) for b, codes in blocks.items()},
+            REG_CP_COL: cp,
+            REG_CHECK_COL: (f"Over the {SUMMER_CAP_CP}cp limit" if cp > SUMMER_CAP_CP
+                            else f"Over {SUMMER_NO_APPROVAL_CP}cp - needs PC approval"
+                            if cp > SUMMER_NO_APPROVAL_CP else ""),
+            REG_WAIVER_COL: ", ".join(waiver),
+        })
+    cols = ["STUDENT_ID", "FIRST_NAME", "LAST_NAME", "PREFERRED_NAME", "INSTITUTION_EMAIL_ADDRESS",
+            COACH_COL, "PROGRAM_CD", "CAMP_CODE", STUDY_PATH_COL, EARLY_OUTCOME_COL, REG_PREP_COL,
+            *REG_BLOCK_COLS.values(), REG_CP_COL, REG_CHECK_COL, REG_WAIVER_COL]
+    out = pd.DataFrame(rows, columns=cols)
+    return out.sort_values([REG_CP_COL, COACH_COL, "LAST_NAME"],
+                           ascending=[False, True, True]).reset_index(drop=True)
+
+
+def summer_registration_workbook(check: pd.DataFrame) -> bytes:
+    """``check`` as an ``.xlsx``: students over the no-approval limit first,
+    everyone registered on a second tab."""
+    import io
+
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+        check[check[REG_CP_COL] > SUMMER_NO_APPROVAL_CP].to_excel(
+            w, sheet_name=f"Over {SUMMER_NO_APPROVAL_CP}cp", index=False)
+        check.to_excel(w, sheet_name="All registered", index=False)
+    return buf.getvalue()
 
 
 def _last_gedu(row: pd.Series, program: str, session: str, slot_map: dict) -> str:

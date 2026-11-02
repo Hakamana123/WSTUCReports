@@ -151,6 +151,40 @@ except ValueError as exc:
     st.error(f"Couldn't read this file: {exc}")
     st.stop()
 
+# --- Summer registration check -------------------------------------------------
+# What students are actually registered in, where the extract carries it. Needs
+# only the Summer columns, so it runs before the check on the Status columns.
+if rm.has_summer_registrations(df):
+    reg_check = rm.summer_registration_check(df)
+    over = reg_check[reg_check[rm.REG_CP_COL] > rm.SUMMER_NO_APPROVAL_CP]
+    st.header("Summer registration check")
+    r1, r2, r3 = st.columns(3)
+    r1.metric("Registered in Summer", f"{len(reg_check):,}")
+    r2.metric(f"Over {rm.SUMMER_NO_APPROVAL_CP}cp", f"{len(over):,}")
+    r3.metric(f"Over the {rm.SUMMER_CAP_CP}cp limit",
+              f"{int((reg_check[rm.REG_CP_COL] > rm.SUMMER_CAP_CP).sum()):,}")
+    st.caption(
+        "From the extract's Summer registration columns: a Summer prep counts 15cp and a "
+        "block subject 10cp. This shows who is over, not who was approved: compare with the "
+        "PC decisions before contacting anyone."
+    )
+    st.dataframe(over, use_container_width=True, hide_index=True)
+    st.download_button(
+        "Download Summer registration check (.xlsx)", rm.summer_registration_workbook(reg_check),
+        "summer_registration_check.xlsx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        disabled=not len(reg_check),
+    )
+
+if not rm.has_progress_statuses(df):
+    st.error(
+        "This file's Prep and Subject Status columns don't say who has passed: there's no "
+        "\"Completed\", \"Currently Registered\" or 1 in them. Advice from it would show every "
+        "student owing everything, so it isn't produced. Ask for the extract to be re-run "
+        "with the status values."
+    )
+    st.stop()
+
 # --- Summer early-advice mode --------------------------------------------------
 # A separate targeting output, not the full engine: who a confirmed Summer subject
 # could get back on pattern (failed an early subject) or help finish sooner.

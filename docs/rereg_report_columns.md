@@ -139,6 +139,13 @@ The Advice Reason starts with a line explaining which case applies.
   results alone: nothing they're enrolled in counts as passed, and a student
   enrolled in that subject now isn't listed. *CP completed* is worked out from a
   110CP diploma, so 95CP means only a prep is left.
+- **Summer registration check.** When the extract has the Summer registration
+  columns, the page lists who is registered in Summer and their CP (prep 15cp,
+  block subject 10cp), flagging anyone over 20cp or over the 25cp limit. It
+  shows who is over, not who was approved, so compare it with the PC decisions.
+- **Files with no pass information are refused.** If the Status columns have no
+  "Completed", "Currently Registered" or 1, no advice is produced, because every
+  student would read as owing everything. The registration check still runs.
 - **Exclusion**: no advice. Refer to the coach.
 - **Paused**: advice is provisional (grey), no withdrawal advice, no comms until
   they confirm they're returning.
