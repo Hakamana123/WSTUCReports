@@ -334,6 +334,11 @@ def _positional_fallback(row: pd.Series, program: str, is_nursing: bool, session
 
 
 CE_CAP_CP = 30  # Conditional Enrolment credit-point cap
+# Conditional Enrolment in Summer: one subject - the prep, or one modular subject
+# or elective, never both. WSU caps it at 10cp in Summer with no rule waiver to
+# go over; the 15cp prep counts as the one subject so they can still clear it
+# (Josiah, 2026-11-03).
+CE_SUMMER_SUBJECTS = 1
 SUMMER_CAP_CP = 25  # most a student can take across Summer (SU1 + SU2 + prep)
 # Up to this needs no approval (two program subjects). A prep + one subject or
 # elective is over it, so the PC approves it - no rule waiver (Despina, 2026-11-01).
@@ -498,9 +503,11 @@ def _summer_advice(
     ``SUMMER_NO_APPROVAL_CP`` needs the PC's approval: the prep goes ahead and
     the rest is greyed until they reply (:func:`_pc_hold`). A subject that
     only runs at another campus goes in ``plan["other_campus"]``: that needs a
-    rule waiver. ``allow_prep`` off (the SU2 round) leaves preps out of the
-    picks; ``finish_only`` (also SU2) advises only students it finishes, so
-    they start their Bachelor in Autumn.
+    rule waiver. Conditional Enrolment gets ``CE_SUMMER_SUBJECTS``: the prep
+    first, unless only their subject brings the finish forward, with the other
+    choice and its finish in ``plan["alt"]``. ``allow_prep`` off (the SU2
+    round) leaves preps out of the picks; ``finish_only`` (also SU2) advises
+    only students it finishes, so they start their Bachelor in Autumn.
     """
     offering = _normalize_summer_offering(summer_subjects)
     assumed = offering is None
@@ -528,7 +535,8 @@ def _summer_advice(
     prep_now, cp = [], 0
     for slot, key in (("Prep 1 Status", "prep1"), ("Prep 2 Status", "prep2")):
         code = prog_ref.get(key)
-        if allow_prep and not is_nursing and code and calc._is_outstanding(row.get(slot))                 and cp + _CP_PREP <= cp_cap:
+        if allow_prep and not is_nursing and code and calc._is_outstanding(row.get(slot)) \
+                and cp + _CP_PREP <= cp_cap and not (capped and len(prep_now) >= CE_SUMMER_SUBJECTS):
             prep_now.append(code)
             cp += _CP_PREP
 
@@ -548,19 +556,26 @@ def _summer_advice(
         ]
         cands_by.append(cands)
         options.append([(subj[str(p)], blk) for p in cands for blk in offered_blocks(p)])
-    # Try every combination (at most 5^4): register as many subjects as fit -
-    # at most one per Summer block, within the cap - and among equals fill the
-    # earliest pattern blocks, then take each one's first choice (SU1 before SU2).
+    def pick(room: int) -> list[int]:
+        """Try every combination (at most 5^4): register as many subjects as
+        fit - at most one per Summer block, ``room`` in all - and among equals
+        fill the earliest pattern blocks, then take each one's first choice
+        (SU1 before SU2). Returns the option index per pattern block."""
+        best_key, choice = None, [len(o) for o in options]
+        for combo in itertools.product(*[range(len(o) + 1) for o in options]):
+            picked = [options[bi][c] for bi, c in enumerate(combo) if c < len(options[bi])]
+            named = [blk for _, blk in picked if blk]
+            if len(picked) > room or len(named) != len(set(named)):
+                continue
+            key = (-len(picked), tuple(c >= len(o) for c, o in zip(combo, options)), combo)
+            if best_key is None or key < best_key:
+                best_key, choice = key, list(combo)
+        return choice
+
     room = (cp_cap - cp) // _CP_MODULAR
-    best_key, choice = None, [len(o) for o in options]
-    for combo in itertools.product(*[range(len(o) + 1) for o in options]):
-        picked = [options[bi][c] for bi, c in enumerate(combo) if c < len(options[bi])]
-        named = [blk for _, blk in picked if blk]
-        if len(picked) > room or len(named) != len(set(named)):
-            continue
-        key = (-len(picked), tuple(c >= len(o) for c, o in zip(combo, options)), combo)
-        if best_key is None or key < best_key:
-            best_key, choice = key, list(combo)
+    if capped:
+        room = min(room, CE_SUMMER_SUBJECTS - len(prep_now))
+    choice = pick(room)
     for bi, cands in enumerate(cands_by):
         if not cands:
             continue
@@ -583,7 +598,10 @@ def _summer_advice(
     if not assumed:
         used = {t for t, g in zip(btag, grey) if t and not g}
         free = [b for b in EARLY_CATCHUP_COLS if b not in used]
-        elec_blocks = free[:max(0, min(elec_need, len(free), (cp_cap - cp) // _CP_MODULAR))]
+        elec_room = (cp_cap - cp) // _CP_MODULAR
+        if capped:
+            elec_room = min(elec_room, CE_SUMMER_SUBJECTS - len(prep_now) - len(register))
+        elec_blocks = free[:max(0, min(elec_need, len(free), elec_room))]
         cp += _CP_MODULAR * len(elec_blocks)
     empty_cols = sorted(i for i in range(3, -1, -1) if not blocks[i])[-len(elec_blocks):] \
         if elec_blocks else []
@@ -625,16 +643,43 @@ def _summer_advice(
 
     # Does Summer bring their transition to the University forward?
     summer_items = bool(prep_now or register or elec_blocks)
+    fr = file_row if file_row is not None else row
+    owed_n = len(owed) - (1 if elec_need else 0) + elec_need
     helps = _summer_helps(
-        file_row if file_row is not None else row, program, session, capped,
-        slot_map or {}, offerings or {}, register, prep_now, len(elec_blocks),
-        left=work, owed_n=len(owed) - (1 if elec_need else 0) + elec_need,
+        fr, program, session, capped, slot_map or {}, offerings or {}, register, prep_now,
+        len(elec_blocks), left=work, owed_n=owed_n,
     ) if summer_items else None
     plan = {"helps": bool(helps and helps["material"] and (work == 0 or not finish_only)),
             "finishes": work == 0,
             "without": helps["without"] if helps else "", "with": helps["with"] if helps else "",
             "SU1": [], "SU2": [], "": [], "prep": list(prep_now), "owed": owed,
-            "cp": cp, "other_campus": other_campus}
+            "cp": cp, "other_campus": other_campus, "alt": ""}
+
+    # Conditional Enrolment took the prep as its one subject: offer their best
+    # subject (or an elective) instead, with when they'd finish. If the prep
+    # doesn't bring their finish forward but a subject would, swap the two.
+    if capped and prep_now:
+        if allow_prep and not plan["helps"]:
+            swapped = _summer_advice(out, row, program, is_nursing, session, outcome, summer_subjects,
+                                     file_row, slot_map, offerings, allow_prep=False,
+                                     finish_only=finish_only)
+            if swapped["_summer"]["helps"]:
+                prep_txt = " and ".join(prep_now)
+                swapped["_summer"]["alt"] = f"{prep_txt} - doesn't bring their finish forward"
+                swapped[REASON_COL] += (f" | Conditional Enrolment: one Summer subject - or instead "
+                                        f"{swapped['_summer']['alt']}")
+                return swapped
+        alt_choice = pick(CE_SUMMER_SUBJECTS)
+        alt = next((options[bi][c] for bi, c in enumerate(alt_choice) if c < len(options[bi])), None)
+        alt_codes, alt_elec, alt_item = [], 0, ""
+        if alt:
+            alt_codes, alt_item = [alt[0]], f"{alt[0]} ({alt[1]})" if alt[1] else alt[0]
+        elif elec_need and not assumed:
+            alt_elec, alt_item = 1, f"{_ELECTIVE} ({next(iter(EARLY_CATCHUP_COLS))})"
+        if alt_item:
+            ah = _summer_helps(fr, program, session, capped, slot_map or {}, offerings or {},
+                               alt_codes, [], alt_elec, left=work, owed_n=owed_n)
+            plan["alt"] = f"{alt_item} - finish ~{ah['with']}"
     for i, b in enumerate(blocks):
         if b and not grey[i]:
             plan[btag[i]].append(b)
@@ -690,10 +735,13 @@ def _summer_advice(
     if reg_display:
         bits.append((f"Awaiting PC approval ({cp}cp) - don't register yet: " if held
                      else "Register: ") + ", ".join(reg_display))
+    if plan["alt"]:
+        bits.append(f"Conditional Enrolment: one Summer subject - or instead {plan['alt']}")
     if not summer_items:
         bits.append(f"Nothing confirmed for this student runs in {session}")
     if deferred_full:
-        bits.append("Runs in Summer but only one subject per block fits - take later: "
+        bits.append(("Conditional Enrolment: one Summer subject only - take later: " if capped
+                     else "Runs in Summer but only one subject per block fits - take later: ")
                     + ", ".join(deferred_full))
     if not_offered:
         bits.append("Grey = not offered in Summer at their campus - take next Autumn: "
@@ -1770,6 +1818,8 @@ EARLY_PAUSED_COL = "Enrolment check"
 # Whole-Summer load, and the approval a plan over SUMMER_NO_APPROVAL_CP needs
 EARLY_CP_COL = "Summer CP"
 EARLY_APPROVAL_COL = "PC approval"
+# Conditional Enrolment's other choice for its one Summer subject; added only if needed
+EARLY_ALT_COL = "Or instead (Conditional Enrolment)"
 # Subjects that only run at another campus (a rule waiver, not a PC approval);
 # added only if needed
 EARLY_OTHER_CAMPUS_COL = "Runs at another campus (rule waiver)"
@@ -1907,6 +1957,7 @@ def summer_early_advice(
             EARLY_APPROVAL_COL: (
                 f"Needs PC approval ({plan['cp']}cp) - advise prep only, hold "
                 + ", ".join(held) if held else ""),
+            EARLY_ALT_COL: plan["alt"],
             EARLY_OTHER_CAMPUS_COL: "; ".join(
                 f"{label(c)} ({', '.join(camps)})" for c, camps in plan["other_campus"].items()),
             EARLY_WITHOUT_COL: plan["without"],
@@ -1917,7 +1968,7 @@ def summer_early_advice(
             "INSTITUTION_EMAIL_ADDRESS", COACH_COL, "PROGRAM_CD", "CAMP_CODE",
             "COMMENCEMENT_PERIOD", EARLY_OUTCOME_COL, EARLY_GROUP_COL, EARLY_PAUSED_COL,
             EARLY_REG_CHECK_COL, *EARLY_CATCHUP_COLS.values(), EARLY_CATCHUP_NOBLOCK_COL, EARLY_PREP_COL,
-            EARLY_CP_COL, EARLY_APPROVAL_COL, EARLY_OTHER_CAMPUS_COL,
+            EARLY_CP_COL, EARLY_APPROVAL_COL, EARLY_ALT_COL, EARLY_OTHER_CAMPUS_COL,
             EARLY_WITHOUT_COL, EARLY_WITH_COL, EARLY_OUTSTANDING_COL]
     out = pd.DataFrame(rows, columns=cols)
     if summer_round == "SU2":
@@ -1927,7 +1978,7 @@ def summer_early_advice(
         out = out.rename(columns={EARLY_CATCHUP_COLS["SU2"]: EARLY_SU2_LATER_COL})
     if as_at:
         out.insert(0, EARLY_AS_AT_COL, as_at)
-    for optional in (EARLY_CATCHUP_NOBLOCK_COL, EARLY_OTHER_CAMPUS_COL):
+    for optional in (EARLY_CATCHUP_NOBLOCK_COL, EARLY_ALT_COL, EARLY_OTHER_CAMPUS_COL):
         if not out[optional].astype(bool).any():
             out = out.drop(columns=optional)
     if len(out):
@@ -2072,7 +2123,8 @@ def has_progress_statuses(df: pd.DataFrame) -> bool:
 def summer_registration_check(df: pd.DataFrame) -> pd.DataFrame:
     """One row per student registered in Summer, heaviest load first, with
     their CP (prep 15cp, block subject 10cp) and a *Load check* over
-    ``SUMMER_NO_APPROVAL_CP`` or ``SUMMER_CAP_CP``. It shows who is over, not
+    ``SUMMER_NO_APPROVAL_CP`` or ``SUMMER_CAP_CP``, or a Conditional Enrolment
+    student in more than ``CE_SUMMER_SUBJECTS``. It shows who is over, not
     who was approved: there are no PC decisions to compare with here."""
     rows = []
     for _, r in _squeeze_headers(df).iterrows():
@@ -2082,6 +2134,7 @@ def summer_registration_check(df: pd.DataFrame) -> pd.DataFrame:
         if not prep and not n_block:
             continue
         cp = _CP_PREP * len(prep) + _CP_MODULAR * n_block
+        ce = str(r.get("Progression Outcome") or "").strip() in v2.STANDING_MAX_BLOCKS
         waiver = [c for pair in (_REG_PREP_COLS, *_REG_BLOCK_COLS.values())
                   for c in _registered_in(r, *pair) if "Rule Waiver" in str(r.get(pair[1]))]
         rows.append({
@@ -2095,7 +2148,9 @@ def summer_registration_check(df: pd.DataFrame) -> pd.DataFrame:
             REG_PREP_COL: ", ".join(prep),
             **{REG_BLOCK_COLS[b]: ", ".join(codes) for b, codes in blocks.items()},
             REG_CP_COL: cp,
-            REG_CHECK_COL: (f"Over the {SUMMER_CAP_CP}cp limit" if cp > SUMMER_CAP_CP
+            REG_CHECK_COL: (f"Conditional Enrolment - {CE_SUMMER_SUBJECTS} Summer subject only"
+                            if ce and len(prep) + n_block > CE_SUMMER_SUBJECTS
+                            else f"Over the {SUMMER_CAP_CP}cp limit" if cp > SUMMER_CAP_CP
                             else f"Over {SUMMER_NO_APPROVAL_CP}cp - needs PC approval"
                             if cp > SUMMER_NO_APPROVAL_CP else ""),
             REG_WAIVER_COL: ", ".join(waiver),
@@ -2108,15 +2163,19 @@ def summer_registration_check(df: pd.DataFrame) -> pd.DataFrame:
                            ascending=[False, True, True]).reset_index(drop=True)
 
 
+def summer_registration_flagged(check: pd.DataFrame) -> pd.DataFrame:
+    """The rows of :func:`summer_registration_check` with a *Load check* flag."""
+    return check[check[REG_CHECK_COL].fillna("").astype(bool)]
+
+
 def summer_registration_workbook(check: pd.DataFrame) -> bytes:
-    """``check`` as an ``.xlsx``: students over the no-approval limit first,
+    """``check`` as an ``.xlsx``: students with a *Load check* flag first,
     everyone registered on a second tab."""
     import io
 
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as w:
-        check[check[REG_CP_COL] > SUMMER_NO_APPROVAL_CP].to_excel(
-            w, sheet_name=f"Over {SUMMER_NO_APPROVAL_CP}cp", index=False)
+        summer_registration_flagged(check).to_excel(w, sheet_name="To check", index=False)
         check.to_excel(w, sheet_name="All registered", index=False)
     return buf.getvalue()
 

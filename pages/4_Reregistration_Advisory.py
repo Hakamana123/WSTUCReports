@@ -156,19 +156,22 @@ except ValueError as exc:
 # only the Summer columns, so it runs before the check on the Status columns.
 if rm.has_summer_registrations(df):
     reg_check = rm.summer_registration_check(df)
-    over = reg_check[reg_check[rm.REG_CP_COL] > rm.SUMMER_NO_APPROVAL_CP]
+    flagged = rm.summer_registration_flagged(reg_check)
+    is_ce = flagged[rm.REG_CHECK_COL].str.startswith("Conditional Enrolment")
     st.header("Summer registration check")
-    r1, r2, r3 = st.columns(3)
+    r1, r2, r3, r4 = st.columns(4)
     r1.metric("Registered in Summer", f"{len(reg_check):,}")
-    r2.metric(f"Over {rm.SUMMER_NO_APPROVAL_CP}cp", f"{len(over):,}")
+    r2.metric(f"Over {rm.SUMMER_NO_APPROVAL_CP}cp", f"{int((reg_check[rm.REG_CP_COL] > rm.SUMMER_NO_APPROVAL_CP).sum()):,}")
     r3.metric(f"Over the {rm.SUMMER_CAP_CP}cp limit",
               f"{int((reg_check[rm.REG_CP_COL] > rm.SUMMER_CAP_CP).sum()):,}")
+    r4.metric("Conditional Enrolment, over one subject", f"{int(is_ce.sum()):,}")
     st.caption(
         "From the extract's Summer registration columns: a Summer prep counts 15cp and a "
-        "block subject 10cp. This shows who is over, not who was approved: compare with the "
-        "PC decisions before contacting anyone."
+        f"block subject 10cp. Conditional Enrolment allows {rm.CE_SUMMER_SUBJECTS} Summer subject "
+        "(the prep or one other). This shows who is over, not who was approved: compare with "
+        "the PC decisions before contacting anyone."
     )
-    st.dataframe(over, use_container_width=True, hide_index=True)
+    st.dataframe(flagged, use_container_width=True, hide_index=True)
     st.download_button(
         "Download Summer registration check (.xlsx)", rm.summer_registration_workbook(reg_check),
         "summer_registration_check.xlsx",
@@ -221,6 +224,8 @@ if is_summer and summer_mode.startswith("Early"):
             f"One subject per block, an elective can take a free block, {rm.SUMMER_CAP_CP}cp limit. "
             f"Over {rm.SUMMER_NO_APPROVAL_CP}cp (a prep plus a subject or elective) needs the PC's "
             f"approval: advise the prep and hold the rest, see *{rm.EARLY_APPROVAL_COL}*. "
+            f"Conditional Enrolment gets {rm.CE_SUMMER_SUBJECTS} Summer subject (the prep first), "
+            f"with the other choice in *{rm.EARLY_ALT_COL}*. "
             "Subjects they're enrolled in now count as passed, and a free SB4 slot as used. "
             "Messaging stays general (the confirmed offerings); this is the *who to contact* list. "
             "Excluded students are on their own tab for the coach, not contacted about Summer."

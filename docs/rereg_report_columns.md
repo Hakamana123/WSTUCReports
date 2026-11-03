@@ -135,13 +135,20 @@ The Advice Reason starts with a line explaining which case applies.
   files by program carry a *PC decision* dropdown (Approve / Prep only /
   Subject only). A subject that only runs at another campus still needs a rule
   waiver: the Advice Reason names the campus.
+- **Conditional Enrolment = one Summer subject.** WSU caps Conditional
+  Enrolment at 10CP in Summer, with no rule waiver to go over. The prep counts
+  as the one subject, so the advice gives the prep first, or their best subject
+  if only that brings their finish forward. *Or instead (Conditional
+  Enrolment)* shows the other choice and when they'd finish with it, so the
+  student can swap. These students never need PC approval.
 - **Round 1b = one GEDU subject left.** A separate list in the SU1 view, on
   results alone: nothing they're enrolled in counts as passed, and a student
   enrolled in that subject now isn't listed. *CP completed* is worked out from a
   110CP diploma, so 95CP means only a prep is left.
 - **Summer registration check.** When the extract has the Summer registration
   columns, the page lists who is registered in Summer and their CP (prep 15cp,
-  block subject 10cp), flagging anyone over 20cp or over the 25cp limit. It
+  block subject 10cp), flagging anyone over 20cp or over the 25cp limit, and any
+  Conditional Enrolment student in more than one Summer subject. It
   shows who is over, not who was approved, so compare it with the PC decisions.
 - **Files with no pass information are refused.** If the Status columns have no
   "Completed", "Currently Registered" or 1, no advice is produced, because every
