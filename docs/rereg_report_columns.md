@@ -128,10 +128,22 @@ The Advice Reason starts with a line explaining which case applies.
   the order failed / owed subjects, then electives, then prep. If nothing fits
   it says "30cp cap reached". What doesn't fit is listed under "Still to pass
   (later session)".
+- **Summer advice goes out in rounds**, one per set of coaching templates.
+  *Round 1* (mid-SB3): enrolments assumed to pass, SU1 + prep advised, SU2
+  shown for later. *Round 2* (after SB4 results): actual results, SU1
+  reconfirmed and SU2 advised, core subjects only - a prep still owed is
+  listed under *Owes prep* and advised in Round 3 (after Spring results).
+  What a student has already registered in Summer never changes the advice;
+  it's shown beside it in the *Registered* columns with an *Action*
+  (Register / A-OK / Change). The *2b Come back in Autumn* tab lists students
+  who failed in SB3/SB4 and whom Summer doesn't bring forward; *Why Autumn*
+  says whether the Round 1 advice had them finishing with Summer. An active
+  student with no SB3/SB4 registration keeps the advice, flagged in
+  *Registration check*. The Round 2 workbook has a *Read me* tab.
 - **Summer = 20 credit points without approval.** That's two program subjects.
   A prep plus a subject or elective is 25CP, which needs the PC's approval (no
   rule waiver). Coaches advise the prep and hold the other item until the PC
-  replies. On the SU1 shortlist, *PC approval* says who and what, and the PC
+  replies. On the Round 1 shortlist, *PC approval* says who and what, and the PC
   files by program carry a *PC decision* dropdown (Approve / Prep only /
   Subject only). A subject that only runs at another campus still needs a rule
   waiver: the Advice Reason names the campus.
@@ -141,7 +153,7 @@ The Advice Reason starts with a line explaining which case applies.
   if only that brings their finish forward. *Or instead (Conditional
   Enrolment)* shows the other choice and when they'd finish with it, so the
   student can swap. These students never need PC approval.
-- **Round 1b = one GEDU subject left.** A separate list in the SU1 view, on
+- **Round 1b = one GEDU subject left.** A separate list in the Round 1 view, on
   results alone: nothing they're enrolled in counts as passed, and a student
   enrolled in that subject now isn't listed. *CP completed* is worked out from a
   110CP diploma, so 95CP means only a prep is left.
