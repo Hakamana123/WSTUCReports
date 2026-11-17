@@ -139,7 +139,12 @@ The Advice Reason starts with a line explaining which case applies.
   who failed in SB3/SB4 and whom Summer doesn't bring forward; *Why Autumn*
   says whether the Round 1 advice had them finishing with Summer. An active
   student with no SB3/SB4 registration keeps the advice, flagged in
-  *Registration check*. The Round 2 workbook has a *Read me* tab.
+  *Registration check*. *Round 3* (after Spring results): the prep round -
+  students who still owe GEDU0016 / GEDU0017 and whom Summer brings forward.
+  The prep takes priority: a prep plus one block subject is the 25cp limit
+  (PC approval), so a second registered block subject is to drop; a student
+  owing both preps is advised one and flagged in *Both preps owed* for the
+  rule-waiver call. Each round's workbook has a *Read me* tab.
 - **Summer = 20 credit points without approval.** That's two program subjects.
   A prep plus a subject or elective is 25CP, which needs the PC's approval (no
   rule waiver). Coaches advise the prep and hold the other item until the PC

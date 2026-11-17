@@ -1860,8 +1860,17 @@ COME_BACK_WHY_COL = "Why Autumn"
 COME_BACK_PROJECTED = ("Round 1 advice no longer holds - Summer would have brought their finish "
                        "forward had they passed SB3/SB4; they failed instead")
 COME_BACK_NEEDS_AUTUMN = "Needs Autumn to progress - Summer doesn't bring their finish forward"
+# Round 3: the prep advice, after Spring results. The prep takes priority
+# over a block subject (meeting 2026-11-16): a prep plus one block subject is
+# the 25cp limit, so a second registered block subject is dropped. A student
+# owing both preps gets one (the cap); the other is flagged for the academic
+# call on a rule waiver - the tool doesn't advise it.
+EARLY_BOTH_PREPS_COL = "Both preps owed"
+BOTH_PREPS_NOTE = ("Owes GEDU0016 and GEDU0017 - one advised (one prep fits the Summer limit); "
+                   "both this Summer would be 30cp, a rule waiver - academic call")
 # Workbook tab names, by round
 ROUND_2_TABS = {"2a": "2a Study in Summer", "2b": "2b Come back in Autumn"}
+ROUND_3_TABS = {"3a": "3a Prep in Summer"}
 README_TAB = "Read me"
 
 
@@ -1917,20 +1926,28 @@ def _summer_registered(row: pd.Series) -> tuple[list[str], dict[str, list[str]]]
 
 def _summer_action(plan: dict, program: str, session: str, outcome: str,
                    reg_prep: list[str], reg_blocks: dict[str, list[str]],
-                   preps_now: list[str] = ()) -> tuple[str, str]:
-    """Round 2: what the coach does about the student's Summer registrations
-    given the advice - ``(action, detail)``. *Register* when nothing is
-    registered; *A-OK* when every advised item is registered in its block and
-    nothing else is; otherwise *Change*, with the detail listing each block to
-    register or to query. An elective is satisfied by any registered subject
-    that isn't one of the program's own. A registered prep isn't advised in
-    this round: it's noted for Round 3 if owed or if they're in it this Spring
-    (``preps_now``), queried if neither. Over the Summer limits
-    (``SUMMER_CAP_CP``, ``CE_SUMMER_SUBJECTS``) is a Change; over
-    ``SUMMER_NO_APPROVAL_CP`` is a note (PC approval)."""
+                   preps_now: list[str] = (), summer_round: str = ROUND_2) -> tuple[str, str]:
+    """Rounds 2 and 3: what the coach does about the student's Summer
+    registrations given the advice - ``(action, detail)``. *Register* when
+    nothing is registered; *A-OK* when every advised item is registered in
+    its block and nothing else is; otherwise *Change*, with the detail listing
+    each block to register, drop or query. An elective is satisfied by any
+    registered subject that isn't one of the program's own.
+
+    Preps: in Round 2 none is advised - a registered one is noted for Round 3
+    if owed or if they're in it this Spring (``preps_now``), queried if
+    neither. In Round 3 the advised prep is to register (the other owed prep
+    registered instead counts); a registered block subject the plan has no
+    room for beside the prep is to drop - the prep takes priority. Over the
+    Summer limits (``SUMMER_CAP_CP``, ``CE_SUMMER_SUBJECTS``) is a Change;
+    over ``SUMMER_NO_APPROVAL_CP`` is a note (PC approval)."""
     ref = calc._ref().get(program, {})
     own = set(calc.subjects_for(program, session).values()) | {ref.get("prep1"), ref.get("prep2")}
     reg = {b: list(codes) for b, codes in reg_blocks.items()}
+    n_block = sum(len(codes) for codes in reg_blocks.values())
+    # with the advised prep, what's registered in the blocks can't all stay
+    over_with_prep = (summer_round == ROUND_3 and plan["prep"]
+                      and _CP_PREP * len(plan["prep"]) + _CP_MODULAR * n_block > SUMMER_CAP_CP)
     todo, notes = [], []
     # advised with no block named: any Summer block will do
     for item in plan[""]:
@@ -1948,23 +1965,41 @@ def _summer_action(plan: dict, program: str, session: str, outcome: str,
             else:
                 todo.append(f"{blk}: register {item}")
         for extra in reg[blk]:
-            todo.append(f"{blk}: registered {extra} - not advised, check")
-    for code in reg_prep:
+            todo.append(f"{blk}: drop {extra} - the prep takes priority, over the "
+                        f"{SUMMER_CAP_CP}cp limit with it" if over_with_prep
+                        else f"{blk}: registered {extra} - not advised, check")
+    reg_p = list(reg_prep)
+    for code in plan["prep"]:
+        if code in reg_p:
+            reg_p.remove(code)
+            continue
+        other = next((c for c in reg_p if c in plan["prep_owed"]), None)
+        if other:
+            reg_p.remove(other)
+            notes.append(f"prep {other} registered instead of {code} - both owed, either first")
+        else:
+            todo.append(f"register prep {code}")
+    for code in reg_p:
         if code in plan["prep_owed"]:
-            notes.append(f"prep {code} registered - confirm in Round 3 (Spring results)")
+            if summer_round == ROUND_3:
+                todo.append(f"second prep {code} registered - one prep fits the Summer limit; "
+                            "rule waiver otherwise")
+            else:
+                notes.append(f"prep {code} registered - confirm in Round 3 (Spring results)")
         elif code in preps_now:
             notes.append(f"prep {code} registered for Summer but they're in it this Spring - "
                          "only needed if they fail; confirm in Round 3")
         else:
             todo.append(f"prep {code} registered but not owed - check")
-    n_block = sum(len(codes) for codes in reg_blocks.values())
     cp = _CP_PREP * len(reg_prep) + _CP_MODULAR * n_block
     if outcome in v2.STANDING_MAX_BLOCKS and len(reg_prep) + n_block > CE_SUMMER_SUBJECTS:
         todo.append(f"Conditional Enrolment: {CE_SUMMER_SUBJECTS} Summer subject only ({cp}cp registered)")
-    elif cp > SUMMER_CAP_CP:
+    elif cp > SUMMER_CAP_CP and not over_with_prep:
         todo.append(f"over the {SUMMER_CAP_CP}cp limit ({cp}cp registered)")
     elif cp > SUMMER_NO_APPROVAL_CP:
         notes.append(f"{cp}cp registered - needs PC approval")
+    elif summer_round == ROUND_3 and plan["cp"] > SUMMER_NO_APPROVAL_CP:
+        notes.append(f"{plan['cp']}cp with the prep - needs PC approval")
     detail = "; ".join(todo + notes)
     if not reg_prep and not n_block:
         return ACTION_REGISTER, detail
@@ -2006,7 +2041,7 @@ def summer_early_advice(
     offerings = v2.load_offerings()
     df = _squeeze_headers(df)
     slot_map = v2.derive_slot_map(df)
-    with_regs = summer_round == ROUND_2 and has_summer_registrations(df)
+    with_regs = summer_round in (ROUND_2, ROUND_3) and has_summer_registrations(df)
 
     def label(code: str) -> str:
         return f"{code} — {names[code]}" if code in names else code
@@ -2022,6 +2057,8 @@ def summer_early_advice(
                                      summer_round).get("_summer")
         if not plan or not plan["helps"]:
             continue
+        if summer_round == ROUND_3 and not plan["prep"]:
+            continue  # Round 3 is the prep round: no prep advised, nothing to send
         program = str(r["PROGRAM_CD"]).split(".")[0]
         campus = "" if pd.isna(r.get("CAMP_CODE")) else str(r.get("CAMP_CODE")).strip()
         _, template = calc.classify(r, program in calc.NURSING_PROGRAMS)
@@ -2030,7 +2067,7 @@ def summer_early_advice(
         held = [] if excluded else _pc_hold(plan)
         reg_prep, reg_blocks = _summer_registered(r) if with_regs else ([], {})
         action = (_summer_action(plan, program, session, outcome, reg_prep, reg_blocks,
-                                 _preps_in_progress(r, program))
+                                 _preps_in_progress(r, program), summer_round)
                   if with_regs and not excluded else ("", ""))
         rows.append({
             "STUDENT_ID": r["STUDENT_ID"],
@@ -2052,6 +2089,7 @@ def summer_early_advice(
             EARLY_CATCHUP_NOBLOCK_COL: ", ".join(label(c) for c in plan[""]),
             EARLY_PREP_COL: ", ".join(label(c) for c in plan["prep"]),
             EARLY_PREP_LATER_COL: ", ".join(label(c) for c in plan["prep_owed"]),
+            EARLY_BOTH_PREPS_COL: BOTH_PREPS_NOTE if len(plan["prep_owed"]) == 2 else "",
             R2_REG_COLS["prep"]: ", ".join(reg_prep),
             **{R2_REG_COLS[b]: ", ".join(reg_blocks.get(b, [])) for b in EARLY_CATCHUP_COLS},
             ACTION_COL: action[0], ACTION_DETAIL_COL: action[1],
@@ -2072,22 +2110,29 @@ def summer_early_advice(
             "INSTITUTION_EMAIL_ADDRESS", COACH_COL, "PROGRAM_CD", "CAMP_CODE",
             "COMMENCEMENT_PERIOD", EARLY_OUTCOME_COL, EARLY_GROUP_COL, EARLY_PAUSED_COL,
             EARLY_REG_CHECK_COL, *EARLY_CATCHUP_COLS.values(), EARLY_CATCHUP_NOBLOCK_COL, EARLY_PREP_COL,
-            EARLY_PREP_LATER_COL, *reg_cols,
+            EARLY_PREP_LATER_COL, EARLY_BOTH_PREPS_COL, *reg_cols,
             EARLY_CP_COL, EARLY_APPROVAL_COL, EARLY_ALT_COL, EARLY_OTHER_CAMPUS_COL,
             EARLY_WITHOUT_COL, EARLY_WITH_COL, EARLY_OUTSTANDING_COL]
     out = pd.DataFrame(rows, columns=cols)
     if summer_round == ROUND_2:
         # core subjects only, at most 20cp: nothing to approve
-        out = out.drop(columns=[EARLY_PREP_COL, EARLY_APPROVAL_COL]
+        out = out.drop(columns=[EARLY_PREP_COL, EARLY_APPROVAL_COL, EARLY_BOTH_PREPS_COL]
                        + ([] if with_regs else reg_cols))
         out = out.rename(columns={EARLY_CATCHUP_COLS["SU1"]: EARLY_SU1_RECONFIRM_COL})
+    elif summer_round == ROUND_3:
+        # the prep is the advice; the block columns are what fits beside it
+        out = out.drop(columns=[EARLY_PREP_LATER_COL] + ([] if with_regs else reg_cols))
+        order = [c for c in out.columns if c not in (EARLY_PREP_COL, *EARLY_CATCHUP_COLS.values())]
+        at = order.index(EARLY_REG_CHECK_COL) + 1
+        out = out[order[:at] + [EARLY_PREP_COL, *EARLY_CATCHUP_COLS.values()] + order[at:]]
     else:
-        out = out.drop(columns=[EARLY_PREP_LATER_COL, *reg_cols])
+        out = out.drop(columns=[EARLY_PREP_LATER_COL, EARLY_BOTH_PREPS_COL, *reg_cols])
         out = out.rename(columns={EARLY_CATCHUP_COLS["SU2"]: EARLY_SU2_LATER_COL})
     if as_at:
         out.insert(0, EARLY_AS_AT_COL, as_at)
-    for optional in (EARLY_CATCHUP_NOBLOCK_COL, EARLY_ALT_COL, EARLY_OTHER_CAMPUS_COL):
-        if not out[optional].astype(bool).any():
+    for optional in (EARLY_CATCHUP_NOBLOCK_COL, EARLY_ALT_COL, EARLY_OTHER_CAMPUS_COL,
+                     EARLY_BOTH_PREPS_COL):
+        if optional in out and not out[optional].astype(bool).any():
             out = out.drop(columns=optional)
     if len(out):
         order = {g: i for i, g in enumerate(EARLY_GROUPS)}
@@ -2577,6 +2622,58 @@ def round2_tabs(shortlist: pd.DataFrame, come_back: pd.DataFrame) -> dict[str, p
     is_excl = shortlist[EARLY_GROUP_COL] == EARLY_GROUP_EXCLUDED
     return {ROUND_2_TABS["2a"]: shortlist[~is_excl], ROUND_2_TABS["2b"]: come_back,
             "Excluded": shortlist[is_excl]}
+
+
+ROUND_3_README = [
+    ("Round 3", "After Spring semester (prep) results. The prep round: students who still owe "
+                "GEDU0016 / GEDU0017 on results and whom Summer brings forward. Advice is worked "
+                "out from results alone; what they've registered in Summer is shown beside it."),
+    ("Who is on 3a", "A prep is advised. Students Summer helps with no prep owed were advised in "
+                     "Round 2 and aren't listed again. Students owing a prep whom Summer doesn't "
+                     "bring forward aren't listed: nothing to send."),
+    ("Prep first", f"The prep takes priority (meeting 2026-11-16). A prep plus one block subject "
+                   f"is the {SUMMER_CAP_CP}cp limit, so a second registered block subject is to "
+                   f"drop. A prep plus a block subject ({SUMMER_CAP_CP}cp) needs the PC's approval; "
+                   "the prep on its own doesn't."),
+    ("Both preps", "A student owing both preps is advised one; " + BOTH_PREPS_NOTE + "."),
+    ("Conditional Enrolment", f"{CE_SUMMER_SUBJECTS} Summer subject in all: the prep, unless only "
+                              "a block subject brings their finish forward (see Or instead)."),
+    ("Paused", "Deferred / Leave of Absence students stay listed with an Enrolment check flag: "
+               "confirm they're returning before advising."),
+    ("", ""),
+    (EARLY_AS_AT_COL, "Date of the extract the advice is built on."),
+    (EARLY_OUTCOME_COL, "Progression Outcome from the extract; blanks labelled."),
+    (EARLY_GROUP_COL, f"{EARLY_GROUP_FINISH} / {EARLY_GROUP_EARLIER}."),
+    (EARLY_PAUSED_COL, "Set for a Deferred / Leave of Absence student."),
+    (EARLY_REG_CHECK_COL, "No SB3/SB4 registration in the file. The advice stands if they're "
+                          "still studying - check first."),
+    (EARLY_PREP_COL, "The prep to register in the Summer session (template 3a's SUM Subject)."),
+    (EARLY_CATCHUP_COLS["SU1"], "The Summer Block 1 subject that fits beside the prep, if any."),
+    (EARLY_CATCHUP_COLS["SU2"], "The Summer Block 2 subject that fits beside the prep, if any."),
+    (EARLY_CATCHUP_NOBLOCK_COL, "A subject the offering list names no block for."),
+    (EARLY_BOTH_PREPS_COL, "Set when both preps are owed - the academic call on a rule waiver."),
+    (R2_REG_COLS["prep"], "Prep registered in the Summer session, from the extract."),
+    (R2_REG_COLS["SU1"], "Registered in Summer Block 1, from the extract."),
+    (R2_REG_COLS["SU2"], "Registered in Summer Block 2, from the extract."),
+    (ACTION_COL, f"{ACTION_REGISTER}: nothing registered yet. {ACTION_OK}: registered as advised. "
+                 f"{ACTION_CHANGE}: differs - see detail (register the prep, drop a block subject "
+                 "the prep displaces, or a query)."),
+    (ACTION_DETAIL_COL, "Each item to register, drop or query, and the PC-approval note."),
+    (EARLY_CP_COL, "Credit points the advice adds up to (prep 15cp, block subject 10cp)."),
+    (EARLY_APPROVAL_COL, f"Set when the plan is over {SUMMER_NO_APPROVAL_CP}cp: advise the prep, "
+                         "hold the rest for the PC. The PC files by program carry the decision."),
+    (EARLY_ALT_COL, "Conditional Enrolment: the other choice for their one Summer subject."),
+    (EARLY_OTHER_CAMPUS_COL, "A needed subject that only runs at another campus - rule waiver."),
+    (EARLY_WITHOUT_COL, "Estimated finish without Summer."),
+    (EARLY_WITH_COL, "Estimated finish with the Summer advice."),
+    (EARLY_OUTSTANDING_COL, "Everything still to pass, on results."),
+]
+
+
+def round3_tabs(shortlist: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """The Round 3 workbook's tabs: 3a (not Excluded), Excluded."""
+    is_excl = shortlist[EARLY_GROUP_COL] == EARLY_GROUP_EXCLUDED
+    return {ROUND_3_TABS["3a"]: shortlist[~is_excl], "Excluded": shortlist[is_excl]}
 
 
 def build_advice(

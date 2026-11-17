@@ -105,7 +105,7 @@ if is_summer:
     # page is organised the same way so each round's download is its own thing.
     pick = st.radio(
         "Summer round",
-        [rm.ROUND_LABELS[rm.ROUND_1], rm.ROUND_LABELS[rm.ROUND_2], _ENGINE_VIEW],
+        [*rm.ROUND_LABELS.values(), _ENGINE_VIEW],
         help="**Round 1** goes out by mid-SB3 on the latest extract: current enrolments count as "
              "passed and a free SB4 slot as used; students are listed if Summer as a whole "
              "helps, SU1 + prep are advised and SU2 picks are shown but not to register yet. "
@@ -113,16 +113,20 @@ if is_summer:
              "SU2 advised, core subjects only (prep advice follows Spring results in Round 3), "
              "with what each student has registered beside the advice; plus the 2b list of "
              "students who failed and need Autumn. "
+             "**Round 3** runs on the post-Spring-results extract: the prep advice for students "
+             "who still owe GEDU0016 / GEDU0017, laid over what they've registered - the prep "
+             "takes priority. "
              "**Engine view** is the normal per-student Summer advice workbook.",
     )
     if pick == _ENGINE_VIEW:
         engine_view = True
-        results_in = st.checkbox(
-            "SB4 results are in", value=False,
-            help="Ticked: actual results, no free-SB4-slot assumption, core subjects only "
-                 "(Round 2 rules). Unticked: enrolments assumed to pass (Round 1 rules).",
+        stage = st.radio(
+            "Results as at", ["mid-SB3 (enrolments assumed to pass)", "after SB4 results (core only)",
+                              "after Spring results (preps too)"],
+            horizontal=True,
         )
-        summer_round = rm.ROUND_2 if results_in else rm.ROUND_1
+        summer_round = {0: rm.ROUND_1, 1: rm.ROUND_2, 2: rm.ROUND_3}[
+            ["mid-SB3", "after SB4", "after Spring"].index(stage.split(" (")[0])]
     else:
         summer_round = next(k for k, v in rm.ROUND_LABELS.items() if v == pick)
     summer_files = st.file_uploader(
@@ -305,6 +309,72 @@ if is_summer and not engine_view and summer_round == rm.ROUND_2:
     d2.download_button(
         "Download Round 2 split by coach (.zip)", rm.summer_tabs_by_coach_zip(tabs, readme),
         f"{stem}_by_coach.zip", "application/zip",
+    )
+    st.stop()
+
+if is_summer and not engine_view and summer_round == rm.ROUND_3:
+    is_excl = shortlist[rm.EARLY_GROUP_COL] == rm.EARLY_GROUP_EXCLUDED
+    live = shortlist[~is_excl]
+    needs_pc = rm.summer_pc_approval(shortlist)
+    n_both = int(live[rm.EARLY_BOTH_PREPS_COL].astype(bool).sum()) if rm.EARLY_BOTH_PREPS_COL in live else 0
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("3a — prep advised", f"{len(live):,}",
+              help="Owe GEDU0016 / GEDU0017 on results and Summer brings their finish forward")
+    m2.metric("Need PC approval", f"{len(needs_pc):,}",
+              help=f"Prep plus a block subject - over {rm.SUMMER_NO_APPROVAL_CP}cp")
+    m3.metric("Both preps owed", f"{n_both:,}", help="One advised; the other is the academic call")
+    m4.metric("Excluded", f"{int(is_excl.sum()):,}",
+              help="Progression Outcome is Exclusion — not eligible to re-register; own tab, not advised")
+    st.caption(
+        "**Round 3 — after Spring results.** The prep round: students who still owe a prep on "
+        f"results and whom Summer brings forward. *{rm.EARLY_PREP_COL}* is the subject for template "
+        "3a; the SU1 / SU2 columns are what fits beside it. **The prep takes priority**: a prep plus "
+        f"one block subject is the {rm.SUMMER_CAP_CP}cp limit, so a second registered block subject "
+        f"is to drop (see *{rm.ACTION_DETAIL_COL}*); a prep plus a block subject needs the PC's "
+        f"approval (*{rm.EARLY_APPROVAL_COL}*). A student owing both preps is advised one - "
+        f"*{rm.EARLY_BOTH_PREPS_COL}* flags them for the rule-waiver call. Students Summer helps "
+        "with no prep owed were advised in Round 2 and aren't listed again."
+    )
+    if rm.ACTION_COL in shortlist:
+        counts = live[rm.ACTION_COL].value_counts()
+        st.caption(
+            "**Against Summer registrations** — "
+            + ", ".join(f"**{int(counts.get(a, 0)):,}** {a}"
+                        for a in (rm.ACTION_REGISTER, rm.ACTION_OK, rm.ACTION_CHANGE))
+            + "."
+        )
+    else:
+        st.caption("This extract has no Summer registration columns, so the *Registered* and "
+                   f"*{rm.ACTION_COL}* columns aren't shown.")
+    _flag_captions(shortlist, as_at)
+
+    view = shortlist
+    groups = st.multiselect("Filter by group", list(rm.EARLY_GROUPS), default=[], key="r3_groups")
+    if groups:
+        view = view[view[rm.EARLY_GROUP_COL].isin(groups)]
+    view = _coach_filter(view, "r3_coach") if len(view) else view
+    st.dataframe(view, use_container_width=True, hide_index=True)
+    st.caption(f"Showing {len(view):,} of {len(shortlist):,}.")
+
+    st.subheader("Demand by subject and campus")
+    st.dataframe(rm.summer_demand(shortlist), use_container_width=True, hide_index=True)
+
+    tabs = rm.round3_tabs(shortlist)
+    readme = rm.readme_frame(rm.ROUND_3_README)
+    d1, d2 = st.columns(2)
+    d1.download_button(
+        "Download Round 3 workbook (3a, Excluded, Demand, Read me) (.xlsx)",
+        rm.summer_tabs_workbook(tabs, readme, demand_from=shortlist),
+        f"{stem}.xlsx", xlsx, type="primary",
+    )
+    d2.download_button(
+        "Download Round 3 split by coach (.zip)", rm.summer_tabs_by_coach_zip(tabs, readme),
+        f"{stem}_by_coach.zip", "application/zip",
+    )
+    st.download_button(
+        f"Download PC approval files by program ({len(needs_pc):,}) (.zip)",
+        rm.summer_pc_by_program_zip(shortlist),
+        f"{stem}_pc_approval.zip", "application/zip", disabled=not len(needs_pc),
     )
     st.stop()
 
