@@ -144,7 +144,8 @@ The Advice Reason starts with a line explaining which case applies.
   The prep takes priority: a prep plus one block subject is the 25cp limit
   (PC approval), so a second registered block subject is to drop; a student
   owing both preps is advised one and flagged in *Both preps owed* for the
-  rule-waiver call. Each round's workbook has a *Read me* tab.
+  rule-waiver call. Each round's workbook has a *Read me* tab. An advice
+  cell with nothing to register says *No subject advised*.
 - **Summer = 20 credit points without approval.** That's two program subjects.
   A prep plus a subject or elective is 25CP, which needs the PC's approval (no
   rule waiver). Coaches advise the prep and hold the other item until the PC

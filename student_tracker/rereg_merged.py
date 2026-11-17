@@ -1843,6 +1843,9 @@ _ELECTIVE = "+1 elective"
 # Round 2: SU1 is reconfirmed and SU2 advised; the prep waits for Round 3
 # (Spring results), so what's owed is shown but not advised.
 EARLY_SU1_RECONFIRM_COL = "SU1 (reconfirm)"
+# An advice cell with nothing to register says so, rather than sitting blank
+# beside the others (Josiah, 2026-11-17).
+NO_ADVICE_TEXT = "No subject advised"
 EARLY_PREP_LATER_COL = "Owes prep (advised after Spring results)"
 # What the student has already registered in Summer, from the extract's Summer
 # registration columns, and what the coach does about it (Action / Action
@@ -2134,6 +2137,10 @@ def summer_early_advice(
                      EARLY_BOTH_PREPS_COL):
         if optional in out and not out[optional].astype(bool).any():
             out = out.drop(columns=optional)
+    for col in (EARLY_SU1_RECONFIRM_COL, *EARLY_CATCHUP_COLS.values(), EARLY_SU2_LATER_COL,
+                EARLY_CATCHUP_NOBLOCK_COL, EARLY_PREP_COL):
+        if col in out:
+            out[col] = out[col].replace("", NO_ADVICE_TEXT)
     if len(out):
         order = {g: i for i, g in enumerate(EARLY_GROUPS)}
         out = (out.assign(_g=out[EARLY_GROUP_COL].map(order))
@@ -2196,7 +2203,7 @@ def summer_early_prep_split(shortlist: pd.DataFrame) -> tuple[pd.DataFrame, pd.D
     live = shortlist[shortlist[EARLY_GROUP_COL] != EARLY_GROUP_EXCLUDED]
     if EARLY_PREP_COL not in live:
         return live.iloc[0:0], live
-    has_prep = live[EARLY_PREP_COL].fillna("").astype(str).str.strip().astype(bool)
+    has_prep = live[EARLY_PREP_COL].fillna("").astype(str).str.contains(_SUBJECT_CODE_RE)
     return live[has_prep], live[~has_prep]
 
 
