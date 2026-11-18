@@ -163,6 +163,14 @@ except ValueError as exc:
     st.error(f"Couldn't read this file: {exc}")
     st.stop()
 
+renamed = df.attrs.get("renamed_columns", {})
+if renamed:
+    st.caption("Renamed columns read as the tool expects them: "
+               + ", ".join(f"*{a}* → *{c}*" for a, c in renamed.items()) + ".")
+if "Electives Needed" not in df.columns:
+    st.warning("This file has no *Electives Needed* (or *Electives Required*) column, so every "
+               "student reads as owing **no electives**. Check the extract before sending advice.")
+
 # --- Summer registration check -------------------------------------------------
 # What students are actually registered in, where the extract carries it. Needs
 # only the Summer columns, so it runs before the check on the Status columns.

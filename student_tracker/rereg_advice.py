@@ -96,9 +96,39 @@ def load_offerings(path: Path | None = None) -> dict:
     }
 
 
+# Header names the extract has used for the same column. The first is the name
+# the tool reads; a later one is renamed to it on load when the first is
+# missing. The 17 Nov 2026 SB4 extract renamed these - without the mapping,
+# every student read as owing no electives (Josiah, 2026-11-18).
+COLUMN_ALIASES = {
+    "Electives Needed": ("Electives Required",),
+    "Summer Code": ("Summer code",),
+    "Summer Registration": ("Summer  Registration",),
+    "Prep Subject result": ("Prep Result",),
+    "Prep Subject code": ("Prep code",),
+}
+
+
+def normalise_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """``df`` with an aliased header (``COLUMN_ALIASES``) renamed to the name
+    the tool reads, where that name isn't already there. The renames made are
+    recorded in ``df.attrs["renamed_columns"]``."""
+    renames = {}
+    for canonical, aliases in COLUMN_ALIASES.items():
+        if canonical in df.columns:
+            continue
+        found = next((a for a in aliases if a in df.columns), None)
+        if found:
+            renames[found] = canonical
+    out = df.rename(columns=renames)
+    out.attrs["renamed_columns"] = renames
+    return out
+
+
 def load_progression_file(source) -> pd.DataFrame:
     """Read the progression workbook (sheet 'Query1', header on row 1). A
-    workbook with only one sheet is read whatever that sheet is called."""
+    workbook with only one sheet is read whatever that sheet is called.
+    Renamed headers are mapped back (:func:`normalise_columns`)."""
     try:
         df = pd.read_excel(source, sheet_name=SHEET_NAME)
     except ValueError as exc:  # sheet not found
@@ -111,6 +141,7 @@ def load_progression_file(source) -> pd.DataFrame:
             ) from exc
         df = next(iter(sheets.values()))
 
+    df = normalise_columns(df)
     missing = [c for c in ["COMMENCEMENT_PERIOD", "PROGRAM_CD", *ALL_SLOTS] if c not in df.columns]
     if missing:
         raise ValueError("This file is missing expected columns: " + ", ".join(missing))

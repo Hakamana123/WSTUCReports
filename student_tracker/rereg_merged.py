@@ -1348,6 +1348,7 @@ def load_progression_file(source) -> pd.DataFrame:
     df = v2.load_progression_file(source)
     deduped = df.drop_duplicates().reset_index(drop=True)
     deduped.attrs["duplicates_dropped"] = len(df) - len(deduped)
+    deduped.attrs["renamed_columns"] = df.attrs.get("renamed_columns", {})
     return deduped
 COACH_VIEW_SHEET = v2.COACH_VIEW_SHEET
 SHEET_NAME = v2.SHEET_NAME
@@ -1888,9 +1889,14 @@ def _registered_codes(row: pd.Series, block: int) -> list[str]:
 
 
 def _registered_in(row: pd.Series, code_col: str, status_col: str) -> list[str]:
-    """The codes in ``code_col`` that ``status_col`` shows as registered."""
+    """The codes in ``code_col`` that ``status_col`` shows as registered. An
+    extract with no ``status_col`` at all (the 17 Nov SB4 file has Block 3-4
+    codes and results but no Registration columns) takes every code as
+    registered."""
     raw_codes = row.get(code_col)
     codes = _SUBJECT_CODE_RE.findall("" if raw_codes is None or pd.isna(raw_codes) else str(raw_codes))
+    if status_col not in row.index:
+        return list(dict.fromkeys(codes))
     raw = row.get(status_col)
     statuses = [] if raw is None or pd.isna(raw) else [t.strip() for t in str(raw).split(",")]
     if len(statuses) != len(codes):
