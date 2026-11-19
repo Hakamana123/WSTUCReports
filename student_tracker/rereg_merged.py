@@ -813,23 +813,25 @@ def _assume_enrolled_pass(row: pd.Series, program: str, session: str, slot_map: 
     passed: a "Currently Registered" status, a program subject or prep
     registered in Blocks 3-4, and electives registered there (taken off
     ``Electives Needed``). Summer is judged on that basis (Josiah, 2026-09-30).
-    ``blocks`` off (the SU2 round, after SB4 results) takes Blocks 3-4 as the
-    file has them - only a status still "Currently Registered" counts."""
+    ``blocks`` off (Rounds 2-3, after SB4 results) takes Blocks 3-4 as the
+    file has them: a result stands (a fail isn't assumed passed), and only a
+    subject with no result yet - still registered, grade not released -
+    counts as in progress (Matt McDonald's 22243025, 20 Nov 2026: an SB4
+    elective with no grade left her owing an elective she's sitting)."""
     out = row.copy()
     for col in [*(f"Subject {p} Status" for p in range(1, 9)), "Prep 1 Status", "Prep 2 Status"]:
         v = out.get(col)
         if isinstance(v, str) and "Currently Registered" in v:
             out[col] = v.replace("Currently Registered", "Completed")
-    if not blocks:
-        return out
+    pending_only = not blocks
     ref = calc._ref().get(program, {})
     prep_slot = {ref.get("prep1"): "Prep 1 Status", ref.get("prep2"): "Prep 2 Status"}
-    for code in {c for b in (3, 4) for c in _registered_codes(row, b)}:
+    for code in _block_codes_in_progress(row, pending_only):
         slot = prep_slot.get(code) or _file_slot(program, code, slot_map)
         if slot:
             out[slot] = f"{code} Completed"
     if program not in v2.NO_ELECTIVE_PROGRAMS:
-        taking = _electives_in_progress(row, program, session)
+        taking = _electives_in_progress(row, program, session, pending_only)
         if taking:
             out["Electives Needed"] = max(0, calc._elective_count(row) - taking)
     return out
@@ -1904,15 +1906,31 @@ def _registered_in(row: pd.Series, code_col: str, status_col: str) -> list[str]:
     return list(dict.fromkeys(c for c, t in zip(codes, statuses) if t.startswith("Registered")))
 
 
-def _electives_in_progress(row: pd.Series, program: str, session: str) -> int:
+def _block_result_pending(row: pd.Series, block: int) -> bool:
+    """True when ``Block N Result`` has no grade in it yet (blank, or only
+    separators) - the subject is still running or its grade isn't released."""
+    v = row.get(f"Block {block} Result")
+    return v is None or pd.isna(v) or not str(v).replace(",", "").strip()
+
+
+def _block_codes_in_progress(row: pd.Series, pending_only: bool = False) -> set[str]:
+    """Codes registered in Blocks 3-4; with ``pending_only``, only a block
+    whose result isn't in yet."""
+    return {c for b in (3, 4) if not pending_only or _block_result_pending(row, b)
+            for c in _registered_codes(row, b)}
+
+
+def _electives_in_progress(row: pd.Series, program: str, session: str,
+                           pending_only: bool = False) -> int:
     """How many electives the student is enrolled in now (Blocks 3-4, no
     result yet): a registered subject that isn't one of the program's own
     subjects or preps is taken to be an elective, as the Registration Check
     does. ``Electives Needed`` doesn't count these, so early advice (which
-    assumes current enrolments pass) takes them off."""
+    assumes current enrolments pass) takes them off. ``pending_only`` (after
+    SB4 results) counts only a block whose result isn't in yet."""
     ref = calc._ref().get(program, {})
     own = set(calc.subjects_for(program, session).values()) | {ref.get("prep1"), ref.get("prep2")}
-    return len({c for b in (3, 4) for c in _registered_codes(row, b) if c not in own})
+    return len({c for c in _block_codes_in_progress(row, pending_only) if c not in own})
 
 
 def _owed_with_sb4(owed: list[str], sb4: str) -> list[str]:
