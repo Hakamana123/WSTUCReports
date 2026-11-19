@@ -2739,6 +2739,93 @@ def round3_tabs(shortlist: pd.DataFrame) -> dict[str, pd.DataFrame]:
     return {ROUND_3_TABS["3a"]: shortlist[~is_excl], "Excluded": shortlist[is_excl]}
 
 
+# ---------------------------------------------------------------------------
+# Coach files: the by-coach split keeps only what the coach sends from. The
+# full workbook (every column, Demand tab) stays the master copy.
+# ---------------------------------------------------------------------------
+COACH_ID_COLS = ["STUDENT_ID", "FIRST_NAME", "LAST_NAME", "PREFERRED_NAME",
+                 "INSTITUTION_EMAIL_ADDRESS", COACH_COL, "PROGRAM_CD", "CAMP_CODE"]
+COACH_PREP_COL = "Prep Subject"
+COACH_SU1_COL = "SU1 Subject"
+COACH_SU2_COL = "SU2 Subject"
+COACH_ANY_BLOCK_COL = "Summer Subject (any block)"
+# {round: {tab: [(source column, coach-file name), ...]}} - beside the ID columns.
+# Round 3 keeps PC approval: without it the coach would register a held subject.
+COACH_ADVICE_COLS = {
+    ROUND_2: {
+        ROUND_2_TABS["2a"]: [(EARLY_SU1_RECONFIRM_COL, COACH_SU1_COL),
+                             (EARLY_CATCHUP_COLS["SU2"], COACH_SU2_COL),
+                             (EARLY_CATCHUP_NOBLOCK_COL, COACH_ANY_BLOCK_COL)],
+        ROUND_2_TABS["2b"]: [],
+        "Excluded": [(EARLY_OUTCOME_COL, EARLY_OUTCOME_COL)],
+    },
+    ROUND_3: {
+        ROUND_3_TABS["3a"]: [(EARLY_PREP_COL, COACH_PREP_COL),
+                             (EARLY_CATCHUP_COLS["SU1"], COACH_SU1_COL),
+                             (EARLY_CATCHUP_COLS["SU2"], COACH_SU2_COL),
+                             (EARLY_CATCHUP_NOBLOCK_COL, COACH_ANY_BLOCK_COL),
+                             (EARLY_APPROVAL_COL, EARLY_APPROVAL_COL)],
+        "Excluded": [(EARLY_OUTCOME_COL, EARLY_OUTCOME_COL)],
+    },
+}
+
+
+def coach_tabs(tabs: dict[str, pd.DataFrame], summer_round: str) -> dict[str, pd.DataFrame]:
+    """``tabs`` cut down for the coach files (``COACH_ADVICE_COLS``): the ID
+    columns plus the advice, renamed. A column missing from the frame - or an
+    any-block / PC approval column with nothing in it - is left out."""
+    keep = COACH_ADVICE_COLS[summer_round]
+    out = {}
+    for name, frame in tabs.items():
+        cols = {c: c for c in COACH_ID_COLS if c in frame}
+        for src, dst in keep.get(name, []):
+            if src not in frame:
+                continue
+            if dst in (COACH_ANY_BLOCK_COL, EARLY_APPROVAL_COL) \
+                    and not frame[src].fillna("").astype(str).str.strip().replace(NO_ADVICE_TEXT, "").any():
+                continue
+            cols[src] = dst
+        out[name] = frame[list(cols)].rename(columns=cols)
+    return out
+
+
+COACH_ROUND_2_README = [
+    ("Round 2", "After Spring Block 4 results. The advice is worked out from results."),
+    (ROUND_2_TABS["2a"], "Summer brings their finish forward: they finish in Summer, or a semester "
+                         "earlier. Prep advice follows in Round 3, after Spring results."),
+    (ROUND_2_TABS["2b"], "They failed a subject in SB3 or SB4 and Summer doesn't bring their finish "
+                         "forward: come back in Autumn."),
+    ("Excluded", "Listed for reference only - not contacted. Progression Outcome says why."),
+    ("", ""),
+    (COACH_SU1_COL, "The Summer Block 1 subject to be in (advised in Round 1, reconfirmed here). "
+                    "'+1 elective' = any elective in that block."),
+    (COACH_SU2_COL, "The Summer Block 2 subject to register."),
+    (COACH_ANY_BLOCK_COL, "Only shown if used: a subject to take in either Summer block."),
+    (NO_ADVICE_TEXT, "Nothing to register in that block."),
+    ("Conditional Enrolment", f"{CE_SUMMER_SUBJECTS} Summer subject only - the advice already "
+                              "allows for it."),
+]
+
+COACH_ROUND_3_README = [
+    ("Round 3", "After Spring semester (prep) results. Students who still owe a prep and whom "
+                "Summer brings forward. The advice is worked out from results."),
+    (ROUND_3_TABS["3a"], "A prep is advised. The prep takes priority; at most one block subject "
+                         f"fits beside it ({SUMMER_CAP_CP}cp)."),
+    ("Excluded", "Listed for reference only - not contacted. Progression Outcome says why."),
+    ("", ""),
+    (COACH_PREP_COL, "The prep to register in the Summer session."),
+    (COACH_SU1_COL, "The Summer Block 1 subject that fits beside the prep, if any. "
+                    "'+1 elective' = any elective in that block."),
+    (COACH_SU2_COL, "The Summer Block 2 subject that fits beside the prep, if any."),
+    (COACH_ANY_BLOCK_COL, "Only shown if used: a subject to take in either Summer block."),
+    (EARLY_APPROVAL_COL, f"Set when the prep plus a block subject is over {SUMMER_NO_APPROVAL_CP}cp: "
+                         "register the prep now, and the block subject only once the PC approves."),
+    (NO_ADVICE_TEXT, "Nothing to register in that block."),
+    ("Conditional Enrolment", f"{CE_SUMMER_SUBJECTS} Summer subject only - the advice already "
+                              "allows for it."),
+]
+
+
 def build_advice(
     df: pd.DataFrame,
     session: str = DEFAULT_PLANNING_SESSION,

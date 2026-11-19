@@ -321,8 +321,12 @@ if is_summer and not engine_view and summer_round == rm.ROUND_2:
         f"{stem}.xlsx", xlsx, type="primary",
     )
     d2.download_button(
-        "Download Round 2 split by coach (.zip)", rm.summer_tabs_by_coach_zip(tabs, readme),
+        "Download Round 2 split by coach (.zip)",
+        rm.summer_tabs_by_coach_zip(rm.coach_tabs(tabs, rm.ROUND_2),
+                                    rm.readme_frame(rm.COACH_ROUND_2_README)),
         f"{stem}_by_coach.zip", "application/zip",
+        help="Coach files carry only the student details and the Summer subjects; "
+             "the workbook keeps every column.",
     )
     st.stop()
 
@@ -382,8 +386,12 @@ if is_summer and not engine_view and summer_round == rm.ROUND_3:
         f"{stem}.xlsx", xlsx, type="primary",
     )
     d2.download_button(
-        "Download Round 3 split by coach (.zip)", rm.summer_tabs_by_coach_zip(tabs, readme),
+        "Download Round 3 split by coach (.zip)",
+        rm.summer_tabs_by_coach_zip(rm.coach_tabs(tabs, rm.ROUND_3),
+                                    rm.readme_frame(rm.COACH_ROUND_3_README)),
         f"{stem}_by_coach.zip", "application/zip",
+        help="Coach files carry only the student details, the prep, the Summer subjects and "
+             "PC approval; the workbook keeps every column.",
     )
     st.download_button(
         f"Download PC approval files by program ({len(needs_pc):,}) (.zip)",

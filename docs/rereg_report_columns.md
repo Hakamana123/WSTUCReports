@@ -149,7 +149,12 @@ The Advice Reason starts with a line explaining which case applies.
   the extract is advised on each row and flagged in *Other Enrolment* (the
   other program, start, standing and coach), so the two coaches can compare.
   Each round's workbook has a *Read me* tab. An advice cell with nothing to
-  register says *No subject advised*.
+  register says *No subject advised*. The workbook is the master copy with
+  every column; the *split by coach* files keep only the student details
+  (ID, names, email, coach, program, campus) and the advice: 2a *SU1 Subject*
+  and *SU2 Subject*, 2b nothing more, 3a *Prep Subject*, *SU1 Subject*,
+  *SU2 Subject* and *PC approval*, Excluded the *Progression Outcome* - with a
+  short *Read me* for those columns.
 - **Summer = 20 credit points without approval.** That's two program subjects.
   A prep plus a subject or elective is 25CP, which needs the PC's approval (no
   rule waiver). Coaches advise the prep and hold the other item until the PC
