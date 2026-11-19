@@ -1926,6 +1926,34 @@ def _owed_with_sb4(owed: list[str], sb4: str) -> list[str]:
     return [x for x in owed if not x.startswith("+")] + [f"+{n} elective"]
 
 
+def _other_enrolment_notes(df: pd.DataFrame) -> dict[tuple, str]:
+    """``{(STUDENT_ID, program): note}`` for a student with more than one row
+    in the extract - each row's note names the other program(s), with when it
+    commences, the standing and the coach, e.g. "Also enrolled: program 7198
+    (commences 27 - Autumn Block 1, no outcome, Kasturika Bhattacharjee)".
+    The Summer lists flag these rather than merge them (Josiah, 2026-11-19):
+    each row is advised on its own program, so the coaches compare the two -
+    a program change, or a Conditional Enrolment standing on the other row."""
+    def text(v) -> str:
+        return "" if v is None or pd.isna(v) else str(v).strip()
+
+    rows = [(r["STUDENT_ID"], str(r["PROGRAM_CD"]).split(".")[0], text(r.get("COMMENCEMENT_PERIOD")),
+             text(r.get("Progression Outcome")), text(r.get(COACH_COL)))
+            for _, r in df.iterrows()]
+    by_id: dict = {}
+    for sid, prog, *_ in rows:
+        by_id.setdefault(sid, []).append(prog)
+    notes = {}
+    for sid, prog, *_ in rows:
+        if len(set(by_id[sid])) < 2:
+            continue
+        others = [f"program {p} (commences {c or '?'}, {o or 'no outcome'}"
+                  + (f", {coach})" if coach else ")")
+                  for s, p, c, o, coach in rows if s == sid and p != prog]
+        notes[(sid, prog)] = "Also enrolled: " + "; ".join(dict.fromkeys(others))
+    return notes
+
+
 def _summer_registered(row: pd.Series) -> tuple[list[str], dict[str, list[str]]]:
     """``(prep codes, {"SU1": codes, "SU2": codes})`` the student is registered
     in for Summer, from a row with the headers squeezed."""
@@ -1958,13 +1986,23 @@ def _summer_action(plan: dict, program: str, session: str, outcome: str,
     over_with_prep = (summer_round == ROUND_3 and plan["prep"]
                       and _CP_PREP * len(plan["prep"]) + _CP_MODULAR * n_block > SUMMER_CAP_CP)
     todo, notes = [], []
+    # over the no-approval limit: the block subject waits for the PC's yes
+    held = set(_pc_hold(plan))
+
+    def want(item: str, blk: str = "") -> None:
+        where = f"{blk}: " if blk else ""
+        if item in held:
+            notes.append(f"{where}{item} - register only once the PC approves ({plan['cp']}cp)")
+        else:
+            todo.append(f"{where}register {item}")
+
     # advised with no block named: any Summer block will do
     for item in plan[""]:
         blk = next((b for b, codes in reg.items() if item in codes), None)
         if blk:
             reg[blk].remove(item)
         else:
-            todo.append(f"register {item}")
+            want(item)
     for blk in EARLY_CATCHUP_COLS:
         for item in plan[blk]:
             hit = (next((c for c in reg[blk] if c not in own), None) if item == _ELECTIVE
@@ -1972,7 +2010,7 @@ def _summer_action(plan: dict, program: str, session: str, outcome: str,
             if hit:
                 reg[blk].remove(hit)
             else:
-                todo.append(f"{blk}: register {item}")
+                want(item, blk)
         for extra in reg[blk]:
             todo.append(f"{blk}: drop {extra} - the prep takes priority, over the "
                         f"{SUMMER_CAP_CP}cp limit with it" if over_with_prep
@@ -2007,7 +2045,7 @@ def _summer_action(plan: dict, program: str, session: str, outcome: str,
         todo.append(f"over the {SUMMER_CAP_CP}cp limit ({cp}cp registered)")
     elif cp > SUMMER_NO_APPROVAL_CP:
         notes.append(f"{cp}cp registered - needs PC approval")
-    elif summer_round == ROUND_3 and plan["cp"] > SUMMER_NO_APPROVAL_CP:
+    elif summer_round == ROUND_3 and plan["cp"] > SUMMER_NO_APPROVAL_CP and not held:
         notes.append(f"{plan['cp']}cp with the prep - needs PC approval")
     detail = "; ".join(todo + notes)
     if not reg_prep and not n_block:
@@ -2051,6 +2089,7 @@ def summer_early_advice(
     df = _squeeze_headers(df)
     slot_map = v2.derive_slot_map(df)
     with_regs = summer_round in (ROUND_2, ROUND_3) and has_summer_registrations(df)
+    other_enrol = _other_enrolment_notes(df)
 
     def label(code: str) -> str:
         return f"{code} — {names[code]}" if code in names else code
@@ -2093,6 +2132,7 @@ def summer_early_advice(
             EARLY_REG_CHECK_COL: (
                 EARLY_REG_CHECK if not is_paused(r.get(STUDY_PATH_COL))
                 and not _registered_codes(r, 3) and not _registered_codes(r, 4) else ""),
+            OTHER_ENROL_COL: other_enrol.get((r["STUDENT_ID"], program), ""),
             **{col: ", ".join(c if c == _ELECTIVE else label(c) for c in plan[blk])
                for blk, col in EARLY_CATCHUP_COLS.items()},
             EARLY_CATCHUP_NOBLOCK_COL: ", ".join(label(c) for c in plan[""]),
@@ -2118,8 +2158,8 @@ def summer_early_advice(
     cols = ["STUDENT_ID", "FIRST_NAME", "LAST_NAME", "PREFERRED_NAME",
             "INSTITUTION_EMAIL_ADDRESS", COACH_COL, "PROGRAM_CD", "CAMP_CODE",
             "COMMENCEMENT_PERIOD", EARLY_OUTCOME_COL, EARLY_GROUP_COL, EARLY_PAUSED_COL,
-            EARLY_REG_CHECK_COL, *EARLY_CATCHUP_COLS.values(), EARLY_CATCHUP_NOBLOCK_COL, EARLY_PREP_COL,
-            EARLY_PREP_LATER_COL, EARLY_BOTH_PREPS_COL, *reg_cols,
+            EARLY_REG_CHECK_COL, OTHER_ENROL_COL, *EARLY_CATCHUP_COLS.values(), EARLY_CATCHUP_NOBLOCK_COL,
+            EARLY_PREP_COL, EARLY_PREP_LATER_COL, EARLY_BOTH_PREPS_COL, *reg_cols,
             EARLY_CP_COL, EARLY_APPROVAL_COL, EARLY_ALT_COL, EARLY_OTHER_CAMPUS_COL,
             EARLY_WITHOUT_COL, EARLY_WITH_COL, EARLY_OUTSTANDING_COL]
     out = pd.DataFrame(rows, columns=cols)
@@ -2140,7 +2180,7 @@ def summer_early_advice(
     if as_at:
         out.insert(0, EARLY_AS_AT_COL, as_at)
     for optional in (EARLY_CATCHUP_NOBLOCK_COL, EARLY_ALT_COL, EARLY_OTHER_CAMPUS_COL,
-                     EARLY_BOTH_PREPS_COL):
+                     EARLY_BOTH_PREPS_COL, OTHER_ENROL_COL):
         if optional in out and not out[optional].astype(bool).any():
             out = out.drop(columns=optional)
     for col in (EARLY_SU1_RECONFIRM_COL, *EARLY_CATCHUP_COLS.values(), EARLY_SU2_LATER_COL,
@@ -2452,6 +2492,7 @@ def summer_come_back(
     df = _squeeze_headers(df)
     slot_map = v2.derive_slot_map(df)
     with_regs = has_summer_registrations(df)
+    other_enrol = _other_enrolment_notes(df)
 
     def label(code: str) -> str:
         return f"{code} — {names[code]}" if code in names else code
@@ -2495,6 +2536,7 @@ def summer_come_back(
             EARLY_PAUSED_COL: (
                 f"PAUSED ({str(r.get(STUDY_PATH_COL)).strip()}) - confirm they're returning first"
                 if is_paused(r.get(STUDY_PATH_COL)) else ""),
+            OTHER_ENROL_COL: other_enrol.get((r["STUDENT_ID"], program), ""),
             COME_BACK_FAILED_COL: ", ".join(f"{label(c)} (Block {b})" for c, b in failed),
             COME_BACK_WHY_COL: why,
             R2_REG_COLS["prep"]: ", ".join(reg_prep),
@@ -2508,13 +2550,15 @@ def summer_come_back(
     cols = ["STUDENT_ID", "FIRST_NAME", "LAST_NAME", "PREFERRED_NAME",
             "INSTITUTION_EMAIL_ADDRESS", COACH_COL, "PROGRAM_CD", "CAMP_CODE",
             "COMMENCEMENT_PERIOD", EARLY_OUTCOME_COL, EARLY_GROUP_COL, EARLY_PAUSED_COL,
-            COME_BACK_FAILED_COL, COME_BACK_WHY_COL,
+            OTHER_ENROL_COL, COME_BACK_FAILED_COL, COME_BACK_WHY_COL,
             R2_REG_COLS["prep"], *(R2_REG_COLS[b] for b in EARLY_CATCHUP_COLS),
             ACTION_COL, ACTION_DETAIL_COL, EARLY_WITHOUT_COL, EARLY_OUTSTANDING_COL]
     out = pd.DataFrame(rows, columns=cols)
     if not with_regs:
         out = out.drop(columns=[R2_REG_COLS["prep"], *(R2_REG_COLS[b] for b in EARLY_CATCHUP_COLS),
                                 ACTION_COL, ACTION_DETAIL_COL])
+    if not out[OTHER_ENROL_COL].astype(bool).any():
+        out = out.drop(columns=OTHER_ENROL_COL)
     if as_at:
         out.insert(0, EARLY_AS_AT_COL, as_at)
     if len(out):
@@ -2552,6 +2596,9 @@ ROUND_2_README = [
     (EARLY_PAUSED_COL, "Set for a Deferred / Leave of Absence student."),
     (EARLY_REG_CHECK_COL, "No SB3/SB4 registration in the file. The advice stands if they're "
                           "still studying - check first."),
+    (OTHER_ENROL_COL, "The student has another program row in the extract - its program, start, "
+                      "standing and coach. Each row is advised on its own program: compare the two "
+                      "(a program change, or Conditional Enrolment on the other row) before sending."),
     (EARLY_SU1_RECONFIRM_COL, "The Summer Block 1 subject to be in (advised in Round 1, "
                               "reconfirmed here). '+1 elective' = any elective in that block."),
     (EARLY_CATCHUP_COLS["SU2"], "The Summer Block 2 subject to register."),
@@ -2660,6 +2707,9 @@ ROUND_3_README = [
     (EARLY_PAUSED_COL, "Set for a Deferred / Leave of Absence student."),
     (EARLY_REG_CHECK_COL, "No SB3/SB4 registration in the file. The advice stands if they're "
                           "still studying - check first."),
+    (OTHER_ENROL_COL, "The student has another program row in the extract - its program, start, "
+                      "standing and coach. Each row is advised on its own program: compare the two "
+                      "(a program change, or Conditional Enrolment on the other row) before sending."),
     (EARLY_PREP_COL, "The prep to register in the Summer session (template 3a's SUM Subject)."),
     (EARLY_CATCHUP_COLS["SU1"], "The Summer Block 1 subject that fits beside the prep, if any."),
     (EARLY_CATCHUP_COLS["SU2"], "The Summer Block 2 subject that fits beside the prep, if any."),

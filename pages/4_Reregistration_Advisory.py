@@ -227,6 +227,12 @@ def _flag_captions(frame: pd.DataFrame, as_at: str) -> None:
     if n_paused:
         st.caption(f"**{n_paused:,} paused** (Deferred / Leave of Absence) — kept in their group but "
                    f"flagged in *{rm.EARLY_PAUSED_COL}*: confirm they're returning before advising.")
+    n_other = (frame.loc[frame[rm.OTHER_ENROL_COL].fillna("").astype(bool), "STUDENT_ID"].nunique()
+               if rm.OTHER_ENROL_COL in frame else 0)
+    if n_other:
+        st.caption(f"**{n_other:,}** student(s) have another program row in the extract — see "
+                   f"*{rm.OTHER_ENROL_COL}*. Each row is advised on its own program; compare the two "
+                   "(a program change, or Conditional Enrolment on the other row) before sending.")
     n_regcheck = int(frame[rm.EARLY_REG_CHECK_COL].astype(bool).sum()) if rm.EARLY_REG_CHECK_COL in frame else 0
     if n_regcheck:
         st.caption(f"**{n_regcheck:,}** have no SB3/SB4 registration in the file — flagged in "
