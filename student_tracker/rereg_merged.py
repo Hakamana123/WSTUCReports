@@ -494,7 +494,7 @@ def _summer_advice(
     out: dict, row: pd.Series, program: str, is_nursing: bool, session: str, outcome: str,
     summer_subjects=None, file_row: pd.Series | None = None, slot_map: dict | None = None,
     offerings: dict | None = None, allow_prep: bool = True,
-    cp_cap: int = SUMMER_CAP_CP, prep_after: bool = False,
+    cp_cap: int = SUMMER_CAP_CP, prep_after: bool = False, ce_keep_subject: bool = False,
 ) -> dict:
     """Summer advice.
 
@@ -698,13 +698,18 @@ def _summer_advice(
     # Conditional Enrolment took the prep as its one subject: offer their best
     # subject (or an elective) instead, with when they'd finish. If the prep
     # doesn't bring their finish forward but a subject would, swap the two.
+    # In Round 3 (``ce_keep_subject``) the Round 2 subject stands whenever it
+    # brings the finish forward, so Round 3 never contradicts Round 2 (Josiah,
+    # 2026-11-20) - the prep becomes the "or instead".
     if capped and prep_now:
-        if allow_prep and not plan["helps"]:
+        if allow_prep and (ce_keep_subject or not plan["helps"]):
             swapped = _summer_advice(out, row, program, is_nursing, session, outcome, summer_subjects,
                                      file_row, slot_map, offerings, allow_prep=False, cp_cap=cp_cap)
             if swapped["_summer"]["helps"]:
                 prep_txt = " and ".join(prep_now)
-                swapped["_summer"]["alt"] = f"{prep_txt} - doesn't bring their finish forward"
+                swapped["_summer"]["alt"] = (
+                    f"{prep_txt} - finish ~{plan['with']}" if plan["helps"]
+                    else f"{prep_txt} - doesn't bring their finish forward")
                 swapped[REASON_COL] += (f" | Conditional Enrolment: one Summer subject - or instead "
                                         f"{swapped['_summer']['alt']}")
                 return swapped
@@ -1040,7 +1045,8 @@ def advise_student_merged(
                              file_row=adj, slot_map=slot_map, offerings=offerings,
                              allow_prep=summer_round != ROUND_2,
                              cp_cap=SUMMER_WAIVER_CAP_CP if summer_round == ROUND_3 else SUMMER_CAP_CP,
-                             prep_after=summer_round == ROUND_2)
+                             prep_after=summer_round == ROUND_2,
+                             ce_keep_subject=summer_round == ROUND_3)
         if sb4:
             _note_sb4(out, sb4, f"{tgt[0] % 100:02d} SPR")
         plan = out["_summer"]
@@ -2792,8 +2798,9 @@ ROUND_3_README = [
                     "Either way the prep is registered now and the rest waits."),
     ("Both preps", "Both preps (30cp, a rule waiver) are advised only when no block subject goes "
                    "beside them. Otherwise one prep is advised and the other waits for Autumn."),
-    ("Conditional Enrolment", f"{CE_SUMMER_SUBJECTS} Summer subject in all: the prep, unless only "
-                              "a block subject brings their finish forward (see Or instead)."),
+    ("Conditional Enrolment", f"{CE_SUMMER_SUBJECTS} Summer subject in all. A Round 2 subject that "
+                              "brings their finish forward stands, so they aren't listed here; "
+                              "otherwise the prep is the one subject (see Or instead)."),
     ("Paused", "Deferred / Leave of Absence students stay listed with an Enrolment check flag: "
                "confirm they're returning before advising."),
     ("", ""),

@@ -150,8 +150,9 @@ The Advice Reason starts with a line explaining which case applies.
   Both preps (30cp, rule waiver) are advised only when no block subject goes
   beside them; otherwise one, and *Both preps owed* flags the other for
   Autumn. The *Action detail* says to register the prep now and the rest only
-  once approved. Conditional Enrolment stays at one Summer subject, so there
-  the prep can replace the Round 2 subject. A student with two program rows in
+  once approved. Conditional Enrolment stays at one Summer subject: a Round 2
+  subject that brings the finish forward stands (no prep in Round 3);
+  otherwise the prep is the one subject. A student with two program rows in
   the extract is advised on each row and flagged in *Other Enrolment* (the
   other program, start, standing and coach), so the two coaches can compare.
   Each round's workbook has a *Read me* tab. An advice cell with nothing to
