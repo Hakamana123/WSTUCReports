@@ -273,9 +273,12 @@ if is_summer and not engine_view and summer_round == rm.ROUND_2:
         "**Round 2 — after SB4 results.** Actual results as the file has them; only a status still "
         "*Currently Registered* (the Spring prep) counts as passed. **2a**: students Summer brings "
         f"forward — *{rm.EARLY_SU1_RECONFIRM_COL}* and *{rm.EARLY_CATCHUP_COLS['SU2']}* are the "
-        "subjects to be in. Core subjects only: a prep still owed is in "
-        f"*{rm.EARLY_PREP_LATER_COL}* and advised in Round 3. **2b**: students who failed a "
-        "subject in SB3 or SB4 and whom Summer doesn't help — come back in Autumn; "
+        "subjects to be in. Block subjects only: a prep still owed is in "
+        f"*{rm.EARLY_PREP_LATER_COL}* and added on top in Round 3 (up to "
+        f"{rm.SUMMER_WAIVER_CAP_CP}cp; over {rm.SUMMER_CAP_CP}cp is a rule waiver). Summer is judged "
+        f"with that prep counted — *{rm.EARLY_PREP_DEPENDS_COL}* marks a finish that relies on it. "
+        "**2b**: students who failed a subject in SB3 or SB4 and whom Summer doesn't help, even "
+        "with the prep — come back in Autumn; "
         f"*{rm.COME_BACK_WHY_COL}* says whether the Round 1 advice had them finishing with Summer. "
         "Advice is from results alone — what they've registered in Summer never changes it; it's "
         f"shown in the *Registered* columns with an *{rm.ACTION_COL}*."
@@ -292,6 +295,10 @@ if is_summer and not engine_view and summer_round == rm.ROUND_2:
     else:
         st.caption("This extract has no Summer registration columns, so the *Registered* and "
                    f"*{rm.ACTION_COL}* columns aren't shown.")
+    if rm.EARLY_PREP_DEPENDS_COL in shortlist:
+        n_dep = int(shortlist[rm.EARLY_PREP_DEPENDS_COL].fillna("").astype(bool).sum())
+        st.caption(f"**{n_dep:,}** on 2a finish earlier only once Round 3 adds the prep — see "
+                   f"*{rm.EARLY_PREP_DEPENDS_COL}*.")
     _flag_captions(shortlist, as_at)
 
     tab_a, tab_b = st.tabs([rm.ROUND_2_TABS["2a"], rm.ROUND_2_TABS["2b"]])
@@ -334,24 +341,26 @@ if is_summer and not engine_view and summer_round == rm.ROUND_3:
     is_excl = shortlist[rm.EARLY_GROUP_COL] == rm.EARLY_GROUP_EXCLUDED
     live = shortlist[~is_excl]
     needs_pc = rm.summer_pc_approval(shortlist)
-    n_both = int(live[rm.EARLY_BOTH_PREPS_COL].astype(bool).sum()) if rm.EARLY_BOTH_PREPS_COL in live else 0
+    needs_waiver = rm.summer_rule_waiver(shortlist)
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("3a — prep advised", f"{len(live):,}",
               help="Owe GEDU0016 / GEDU0017 on results and Summer brings their finish forward")
     m2.metric("Need PC approval", f"{len(needs_pc):,}",
-              help=f"Prep plus a block subject - over {rm.SUMMER_NO_APPROVAL_CP}cp")
-    m3.metric("Both preps owed", f"{n_both:,}", help="One advised; the other is the academic call")
+              help=f"{rm.SUMMER_NO_APPROVAL_CP + 1}-{rm.SUMMER_CAP_CP}cp - in the PC files by program")
+    m3.metric("Need a rule waiver", f"{len(needs_waiver):,}",
+              help=f"Over {rm.SUMMER_CAP_CP}cp (up to {rm.SUMMER_WAIVER_CAP_CP}cp) - not in the PC files")
     m4.metric("Excluded", f"{int(is_excl.sum()):,}",
               help="Progression Outcome is Exclusion — not eligible to re-register; own tab, not advised")
     st.caption(
         "**Round 3 — after Spring results.** The prep round: students who still owe a prep on "
         f"results and whom Summer brings forward. *{rm.EARLY_PREP_COL}* is the subject for template "
-        "3a; the SU1 / SU2 columns are what fits beside it. **The prep takes priority**: a prep plus "
-        f"one block subject is the {rm.SUMMER_CAP_CP}cp limit, so a second registered block subject "
-        f"is to drop (see *{rm.ACTION_DETAIL_COL}*); a prep plus a block subject needs the PC's "
-        f"approval (*{rm.EARLY_APPROVAL_COL}*). A student owing both preps is advised one - "
-        f"*{rm.EARLY_BOTH_PREPS_COL}* flags them for the rule-waiver call. Students Summer helps "
-        "with no prep owed were advised in Round 2 and aren't listed again."
+        "3a, **added on top of the Round 2 block subjects** (SU1 / SU2), up to "
+        f"{rm.SUMMER_WAIVER_CAP_CP}cp. {rm.SUMMER_NO_APPROVAL_CP + 1}-{rm.SUMMER_CAP_CP}cp needs the "
+        f"PC's approval (*{rm.EARLY_APPROVAL_COL}*, PC files below); over {rm.SUMMER_CAP_CP}cp needs a "
+        f"rule waiver (*{rm.EARLY_WAIVER_COL}*). Either way the prep is registered now and the rest "
+        "waits. Both preps are advised only when no block subject goes beside them; otherwise "
+        f"*{rm.EARLY_BOTH_PREPS_COL}* flags the one left for Autumn. Students Summer helps with no "
+        "prep owed were advised in Round 2 and aren't listed again."
     )
     if rm.ACTION_COL in shortlist:
         counts = live[rm.ACTION_COL].value_counts()

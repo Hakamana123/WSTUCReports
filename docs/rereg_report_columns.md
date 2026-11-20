@@ -131,8 +131,11 @@ The Advice Reason starts with a line explaining which case applies.
 - **Summer advice goes out in rounds**, one per set of coaching templates.
   *Round 1* (mid-SB3): enrolments assumed to pass, SU1 + prep advised, SU2
   shown for later. *Round 2* (after SB4 results): actual results, SU1
-  reconfirmed and SU2 advised, core subjects only - a prep still owed is
-  listed under *Owes prep* and advised in Round 3 (after Spring results).
+  reconfirmed and SU2 advised, block subjects only - a prep still owed is
+  listed under *Owes prep* and added on top in Round 3 (after Spring results).
+  Whether Summer helps is judged with that prep counted (up to 35cp), so a
+  student whose early finish relies on it is on 2a with *Finish needs the
+  prep* saying which prep, the total and its approval.
   What a student has already registered in Summer never changes the advice;
   it's shown beside it in the *Registered* columns with an *Action*
   (Register / A-OK / Change). The *2b Come back in Autumn* tab lists students
@@ -141,24 +144,29 @@ The Advice Reason starts with a line explaining which case applies.
   student with no SB3/SB4 registration keeps the advice, flagged in
   *Registration check*. *Round 3* (after Spring results): the prep round -
   students who still owe GEDU0016 / GEDU0017 and whom Summer brings forward.
-  The prep takes priority: a prep plus one block subject is the 25cp limit
-  (PC approval), so a second registered block subject is to drop; a student
-  owing both preps is advised one and flagged in *Both preps owed* for the
-  rule-waiver call. The *Action detail* says to register the prep now and the
-  block subject only once the PC approves. A student with two program rows in
+  The prep is added on top of the Round 2 block subjects (Round 3 doesn't
+  change them), up to 35cp: 21-25cp is a PC approval (*PC approval*, PC files
+  by program), over 25cp a rule waiver (*Rule waiver*, not in the PC files).
+  Both preps (30cp, rule waiver) are advised only when no block subject goes
+  beside them; otherwise one, and *Both preps owed* flags the other for
+  Autumn. The *Action detail* says to register the prep now and the rest only
+  once approved. Conditional Enrolment stays at one Summer subject, so there
+  the prep can replace the Round 2 subject. A student with two program rows in
   the extract is advised on each row and flagged in *Other Enrolment* (the
   other program, start, standing and coach), so the two coaches can compare.
   Each round's workbook has a *Read me* tab. An advice cell with nothing to
   register says *No subject advised*. The workbook is the master copy with
   every column; the *split by coach* files keep only the student details
   (ID, names, email, coach, program, campus) and the advice: 2a *SU1 Subject*
-  and *SU2 Subject*, 2b nothing more, 3a *Prep Subject*, *SU1 Subject*,
-  *SU2 Subject* and *PC approval*, Excluded the *Progression Outcome* - with a
-  short *Read me* for those columns.
+  and *SU2 Subject* (plus *Finish needs the prep* when used), 2b nothing more,
+  3a *Prep Subject*, *SU1 Subject*, *SU2 Subject*, *PC approval* and *Rule
+  waiver*, Excluded the *Progression Outcome* - with a short *Read me* for
+  those columns.
 - **Summer = 20 credit points without approval.** That's two program subjects.
   A prep plus a subject or elective is 25CP, which needs the PC's approval (no
-  rule waiver). Coaches advise the prep and hold the other item until the PC
-  replies. On the Round 1 shortlist, *PC approval* says who and what, and the PC
+  rule waiver). From Round 2 on, the prep can go on top of two subjects (35CP):
+  over 25CP is a rule waiver. Coaches advise the prep and hold the rest until it's
+  approved. On the Round 1 shortlist, *PC approval* says who and what, and the PC
   files by program carry a *PC decision* dropdown (Approve / Prep only /
   Subject only). A subject that only runs at another campus still needs a rule
   waiver: the Advice Reason names the campus.
